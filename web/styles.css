@@ -279,7 +279,28 @@ textarea {
   padding: 1px 5px;
   border-radius: 2px;
   font-size: 11.5px;
+  cursor: pointer;
+  transition: background 80ms, color 80ms;
 }
+.cheatsheet code:hover {
+  background: rgba(139,143,255,0.18);
+  color: var(--ink);
+}
+.cheatsheet code:active { background: rgba(139,143,255,0.30); }
+
+/* Spell Lab cheatsheet variant — plum to match the rune palette. */
+.cheatsheet.spells {
+  border-left-color: var(--plum);
+  background: rgba(176,124,176,0.05);
+}
+.cheatsheet.spells summary { color: var(--plum); }
+.cheatsheet.spells code {
+  font-size: 15px;
+  letter-spacing: 0.12em;
+  color: var(--plum);
+}
+.cheatsheet.spells code:hover  { background: rgba(176,124,176,0.20); color: var(--ink); }
+.cheatsheet.spells code:active { background: rgba(176,124,176,0.34); }
 
 /* ─── Colophon ──────────────────────────────────────────── */
 .colophon {

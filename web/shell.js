@@ -93,6 +93,24 @@ $('#clear-out').addEventListener('click', () => {
   outEl.textContent = '';
 });
 
+// Click-to-load: rune-tape examples populate the tape; lisp examples populate
+// the REPL. The two cheatsheets carry different selectors so a tape that
+// happens to contain valid lisp punctuation can't leak into the wrong field.
+document.querySelectorAll('.tape-example').forEach((el) => {
+  el.addEventListener('click', () => {
+    tapeEl.value = el.dataset.tape;
+    tapeEl.focus();
+    tapeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+});
+document.querySelectorAll('.cheatsheet:not(.spells) code').forEach((el) => {
+  el.addEventListener('click', () => {
+    replEl.value = el.textContent;
+    replEl.focus();
+    replEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+});
+
 // Cmd/Ctrl-Enter from the REPL textarea evaluates.
 replEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
