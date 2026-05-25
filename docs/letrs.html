@@ -249,7 +249,6 @@
       border: 1px solid var(--rule);
       border-left: 2px solid var(--indigo);
       padding: 16px 20px;
-      margin: 18px 0 24px;
       font-size: 13px;
       line-height: 1.6;
       color: var(--ink);
@@ -258,18 +257,7 @@
       white-space: pre;
       font-family: var(--mono);
     }
-    .act .term::before, .act .code::before {
-      content: attr(data-label);
-      position: absolute; top: -9px; left: 12px;
-      background: var(--bg);
-      padding: 0 8px;
-      font-size: 10px;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: var(--ink-dust);
-    }
     .act .code { border-left-color: var(--sage); }
-    .act .code::before { color: var(--sage); }
 
     .term .o   { color: var(--ink-dim); }
     .term .ok  { color: var(--sage); }
@@ -318,7 +306,6 @@
       border: 1px solid var(--rule);
       border-left: 2px solid var(--honey);
       padding: 20px 24px;
-      margin: 18px 0 24px;
       font-family: var(--mono);
       font-size: 13px;
       line-height: 1.8;
@@ -327,20 +314,29 @@
       overflow-x: auto;
       position: relative;
     }
-    .rules::before {
-      content: "the five transition rules · CEK";
-      position: absolute; top: -9px; left: 16px;
+    .rules .lab { color: var(--ink-dust); }
+    .rules .arr { color: var(--indigo); }
+    .rules .v   { color: var(--sage); }
+    .rules .k   { color: var(--copper); }
+
+    /* Box wrapper — holds the label OUTSIDE the inner element's
+       overflow-x:auto clip region. Without this, the spec quirk where
+       any non-visible overflow clips both axes slices off the top of
+       the label. The wrapper itself is just position + margin. */
+    .boxed { position: relative; margin: 18px 0 24px; }
+    .boxed::before {
+      content: attr(data-label);
+      position: absolute; top: -9px;
       background: var(--bg);
       padding: 0 8px;
       font-size: 10px;
       letter-spacing: 0.2em;
       text-transform: uppercase;
-      color: var(--honey);
+      z-index: 2;
     }
-    .rules .lab { color: var(--ink-dust); }
-    .rules .arr { color: var(--indigo); }
-    .rules .v   { color: var(--sage); }
-    .rules .k   { color: var(--copper); }
+    .boxed.code-wrap::before  { left: 12px; color: var(--sage); }
+    .boxed.term-wrap::before  { left: 12px; color: var(--ink-dust); }
+    .boxed.rules-wrap::before { left: 16px; color: var(--honey); }
 
     /* Counter list (tiers) */
     .tiers {
@@ -395,16 +391,6 @@
       border: 1px solid var(--rule);
       background: linear-gradient(180deg, var(--bg-rise), var(--bg));
       position: relative;
-    }
-    .coda::before {
-      content: "▾ what comes after";
-      position: absolute; top: -9px; left: 20px;
-      background: var(--bg);
-      padding: 0 10px;
-      font-size: 10px;
-      letter-spacing: 0.22em;
-      text-transform: uppercase;
-      color: var(--indigo);
     }
     .coda h3 {
       font-family: var(--display);
@@ -462,7 +448,21 @@
       .act .glyph .mark  { margin-top: 0; font-size: 20px; }
       .mast .seal { grid-template-columns: repeat(2, auto); gap: 24px; }
       .compare th, .compare td { padding: 7px 10px; font-size: 12px; }
-      .rules, .act .term, .act .code { font-size: 11px; padding: 14px 12px; }
+      .rules, .act .term, .act .code {
+        font-size: 10px;
+        padding: 32px 10px 12px;
+        letter-spacing: -0.1em;
+      }
+      .boxed::before {
+        top: 0; left: 0; right: 0;
+        background: rgba(255, 255, 255, 0.025);
+        padding: 7px 12px;
+        border-bottom: 1px solid var(--rule-soft);
+      }
+      .coda { margin-top: 6vh; padding: 24px 18px 28px; }
+      .coda h3 { font-size: 22px; margin-bottom: 10px; }
+      .coda ul { margin-top: 12px; }
+      .coda li { padding: 4px 0; }
     }
   </style>
 </head>
@@ -525,25 +525,29 @@
           The heart of letrs is Felleisen &amp; Friedman's CEK machine (1980s) — a small evolution of Landin's SECD (1964) and one of the cleanest things anyone has ever written down about how lambda calculus actually runs. Three registers: <em>C</em>ontrol, <em>E</em>nvironment, <em>K</em>ontinuation. The whole evaluator is a function that takes one of those triples and returns the next one. There is no native call stack. The "stack" is the continuation, reified as plain data on the heap.
         </p>
 
+        <div class="boxed rules-wrap" data-label="the five transition rules · CEK">
         <div class="rules">
-<span class="lab">⟨</span>x        <span class="lab">,</span> ρ <span class="lab">,</span> κ<span class="lab">⟩</span>            <span class="arr">→</span>  <span class="lab">⟨</span><span class="v">ρ(x)</span><span class="lab">,</span> κ<span class="lab">⟩</span>                  <span class="dim">— variable lookup yields a value</span>
-<span class="lab">⟨</span>λx.e     <span class="lab">,</span> ρ <span class="lab">,</span> κ<span class="lab">⟩</span>            <span class="arr">→</span>  <span class="lab">⟨</span><span class="v">Clo(λx.e, ρ)</span><span class="lab">,</span> κ<span class="lab">⟩</span>          <span class="dim">— lambda is a value (closure)</span>
-<span class="lab">⟨</span>(e₁ e₂)<span class="lab">,</span> ρ <span class="lab">,</span> κ<span class="lab">⟩</span>            <span class="arr">→</span>  <span class="lab">⟨</span>e₁<span class="lab">,</span> ρ<span class="lab">,</span> <span class="k">Arg(e₂, ρ, κ)</span><span class="lab">⟩</span>     <span class="dim">— evaluate fn first</span>
-<span class="lab">⟨</span>v        <span class="lab">,</span>     <span class="k">Arg(e, ρ, κ)</span><span class="lab">⟩</span>     <span class="arr">→</span>  <span class="lab">⟨</span>e<span class="lab">,</span> ρ<span class="lab">,</span> <span class="k">Fn(v, κ)</span><span class="lab">⟩</span>           <span class="dim">— then evaluate arg</span>
-<span class="lab">⟨</span>v        <span class="lab">,</span>     <span class="k">Fn(Clo(λx.e, ρ'), κ)</span><span class="lab">⟩</span> <span class="arr">→</span> <span class="lab">⟨</span>e<span class="lab">,</span> ρ'[x↦v]<span class="lab">,</span> κ<span class="lab">⟩</span>     <span class="dim">— enter closure body</span>
+<span class="lab">⟨</span>x      <span class="lab">,</span> ρ<span class="lab">,</span> κ<span class="lab">⟩</span>                    <span class="arr">→</span> <span class="lab">⟨</span><span class="v">ρ(x)</span><span class="lab">,</span> κ<span class="lab">⟩</span>              <span class="dim">— variable lookup yields a value</span>
+<span class="lab">⟨</span>λx.e   <span class="lab">,</span> ρ<span class="lab">,</span> κ<span class="lab">⟩</span>                    <span class="arr">→</span> <span class="lab">⟨</span><span class="v">Clo(λx.e, ρ)</span><span class="lab">,</span> κ<span class="lab">⟩</span>      <span class="dim">— lambda is a value (closure)</span>
+<span class="lab">⟨</span>(e₁ e₂)<span class="lab">,</span> ρ<span class="lab">,</span> κ<span class="lab">⟩</span>                    <span class="arr">→</span> <span class="lab">⟨</span>e₁<span class="lab">,</span> ρ<span class="lab">,</span> <span class="k">Arg(e₂, ρ, κ)</span><span class="lab">⟩</span> <span class="dim">— evaluate fn first</span>
+<span class="lab">⟨</span>v      <span class="lab">,</span>    <span class="k">Arg(e, ρ, κ)</span><span class="lab">⟩</span>         <span class="arr">→</span> <span class="lab">⟨</span>e<span class="lab">,</span> ρ<span class="lab">,</span> <span class="k">Fn(v, κ)</span><span class="lab">⟩</span>       <span class="dim">— then evaluate arg</span>
+<span class="lab">⟨</span>v      <span class="lab">,</span>    <span class="k">Fn(Clo(λx.e, ρ'), κ)</span><span class="lab">⟩</span> <span class="arr">→</span> <span class="lab">⟨</span>e<span class="lab">,</span> ρ'[x↦v]<span class="lab">,</span> κ<span class="lab">⟩</span>        <span class="dim">— enter closure body</span>
+        </div>
         </div>
 
         <p>
           Five rules. The driver is a four-line loop:
         </p>
 
-        <pre class="code" data-label="step.rs · the run loop"><span class="tea">let</span> <span class="hl">mut</span> s = State { mode: Mode::Eval(expr, env), k: Rc::new(K::Halt) };
+        <div class="boxed code-wrap" data-label="step.rs · the run loop">
+        <pre class="code"><span class="tea">let</span> <span class="hl">mut</span> s = State { mode: Mode::Eval(expr, env), k: Rc::new(K::Halt) };
 <span class="tea">loop</span> {
     <span class="tea">match</span> step(s)? {
         Step::Continue(next) =&gt; s = next,
         Step::Done(v)        =&gt; <span class="tea">return</span> Ok(v),
     }
 }</pre>
+        </div>
 
         <p class="note">
           Tail calls fall out for free. When a closure is entered (rule 5), the
@@ -601,10 +605,12 @@
           siblings through the cells.
         </p>
 
-        <pre class="code" data-label="tests/eval.rs · letrec_mutual_recursion"><span class="vio">(letrec</span> <span class="hl">((even? (lambda (n) (if (= n 0) #t (odd?  (- n 1)))))</span>
+        <div class="boxed code-wrap" data-label="tests/eval.rs · letrec_mutual_recursion">
+        <pre class="code"><span class="vio">(letrec</span> <span class="hl">((even? (lambda (n) (if (= n 0) #t (odd?  (- n 1)))))</span>
          <span class="hl">(odd?  (lambda (n) (if (= n 0) #f (even? (- n 1))))))</span>
   <span class="vio">(list (even? 10) (odd? 10) (even? 7) (odd? 7)))</span>
 <span class="dim">;; → (#t #f #f #t)</span></pre>
+        </div>
 
         <p>
           At this point the lisp can also host its own library code. <code>map</code>
@@ -612,11 +618,13 @@
           <code>letrec</code>:
         </p>
 
-        <pre class="code" data-label="tests/eval.rs · map_via_letrec"><span class="vio">(letrec</span> <span class="hl">((map (lambda (f xs)</span>
+        <div class="boxed code-wrap" data-label="tests/eval.rs · map_via_letrec">
+        <pre class="code"><span class="vio">(letrec</span> <span class="hl">((map (lambda (f xs)</span>
                 <span class="hl">(if (null? xs) '()</span>
                     <span class="hl">(cons (f (car xs)) (map f (cdr xs)))))))</span>
   <span class="vio">(map (lambda (n) (* n n)) '(1 2 3 4 5)))</span>
 <span class="dim">;; → (1 4 9 16 25)</span></pre>
+        </div>
 
         <p class="aside">
           The mutable cells in the env never get touched by anything other than
@@ -658,7 +666,9 @@
           combinator:
         </p>
 
-        <pre class="code" data-label="ᚠ ᛊ 3 ᛁ · compiled"><span class="vio">(thread (start) (list</span> <span class="hl">fire</span> <span class="hl">(area 3)</span> <span class="hl">ice</span><span class="vio">))</span></pre>
+        <div class="boxed code-wrap" data-label="ᚠ ᛊ 3 ᛁ · compiled">
+        <pre class="code"><span class="vio">(thread (start) (list</span> <span class="hl">fire</span> <span class="hl">(area 3)</span> <span class="hl">ice</span><span class="vio">))</span></pre>
+        </div>
 
         <p>
           <code>thread</code> is nine characters of lisp; the primitives are
@@ -677,7 +687,8 @@
           host's grid world.
         </p>
 
-        <pre class="term" data-label="cargo run --example world"><span class="dim">== cast 'ice (area 2)' at (3,2) ==</span>
+        <div class="boxed term-wrap" data-label="cargo run --example world">
+        <pre class="term"><span class="dim">== cast 'ice (area 2)' at (3,2) ==</span>
 <span class="ok">→ 25 tiles painted</span>
 <span class="vio">.ooooo.</span>
 <span class="vio">.ooooo.</span>
@@ -689,6 +700,7 @@
   <span class="hl">·</span> cast fire at (1,1) area=0 → 1 tiles
   <span class="hl">·</span> cast fire at (4,2) area=1 → 9 tiles
   <span class="hl">·</span> cast ice  at (3,2) area=2 → 25 tiles</pre>
+        </div>
 
         <p class="note">
           Notice what happens when a tape mentions two elements:
@@ -759,7 +771,8 @@
           splicing for variadic positions.
         </p>
 
-        <pre class="code" data-label="thread-first defined in itself · tests/eval.rs"><span class="vio">(defmacro -&gt; args</span>
+        <div class="boxed code-wrap" data-label="thread-first defined in itself · tests/eval.rs">
+        <pre class="code"><span class="vio">(defmacro -&gt; args</span>
   <span class="hl">(letrec ((step (lambda (acc form)</span>
                    <span class="hl">(if (pair? form)</span>
                        <span class="hl">(cons (car form) (cons acc (cdr form)))</span>
@@ -771,6 +784,7 @@
 
 <span class="dim">;; (-&gt; 5 (+ 3) (* 2))  expands to  (* (+ 5 3) 2)  evaluates to  16</span>
 <span class="dim">;; (-&gt; 10 inc inc inc)  expands to  (inc (inc (inc 10)))  →  13</span></pre>
+        </div>
 
         <p>
           That <code>-&gt;</code> is the thread-first operator from Clojure,
