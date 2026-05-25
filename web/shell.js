@@ -18,9 +18,25 @@ const coiChip = $('#coi-chip');
 await init();
 const vm = new Vm(7, 5);
 
+// Map the ASCII glyphs the Rust World::Display emits onto the color classes
+// the legend uses. Anything outside this set (newlines, future glyphs) passes
+// through as plain text.
+const GLYPH_CLASS = { '.': 'g-floor', '*': 'g-fire', 'o': 'g-ice', '#': 'g-wall' };
+
+const colorizeGrid = (text) => {
+  let html = '';
+  for (const ch of text) {
+    const cls = GLYPH_CLASS[ch];
+    html += cls ? `<span class="${cls}">${ch}</span>` : ch;
+  }
+  return html;
+};
+
 const refresh = () => {
-  gridEl.textContent = vm.grid();
-  logEl.textContent  = vm.log();
+  // innerHTML is safe here: the source is our own wasm grid, which only
+  // emits glyphs from GLYPH_CLASS + newlines.
+  gridEl.innerHTML  = colorizeGrid(vm.grid());
+  logEl.textContent = vm.log();
 };
 refresh();
 
