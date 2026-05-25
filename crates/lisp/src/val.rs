@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use crate::env::Env;
 use crate::expr::{Expr, Sym};
+use crate::world::World;
 
 #[derive(Clone)]
 pub enum Val {
@@ -20,6 +21,13 @@ pub enum Val {
         name: &'static str,
         arity: Arity,
         f: fn(&[Val]) -> Result<Val, String>,
+    },
+    /// Like `Prim`, but its `f` receives mutable access to the host world.
+    /// Used for primitives that read or modify game state.
+    WorldPrim {
+        name: &'static str,
+        arity: Arity,
+        f: fn(&[Val], &mut World) -> Result<Val, String>,
     },
 }
 
@@ -87,6 +95,9 @@ impl fmt::Display for Val {
             }
             Val::Clo { params, .. } => write!(f, "#<closure/{}>", params.len()),
             Val::Prim { name, arity, .. } => write!(f, "#<prim {name}/{}>", arity.describe()),
+            Val::WorldPrim { name, arity, .. } => {
+                write!(f, "#<world-prim {name}/{}>", arity.describe())
+            }
         }
     }
 }

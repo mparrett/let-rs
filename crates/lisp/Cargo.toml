@@ -14,3 +14,7 @@ path = "examples/repl.rs"
 [[example]]
 name = "spells"
 path = "examples/spells.rs"
+
+[[example]]
+name = "world"
+path = "examples/world.rs"
