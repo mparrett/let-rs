@@ -90,15 +90,22 @@ keep it that way. `runes` is zero-deps too. `wasm` may take deps
 (`wasm-bindgen`, `console_error_panic_hook`); this is allowed by
 ADR-002's "lisp stays platform-independent" caveat.
 
-WASM build requires `wasm-bindgen-cli` installed at the version pinned in
-`crates/wasm/Cargo.toml`:
+WASM build requires three tools installed once:
 
 ```bash
-cargo install -f wasm-bindgen-cli --version 0.2.114
+rustup target add wasm32-unknown-unknown
+cargo install -f wasm-bindgen-cli --version 0.2.114   # must match the pin in crates/wasm/Cargo.toml
+brew install binaryen                                  # provides wasm-opt
 ```
 
-If you bump that pin, install the matching CLI version at the same time —
-the error if they drift is loud but the fix is manual.
+If you bump the `wasm-bindgen` pin, install the matching CLI version at the
+same time — the error if they drift is loud but the fix is manual.
+
+The `wasm-build` pipeline is three stages: `cargo build` →
+`wasm-bindgen --target web` → `wasm-opt -Oz --strip-debug --strip-producers`.
+The optimizer takes ~135 KB raw down to ~104 KB (and ~49 KB → ~42 KB
+gzipped on the wire). Removing the `wasm-opt` step is safe; it just
+ships a larger bundle.
 
 ## Conventions
 

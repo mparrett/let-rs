@@ -23,14 +23,23 @@ fmt:
 
 # ─── WASM bridge ─────────────────────────────────────────────────
 #
-# Uses the standalone `wasm-bindgen` CLI (ADR-009). Install with:
-#   cargo install -f wasm-bindgen-cli --version 0.2.114
-# Version must match the `wasm-bindgen` crate pin in crates/wasm/Cargo.toml.
+# Three-stage pipeline:
+#   1. cargo → wasm32 release binary
+#   2. wasm-bindgen → JS glue + processed .wasm
+#   3. wasm-opt -Oz → size-optimized .wasm (in place)
+#
+# Tooling (install once):
+#   rustup target add wasm32-unknown-unknown
+#   cargo install -f wasm-bindgen-cli --version 0.2.114   # match the crate pin in crates/wasm/Cargo.toml
+#   brew install binaryen                                  # provides `wasm-opt`
 
 wasm-build:
     cargo build -p wasm --target wasm32-unknown-unknown --release
     wasm-bindgen target/wasm32-unknown-unknown/release/wasm.wasm \
         --target web --out-dir web/pkg
+    wasm-opt -Oz --strip-debug --strip-producers \
+        web/pkg/wasm_bg.wasm -o web/pkg/wasm_bg.wasm
+    @ls -lh web/pkg/wasm_bg.wasm | awk '{print "  → web/pkg/wasm_bg.wasm:", $5}'
 
 wasm-serve: wasm-build
     @echo "→ open http://localhost:8000"

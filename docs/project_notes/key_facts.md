@@ -11,9 +11,12 @@
 
 ## WASM toolchain
 
-- `wasm-bindgen-cli` 0.2.114 (`cargo install -f wasm-bindgen-cli --version 0.2.114`)
 - `wasm32-unknown-unknown` Rust target (`rustup target add wasm32-unknown-unknown`)
+- `wasm-bindgen-cli` 0.2.114 (`cargo install -f wasm-bindgen-cli --version 0.2.114`)
+- `binaryen` 129+ for `wasm-opt` (`brew install binaryen`)
 - Plain `python3 -m http.server` for serving — **no COI / SAB / service-worker shim required** (the whole reason this exists; ADR-009)
+
+Pipeline: `cargo build` → `wasm-bindgen --target web` → `wasm-opt -Oz --strip-debug --strip-producers`.
 
 ## Commands
 
@@ -67,7 +70,7 @@ letrs/
 - **Total: 34 tests passing**
 - Dependencies in `lisp`: 0; in `runes`: 0; in `wasm`: 2 (wasm-bindgen, console_error_panic_hook)
 - Commits: 5 to date (initial; world; macros; HTML page + memory; WASM bridge pending this commit)
-- WASM artifact size: ~135 KB unoptimized (no `wasm-opt` step yet)
+- WASM artifact size: ~104 KB after `wasm-opt -Oz` (down from ~135 KB raw); ~42 KB gzipped on the wire
 
 ## URLs / ports
 
