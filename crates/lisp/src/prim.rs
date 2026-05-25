@@ -112,6 +112,29 @@ fn list(args: &[Val]) -> R {
     Ok(Val::list_from(args))
 }
 
+fn append(args: &[Val]) -> R {
+    // Concatenate proper lists left-to-right.
+    let mut acc = Val::Nil;
+    for arg in args.iter().rev() {
+        let mut items: Vec<Val> = Vec::new();
+        let mut cur = arg;
+        loop {
+            match cur {
+                Val::Cons(h, t) => {
+                    items.push((**h).clone());
+                    cur = t;
+                }
+                Val::Nil => break,
+                other => return Err(format!("append: expected list, got {other}")),
+            }
+        }
+        for item in items.into_iter().rev() {
+            acc = Val::Cons(Rc::new(item), Rc::new(acc));
+        }
+    }
+    Ok(acc)
+}
+
 fn null_q(args: &[Val]) -> R {
     Ok(Val::Bool(matches!(args[0], Val::Nil)))
 }
@@ -145,6 +168,7 @@ const BUILTINS: &[(&str, Arity, fn(&[Val]) -> R)] = &[
     ("car",     Arity::Exact(1),   car),
     ("cdr",     Arity::Exact(1),   cdr),
     ("list",    Arity::AtLeast(0), list),
+    ("append",  Arity::AtLeast(0), append),
     ("null?",   Arity::Exact(1),   null_q),
     ("pair?",   Arity::Exact(1),   pair_q),
     ("number?", Arity::Exact(1),   number_q),

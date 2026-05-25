@@ -5,8 +5,10 @@ use std::vec::IntoIter;
 use crate::expr::{Expr, Sym};
 use crate::val::Val;
 
+/// Intermediate s-expression form, used between tokenize and compile.
+/// Public so the Vm can pre-process it (macro expansion) before compile sees it.
 #[derive(Debug, Clone)]
-enum Datum {
+pub enum Datum {
     Num(i64),
     Bool(bool),
     Sym(Sym),
@@ -18,19 +20,31 @@ enum Tok {
     LParen,
     RParen,
     Quote,
+    Quasi,
+    Unquote,
+    UnquoteSplice,
     Num(i64),
     Bool(bool),
     Sym(String),
 }
 
-pub fn parse(src: &str) -> Result<Expr, String> {
+/// Read source → Datum (no compilation). Used by Vm so it can macro-expand
+/// before producing an Expr.
+pub fn read(src: &str) -> Result<Datum, String> {
     let toks = tokenize(src)?;
     let mut it = toks.into_iter().peekable();
     let d = read_datum(&mut it)?;
     if it.peek().is_some() {
         return Err("extra tokens after expression".into());
     }
-    compile(&d)
+    Ok(d)
+}
+
+/// Read + compile, no macro support. Vm::eval_str expands first and then
+/// calls compile; this entry point exists for tests and contexts that don't
+/// need macros.
+pub fn parse(src: &str) -> Result<Expr, String> {
+    compile(&read(src)?)
 }
 
 fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
@@ -61,10 +75,23 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
                 chars.next();
                 toks.push(Tok::Quote);
             }
+            '`' => {
+                chars.next();
+                toks.push(Tok::Quasi);
+            }
+            ',' => {
+                chars.next();
+                if chars.peek() == Some(&'@') {
+                    chars.next();
+                    toks.push(Tok::UnquoteSplice);
+                } else {
+                    toks.push(Tok::Unquote);
+                }
+            }
             _ => {
                 let mut s = String::new();
                 while let Some(&c) = chars.peek() {
-                    if c.is_whitespace() || matches!(c, '(' | ')' | ';' | '\'') {
+                    if c.is_whitespace() || matches!(c, '(' | ')' | ';' | '\'' | '`' | ',') {
                         break;
                     }
                     s.push(c);
@@ -95,11 +122,10 @@ fn read_datum(it: &mut Peekable<IntoIter<Tok>>) -> Result<Datum, String> {
         Tok::Num(n) => Ok(Datum::Num(n)),
         Tok::Bool(b) => Ok(Datum::Bool(b)),
         Tok::Sym(s) => Ok(Datum::Sym(s.into())),
-        Tok::Quote => {
-            // 'x  →  (quote x)
-            let inner = read_datum(it)?;
-            Ok(Datum::List(vec![Datum::Sym("quote".into()), inner]))
-        }
+        Tok::Quote => prefixed("quote", read_datum(it)?),
+        Tok::Quasi => prefixed("quasiquote", read_datum(it)?),
+        Tok::Unquote => prefixed("unquote", read_datum(it)?),
+        Tok::UnquoteSplice => prefixed("unquote-splicing", read_datum(it)?),
         Tok::RParen => Err("unexpected )".into()),
         Tok::LParen => {
             let mut items = Vec::new();
@@ -118,7 +144,11 @@ fn read_datum(it: &mut Peekable<IntoIter<Tok>>) -> Result<Datum, String> {
     }
 }
 
-fn compile(d: &Datum) -> Result<Expr, String> {
+fn prefixed(head: &str, inner: Datum) -> Result<Datum, String> {
+    Ok(Datum::List(vec![Datum::Sym(head.into()), inner]))
+}
+
+pub fn compile(d: &Datum) -> Result<Expr, String> {
     match d {
         Datum::Num(n) => Ok(Expr::Num(*n)),
         Datum::Bool(b) => Ok(Expr::Bool(*b)),
@@ -132,10 +162,14 @@ fn compile(d: &Datum) -> Result<Expr, String> {
                     "lambda" | "λ" => return compile_lambda(&items[1..]),
                     "if" => return compile_if(&items[1..]),
                     "quote" => return compile_quote(&items[1..]),
+                    "quasiquote" => return compile_quasiquote_form(&items[1..]),
                     "let" => return compile_let(&items[1..]),
                     "let*" => return compile_let_star(&items[1..]),
                     "letrec" => return compile_letrec(&items[1..]),
                     "cond" => return compile_cond(&items[1..]),
+                    "unquote" | "unquote-splicing" => {
+                        return Err(format!("{head} outside of quasiquote"));
+                    }
                     _ => {}
                 }
             }
@@ -181,7 +215,7 @@ fn compile_quote(rest: &[Datum]) -> Result<Expr, String> {
     Ok(Expr::Quote(Rc::new(datum_to_val(&rest[0]))))
 }
 
-fn datum_to_val(d: &Datum) -> Val {
+pub fn datum_to_val(d: &Datum) -> Val {
     match d {
         Datum::Num(n) => Val::Num(*n),
         Datum::Bool(b) => Val::Bool(*b),
@@ -193,7 +227,6 @@ fn datum_to_val(d: &Datum) -> Val {
     }
 }
 
-/// `(let ((x e1) (y e2)) body)`  →  `((λ (x y) body) e1 e2)`
 fn compile_let(rest: &[Datum]) -> Result<Expr, String> {
     let (names, inits, body) = split_bindings(rest, "let")?;
     let lam = Expr::Lam(names, Rc::new(body));
@@ -202,7 +235,6 @@ fn compile_let(rest: &[Datum]) -> Result<Expr, String> {
     Ok(Expr::App(app))
 }
 
-/// `(let* ((x e1) (y e2)) body)`  →  `(let ((x e1)) (let ((y e2)) body))`
 fn compile_let_star(rest: &[Datum]) -> Result<Expr, String> {
     let (names, inits, body) = split_bindings(rest, "let*")?;
     let mut expr = body;
@@ -246,10 +278,8 @@ fn split_bindings(rest: &[Datum], form: &str) -> Result<(Vec<Sym>, Vec<Expr>, Ex
     Ok((names, inits, body))
 }
 
-/// `(cond (c1 e1) (c2 e2) (else en))`  →  `(if c1 e1 (if c2 e2 en))`
 fn compile_cond(rest: &[Datum]) -> Result<Expr, String> {
-    // Build from the back so the innermost else gets nested deepest.
-    let mut tail: Expr = Expr::Bool(false); // unreachable fallthrough
+    let mut tail: Expr = Expr::Bool(false);
     let mut saw_else = false;
     for clause in rest.iter().rev() {
         let items = match clause {
@@ -257,18 +287,97 @@ fn compile_cond(rest: &[Datum]) -> Result<Expr, String> {
             _ => return Err("cond: clause must be (test expr)".into()),
         };
         let expr = compile(&items[1])?;
-        if let Datum::Sym(s) = &items[0] {
-            if &**s == "else" {
-                if saw_else {
-                    return Err("cond: multiple else clauses".into());
-                }
-                saw_else = true;
-                tail = expr;
-                continue;
+        if let Datum::Sym(s) = &items[0]
+            && &**s == "else"
+        {
+            if saw_else {
+                return Err("cond: multiple else clauses".into());
             }
+            saw_else = true;
+            tail = expr;
+            continue;
         }
         let test = compile(&items[0])?;
         tail = Expr::If(Rc::new(test), Rc::new(expr), Rc::new(tail));
     }
     Ok(tail)
+}
+
+fn compile_quasiquote_form(rest: &[Datum]) -> Result<Expr, String> {
+    if rest.len() != 1 {
+        return Err("quasiquote: expected (quasiquote datum)".into());
+    }
+    compile_qq(&rest[0])
+}
+
+/// Compile `(quasiquote DATUM)` to an Expr that constructs the value DATUM at
+/// runtime, with `(unquote x)` becoming the eval of x and `(unquote-splicing xs)`
+/// splicing xs (a list) into the surrounding list.
+fn compile_qq(d: &Datum) -> Result<Expr, String> {
+    match d {
+        Datum::Num(_) | Datum::Bool(_) | Datum::Sym(_) => {
+            Ok(Expr::Quote(Rc::new(datum_to_val(d))))
+        }
+        Datum::List(items) => {
+            // (unquote x) at the top of the list = evaluate x normally
+            if items.len() == 2
+                && let Datum::Sym(s) = &items[0]
+            {
+                if &**s == "unquote" {
+                    return compile(&items[1]);
+                }
+                if &**s == "unquote-splicing" {
+                    return Err("unquote-splicing at top of quasiquoted form".into());
+                }
+            }
+
+            // Otherwise: build a list. If any element is a splice, use append; else use list.
+            let any_splice = items.iter().any(is_splice);
+            if !any_splice {
+                let mut app = vec![Rc::new(Expr::Var("list".into()))];
+                for item in items {
+                    app.push(Rc::new(compile_qq(item)?));
+                }
+                return Ok(Expr::App(app));
+            }
+
+            let mut parts: Vec<Rc<Expr>> = Vec::new();
+            let mut bucket: Vec<Rc<Expr>> = Vec::new();
+            let flush = |bucket: &mut Vec<Rc<Expr>>, parts: &mut Vec<Rc<Expr>>| {
+                if !bucket.is_empty() {
+                    let mut list_expr = vec![Rc::new(Expr::Var("list".into()))];
+                    list_expr.append(bucket);
+                    parts.push(Rc::new(Expr::App(list_expr)));
+                }
+            };
+            for item in items {
+                if let Some(inner) = splice_inner(item) {
+                    flush(&mut bucket, &mut parts);
+                    parts.push(Rc::new(compile(inner)?));
+                } else {
+                    bucket.push(Rc::new(compile_qq(item)?));
+                }
+            }
+            flush(&mut bucket, &mut parts);
+
+            let mut app = vec![Rc::new(Expr::Var("append".into()))];
+            app.extend(parts);
+            Ok(Expr::App(app))
+        }
+    }
+}
+
+fn is_splice(d: &Datum) -> bool {
+    splice_inner(d).is_some()
+}
+
+fn splice_inner(d: &Datum) -> Option<&Datum> {
+    if let Datum::List(items) = d
+        && items.len() == 2
+        && let Datum::Sym(s) = &items[0]
+        && &**s == "unquote-splicing"
+    {
+        return Some(&items[1]);
+    }
+    None
 }
