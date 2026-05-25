@@ -268,3 +268,79 @@ alist of `(key . value)` cons pairs, or a closure-of-bindings.
   Acceptable since ctx is single-pass.
 - **Reversibility**: switching to `Val::Map` later is a ~40-line patch
   with a compatibility shim if needed.
+
+## ADR-009: Raw `wasm-bindgen` CLI over `wasm-pack` (2026-05-25)
+
+**Context**: The WASM bridge needs a build step that turns the cdylib output
+into JS-loadable artifacts (`.js` glue + `.wasm` + `.d.ts`). Two standard
+tools do this: `wasm-pack` (a higher-level orchestrator that also handles
+npm packaging) and `wasm-bindgen-cli` (the lower-level bindings generator
+that `wasm-pack` itself shells out to).
+
+**Decision**: Use the raw `wasm-bindgen-cli` directly. The justfile recipe
+is a two-step `cargo build --target wasm32-unknown-unknown --release` +
+`wasm-bindgen --target web --out-dir web/pkg`. The `wasm-bindgen` crate is
+pinned with `=0.2.114` in `crates/wasm/Cargo.toml` to match the installed CLI;
+version drift between the two produces a confusing-but-obvious error at
+bindgen time.
+
+**Alternatives**:
+- **`wasm-pack`**: the more standard tool, generates a `package.json` and
+  is npm-friendly. Adds an install step (`cargo install wasm-pack`) for any
+  new reader of the repo. Not currently installed on this machine.
+- **`trunk`**: bundles HTML/CSS/JS too. Opinionated; obscures the bridge
+  ↔ JS module boundary that's pedagogically interesting.
+- **`wasm-pack` via Docker**: portability without local install. Overkill
+  for a learning project.
+
+**Consequences**:
+- **+** One fewer tool to install. `wasm-bindgen-cli` was already present.
+- **+** Clearer pedagogically — the `cargo build` then `wasm-bindgen`
+  two-step shows what's happening at each stage; `wasm-pack` would hide it.
+- **+** The output (`web/pkg/{wasm.js, wasm_bg.wasm, wasm.d.ts}`) is the
+  same regardless of which tool produced it, so we can switch to `wasm-pack`
+  later without rewriting the JS shell.
+- **−** No `package.json` — can't `npm publish`. Not on the roadmap.
+- **−** Version pinning friction: bump the `=0.2.114` and the
+  `cargo install` in parallel; the error message when they drift is clear
+  but the discipline is manual.
+
+## ADR-010: Rune translation in its own `crates/runes/` micro-crate (2026-05-25)
+
+**Context**: ADR-007 split the spell DSL into three layers (rune tape →
+primitives → resolver) with each layer living in a different language /
+crate. Day-one had the rune translator privately inside
+`crates/lisp/examples/spells.rs`. When the WASM bridge arrived it needed
+the same translator, forcing a decision: duplicate the code, put it inside
+the lisp crate, or extract a third crate.
+
+**Decision**: Extract into `crates/runes/` — a zero-dependency micro-crate
+(~90 LOC) exposing `pub fn tape_to_sexpr(tape: &str) -> Result<String,
+String>` plus the `PLAIN`/`PARAM` rune tables. Both the CLI example
+(`crates/lisp/examples/spells.rs`, via dev-dep) and the WASM bridge
+(`crates/wasm/`, via runtime dep) consume it.
+
+**Alternatives**:
+- **`pub mod runes` inside `crates/lisp/`**: simpler — one fewer Cargo.toml.
+  But the lisp crate would carry a DSL-specific module that nothing in the
+  language uses. Mild ADR-007 violation; future readers would wonder why
+  `lisp::runes` exists alongside `lisp::Vm`.
+- **Duplicate in `crates/wasm/src/runes.rs`**: smallest diff today but
+  introduces two sources of truth for the rune table. Drift was certain.
+- **Inline in `crates/wasm/` only**, deleting the CLI example: would lose
+  a useful reference for what the rune surface looks like at the
+  command line.
+
+**Consequences**:
+- **+** Honors ADR-007's layering explicitly. Each layer has its own home.
+- **+** Both consumers see the same `PLAIN`/`PARAM` definitions; adding
+  a new rune is a one-line change in one place.
+- **+** `runes` stays zero-dep — `cargo test -p runes` is fast and
+  isolated.
+- **+** Sets the pattern for future DSL layers (e.g. a hypothetical
+  `crates/spells/` that owns the prelude prelude as `.lg` source files).
+- **−** One more `Cargo.toml`, one more workspace member to compile.
+  Negligible at this scale.
+- **−** Slight indirection: changing `(area 3)`'s rune now requires editing
+  `crates/runes/src/lib.rs` rather than the example. Documented in
+  `CLAUDE.md`.
