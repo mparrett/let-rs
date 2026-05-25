@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Letrs · Five Rules and a Spell</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:        #0b0c10;
+      --bg-rise:   #11131a;
+      --panel:     #13161e;
+      --ink:       #ece8db;
+      --ink-dim:   #8e8b7e;
+      --ink-dust:  #5a584f;
+      --rule:      rgba(236, 232, 219, 0.08);
+      --rule-soft: rgba(236, 232, 219, 0.04);
+      --indigo:    #8b8fff;
+      --sage:      #7fc59a;
+      --copper:    #d97757;
+      --honey:     #e0b34a;
+      --plum:      #b07cb0;
+      --display:   "Cinzel", "Iowan Old Style", "Palatino", serif;
+      --mono:      "IBM Plex Mono", "Menlo", "Consolas", monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+    body {
+      font-family: var(--mono);
+      font-size: 14.5px;
+      line-height: 1.75;
+      letter-spacing: 0.01em;
+      min-height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(255,255,255,0.012) 0px,
+        rgba(255,255,255,0.012) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 1;
+    }
+    body::after {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none;
+      background:
+        radial-gradient(ellipse at 50% -10%, rgba(139, 143, 255, 0.10), transparent 55%),
+        radial-gradient(ellipse at -10% 80%, rgba(127, 197, 154, 0.06), transparent 45%),
+        radial-gradient(ellipse at 110% 30%, rgba(217, 119, 87, 0.05), transparent 50%),
+        radial-gradient(ellipse at 50% 50%, transparent 30%, rgba(0,0,0,0.6) 100%);
+      z-index: 0;
+    }
+
+    /* Drifting motes */
+    .motes { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+    .motes span {
+      position: absolute;
+      width: 2px; height: 2px;
+      background: var(--indigo);
+      border-radius: 50%;
+      opacity: 0;
+      animation: mote-drift 14s ease-in-out infinite, mote-fade 2s ease-out forwards;
+    }
+    @keyframes mote-fade { 0% { opacity: 0; } 100% { opacity: 0.14; } }
+    @keyframes mote-drift {
+      0%, 100% { transform: translateY(0); opacity: 0.08; }
+      50%      { transform: translateY(-10px); opacity: 0.22; }
+    }
+
+    .frame {
+      position: relative;
+      z-index: 2;
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 6vh 6vw 14vh;
+    }
+
+    /* ─── Masthead ──────────────────────────────────────────── */
+    .mast { margin-bottom: 12vh; position: relative; }
+    .mast .strip {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+      color: var(--ink-dust);
+      border-bottom: 1px solid var(--rule);
+      padding-bottom: 14px;
+      margin-bottom: 56px;
+    }
+    .mast .strip .here { color: var(--indigo); }
+
+    .mast h1 {
+      font-family: var(--display);
+      font-weight: 500;
+      font-size: clamp(48px, 8vw, 96px);
+      line-height: 0.96;
+      letter-spacing: -0.005em;
+      color: var(--ink);
+      margin-bottom: 24px;
+    }
+    .mast h1 .sigil {
+      font-style: italic;
+      font-weight: 400;
+      color: var(--indigo);
+      letter-spacing: 0;
+    }
+    .mast .sub {
+      font-family: var(--display);
+      font-style: italic;
+      font-weight: 400;
+      font-size: clamp(17px, 1.8vw, 22px);
+      color: var(--ink-dim);
+      max-width: 60ch;
+      margin-bottom: 36px;
+      line-height: 1.5;
+    }
+    .mast .seal {
+      display: grid;
+      grid-template-columns: repeat(4, auto);
+      gap: 36px 56px;
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--ink-dust);
+    }
+    .mast .seal dt { color: var(--ink-dust); font-size: 10px; margin-bottom: 4px; letter-spacing: 0.18em; }
+    .mast .seal dd { color: var(--ink); font-family: var(--mono); font-size: 13px; letter-spacing: 0; text-transform: none; }
+
+    /* ─── Prelude ──────────────────────────────────────────── */
+    .prelude {
+      font-family: var(--display);
+      font-style: italic;
+      font-weight: 400;
+      font-size: clamp(18px, 1.9vw, 22px);
+      line-height: 1.55;
+      color: var(--ink-dim);
+      max-width: 64ch;
+      margin: 0 0 14vh 0;
+      padding: 14px 0 14px 28px;
+      border-left: 2px solid var(--indigo);
+    }
+    .prelude::first-letter {
+      font-size: 1.6em;
+      color: var(--honey);
+      padding-right: 0.05em;
+    }
+
+    /* ─── Acts ──────────────────────────────────────────── */
+    .act {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 36px;
+      padding: 60px 0;
+      border-top: 1px solid var(--rule);
+      position: relative;
+    }
+    .act .glyph {
+      font-family: var(--display);
+      font-weight: 400;
+      letter-spacing: 0.18em;
+      color: var(--ink-dust);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .act .glyph .roman {
+      display: block;
+      font-size: 38px;
+      color: var(--indigo);
+      letter-spacing: 0;
+      line-height: 1;
+      margin-top: 10px;
+      font-family: var(--display);
+      font-weight: 400;
+    }
+    .act .glyph .mark {
+      display: block;
+      font-size: 28px;
+      color: var(--sage);
+      margin-top: 22px;
+      opacity: 0.55;
+      font-family: var(--mono);
+    }
+
+    .act h2 {
+      font-family: var(--display);
+      font-weight: 500;
+      font-size: clamp(26px, 3.2vw, 38px);
+      letter-spacing: -0.005em;
+      color: var(--ink);
+      margin-bottom: 6px;
+      line-height: 1.15;
+    }
+    .act h2 .tag {
+      display: block;
+      font-family: var(--mono);
+      font-style: italic;
+      font-weight: 400;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      color: var(--ink-dust);
+      margin-top: 6px;
+    }
+
+    .act p { margin: 16px 0; max-width: 66ch; color: var(--ink); }
+    .act p.aside {
+      color: var(--ink-dim);
+      font-size: 13px;
+      font-style: italic;
+      border-left: 1px solid var(--rule);
+      padding-left: 14px;
+      margin-top: 22px;
+    }
+    .act p.note {
+      color: var(--indigo);
+      font-style: italic;
+      border-left: 2px solid var(--indigo);
+      padding-left: 14px;
+      max-width: 60ch;
+    }
+    .act p.warn {
+      color: var(--copper);
+      font-style: italic;
+      border-left: 2px solid var(--copper);
+      padding-left: 14px;
+      max-width: 60ch;
+    }
+    .act p.lift {
+      color: var(--sage);
+      font-style: italic;
+      border-left: 2px solid var(--sage);
+      padding-left: 14px;
+      max-width: 60ch;
+    }
+
+    .act ul { margin: 14px 0 18px 0; padding-left: 22px; max-width: 66ch; }
+    .act ul li { color: var(--ink); margin: 6px 0; }
+    .act ul li::marker { color: var(--indigo); }
+
+    .act .term, .act .code {
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-left: 2px solid var(--indigo);
+      padding: 16px 20px;
+      margin: 18px 0 24px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--ink);
+      overflow-x: auto;
+      position: relative;
+      white-space: pre;
+      font-family: var(--mono);
+    }
+    .act .term::before, .act .code::before {
+      content: attr(data-label);
+      position: absolute; top: -9px; left: 12px;
+      background: var(--bg);
+      padding: 0 8px;
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--ink-dust);
+    }
+    .act .code { border-left-color: var(--sage); }
+    .act .code::before { color: var(--sage); }
+
+    .term .o   { color: var(--ink-dim); }
+    .term .ok  { color: var(--sage); }
+    .term .hl  { color: var(--honey); }
+    .term .dim { color: var(--ink-dust); }
+    .term .hot { color: var(--copper); }
+    .term .vio { color: var(--indigo); }
+    .term .tea { color: var(--sage); }
+    .term .rune { color: var(--plum); font-size: 1.15em; }
+
+    code { font-family: var(--mono); color: var(--honey); font-size: 0.95em; background: rgba(224,179,74,0.06); padding: 1px 4px; border-radius: 2px; }
+    a { color: var(--indigo); text-decoration: none; border-bottom: 1px dotted rgba(139, 143, 255, 0.4); }
+    a:hover { border-bottom-style: solid; }
+
+    /* Comparison table */
+    .compare {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin: 18px 0 24px;
+      background: var(--panel);
+      border: 1px solid var(--rule);
+    }
+    .compare th, .compare td {
+      text-align: left;
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--rule-soft);
+      vertical-align: top;
+    }
+    .compare thead th {
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--ink-dust);
+      font-weight: 500;
+      background: rgba(139, 143, 255, 0.04);
+    }
+    .compare td.col-a { color: var(--indigo); }
+    .compare td.col-b { color: var(--sage); }
+    .compare td.col-c { color: var(--ink-dim); }
+    .compare tbody tr:hover { background: rgba(139,143,255,0.03); }
+
+    /* Transition diagram */
+    .rules {
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-left: 2px solid var(--honey);
+      padding: 20px 24px;
+      margin: 18px 0 24px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--ink);
+      white-space: pre;
+      overflow-x: auto;
+      position: relative;
+    }
+    .rules::before {
+      content: "the five transition rules · CEK";
+      position: absolute; top: -9px; left: 16px;
+      background: var(--bg);
+      padding: 0 8px;
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--honey);
+    }
+    .rules .lab { color: var(--ink-dust); }
+    .rules .arr { color: var(--indigo); }
+    .rules .v   { color: var(--sage); }
+    .rules .k   { color: var(--copper); }
+
+    /* Counter list (tiers) */
+    .tiers {
+      margin: 18px 0 24px;
+      counter-reset: tier;
+      list-style: none;
+      padding: 0;
+    }
+    .tiers li {
+      padding: 14px 0 14px 56px;
+      position: relative;
+      border-top: 1px dashed var(--rule-soft);
+      counter-increment: tier;
+      max-width: 70ch;
+    }
+    .tiers li:first-child { border-top: 1px solid var(--rule); }
+    .tiers li:last-child  { border-bottom: 1px solid var(--rule); }
+    .tiers li::before {
+      content: counter(tier, decimal-leading-zero);
+      position: absolute; left: 0; top: 16px;
+      font-size: 12px;
+      letter-spacing: 0.18em;
+      color: var(--indigo);
+      font-family: var(--mono);
+    }
+    .tiers li strong { color: var(--ink); font-weight: 500; }
+    .tiers li .why {
+      display: block;
+      color: var(--ink-dim);
+      font-size: 13px;
+      font-style: italic;
+      margin-top: 4px;
+    }
+
+    /* Tape — for the rune lines */
+    .tape {
+      display: inline-block;
+      background: rgba(176, 124, 176, 0.08);
+      border: 1px solid rgba(176, 124, 176, 0.25);
+      padding: 4px 14px;
+      margin: 4px 6px 4px 0;
+      font-size: 1.4em;
+      letter-spacing: 0.25em;
+      color: var(--plum);
+      border-radius: 3px;
+    }
+
+    /* Coda */
+    .coda {
+      margin-top: 12vh;
+      padding: 40px 36px 44px;
+      border: 1px solid var(--rule);
+      background: linear-gradient(180deg, var(--bg-rise), var(--bg));
+      position: relative;
+    }
+    .coda::before {
+      content: "▾ what comes after";
+      position: absolute; top: -9px; left: 20px;
+      background: var(--bg);
+      padding: 0 10px;
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--indigo);
+    }
+    .coda h3 {
+      font-family: var(--display);
+      font-weight: 500;
+      font-size: 26px;
+      color: var(--indigo);
+      margin-bottom: 14px;
+    }
+    .coda p { color: var(--ink); max-width: 66ch; margin-bottom: 12px; }
+    .coda ul { margin: 18px 0 0 22px; padding: 0; }
+    .coda li {
+      padding: 6px 0;
+      color: var(--ink);
+      max-width: 66ch;
+    }
+    .coda li::marker { color: var(--honey); }
+    .coda li strong { color: var(--sage); font-weight: 500; }
+
+    /* Colophon */
+    .colophon {
+      margin-top: 10vh;
+      padding-top: 28px;
+      border-top: 1px solid var(--rule);
+      display: flex; justify-content: space-between;
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--ink-dust);
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    /* Staggered reveal */
+    .act { opacity: 0; transform: translateY(14px); animation: enter 0.8s ease-out forwards; }
+    .act:nth-of-type(1) { animation-delay: 0.30s; }
+    .act:nth-of-type(2) { animation-delay: 0.42s; }
+    .act:nth-of-type(3) { animation-delay: 0.54s; }
+    .act:nth-of-type(4) { animation-delay: 0.66s; }
+    @keyframes enter { to { opacity: 1; transform: translateY(0); } }
+
+    .mast h1, .mast .sub, .mast .strip, .mast .seal {
+      opacity: 0; animation: enter 0.8s ease-out forwards;
+    }
+    .mast .strip { animation-delay: 0.05s; }
+    .mast h1    { animation-delay: 0.18s; }
+    .mast .sub  { animation-delay: 0.32s; }
+    .mast .seal { animation-delay: 0.48s; }
+
+    @media (max-width: 720px) {
+      .act { grid-template-columns: 1fr; gap: 14px; padding: 44px 0; }
+      .act .glyph { display: flex; gap: 20px; align-items: baseline; }
+      .act .glyph .roman { margin-top: 0; font-size: 24px; }
+      .act .glyph .mark  { margin-top: 0; font-size: 20px; }
+      .mast .seal { grid-template-columns: repeat(2, auto); gap: 24px; }
+      .compare th, .compare td { padding: 7px 10px; font-size: 12px; }
+      .rules, .act .term, .act .code { font-size: 11.5px; padding: 14px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="motes" aria-hidden="true">
+    <span style="top:  6vh; left:  4vw"></span>
+    <span style="top: 14vh; right: 6vw"></span>
+    <span style="top: 22vh; left:  3vw"></span>
+    <span style="top: 30vh; right: 5vw"></span>
+    <span style="top: 41vh; left:  7vw"></span>
+    <span style="top: 52vh; right: 4vw"></span>
+    <span style="top: 62vh; left:  3vw"></span>
+    <span style="top: 73vh; right: 6vw"></span>
+    <span style="top: 84vh; left:  5vw"></span>
+    <span style="top: 95vh; right: 3vw"></span>
+    <span style="top:108vh; left:  6vw"></span>
+    <span style="top:120vh; right: 4vw"></span>
+    <span style="top:133vh; left:  3vw"></span>
+    <span style="top:146vh; right: 7vw"></span>
+    <span style="top:160vh; left:  5vw"></span>
+    <span style="top:175vh; right: 4vw"></span>
+  </div>
+
+  <main class="frame">
+
+    <header class="mast">
+      <div class="strip">
+        <span>Build log · 2026-05-25</span>
+        <span class="here">letrs · day one</span>
+        <span>A lisp at the bottom of a spell</span>
+      </div>
+      <h1>Let<span class="sigil">rs</span></h1>
+      <p class="sub">
+        A CEK abstract machine, a small functional lisp grown on top, a rune-tape DSL above that, and a host world the spells can actually paint — built in a single sitting, in zero-dependency Rust, with 26 tests and one continuation.
+      </p>
+      <dl class="seal">
+        <div><dt>Engine</dt><dd>~1.3K LOC Rust</dd></div>
+        <div><dt>Dependencies</dt><dd>0</dd></div>
+        <div><dt>Tests</dt><dd>26 passing</dd></div>
+        <div><dt>Tail depth</dt><dd>100,000 verified</dd></div>
+      </dl>
+    </header>
+
+    <p class="prelude">
+      Xsofy is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Letrs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives.
+    </p>
+
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">I</span>
+        <span class="mark">λ</span>
+      </div>
+      <div class="body">
+        <h2>Five rules
+          <span class="tag">— the CEK abstract machine, on an index card</span>
+        </h2>
+        <p>
+          The heart of letrs is Felleisen &amp; Friedman's CEK machine (1980s) — a small evolution of Landin's SECD (1964) and one of the cleanest things anyone has ever written down about how lambda calculus actually runs. Three registers: <em>C</em>ontrol, <em>E</em>nvironment, <em>K</em>ontinuation. The whole evaluator is a function that takes one of those triples and returns the next one. There is no native call stack. The "stack" is the continuation, reified as plain data on the heap.
+        </p>
+
+        <div class="rules">
+<span class="lab">⟨</span>x        <span class="lab">,</span> ρ <span class="lab">,</span> κ<span class="lab">⟩</span>            <span class="arr">→</span>  <span class="lab">⟨</span><span class="v">ρ(x)</span><span class="lab">,</span> κ<span class="lab">⟩</span>                  <span class="dim">— variable lookup yields a value</span>
+<span class="lab">⟨</span>λx.e     <span class="lab">,</span> ρ <span class="lab">,</span> κ<span class="lab">⟩</span>            <span class="arr">→</span>  <span class="lab">⟨</span><span class="v">Clo(λx.e, ρ)</span><span class="lab">,</span> κ<span class="lab">⟩</span>          <span class="dim">— lambda is a value (closure)</span>
+<span class="lab">⟨</span>(e₁ e₂)<span class="lab">,</span> ρ <span class="lab">,</span> κ<span class="lab">⟩</span>            <span class="arr">→</span>  <span class="lab">⟨</span>e₁<span class="lab">,</span> ρ<span class="lab">,</span> <span class="k">Arg(e₂, ρ, κ)</span><span class="lab">⟩</span>     <span class="dim">— evaluate fn first</span>
+<span class="lab">⟨</span>v        <span class="lab">,</span>     <span class="k">Arg(e, ρ, κ)</span><span class="lab">⟩</span>     <span class="arr">→</span>  <span class="lab">⟨</span>e<span class="lab">,</span> ρ<span class="lab">,</span> <span class="k">Fn(v, κ)</span><span class="lab">⟩</span>           <span class="dim">— then evaluate arg</span>
+<span class="lab">⟨</span>v        <span class="lab">,</span>     <span class="k">Fn(Clo(λx.e, ρ'), κ)</span><span class="lab">⟩</span> <span class="arr">→</span> <span class="lab">⟨</span>e<span class="lab">,</span> ρ'[x↦v]<span class="lab">,</span> κ<span class="lab">⟩</span>     <span class="dim">— enter closure body</span>
+        </div>
+
+        <p>
+          Five rules. The driver is a four-line loop:
+        </p>
+
+        <pre class="code" data-label="step.rs · the run loop"><span class="tea">let</span> <span class="hl">mut</span> s = State { mode: Mode::Eval(expr, env), k: Rc::new(K::Halt) };
+<span class="tea">loop</span> {
+    <span class="tea">match</span> step(s)? {
+        Step::Continue(next) =&gt; s = next,
+        Step::Done(v)        =&gt; <span class="tea">return</span> Ok(v),
+    }
+}</pre>
+
+        <p class="note">
+          Tail calls fall out for free. When a closure is entered (rule 5), the
+          continuation <code>κ</code> is passed through <em>unchanged</em>. No frame
+          is pushed for the call. A tail-recursive loop counting down from 100,000
+          terminates in milliseconds with the K-chain depth never exceeding two.
+        </p>
+
+        <p class="aside">
+          The test <code>tail_calls_dont_grow_the_stack</code> is the proof: it
+          builds the Y combinator in lisp, defines a counter, and runs it 100,000
+          deep. If TCO were broken the harness would overflow the Rust call stack;
+          it doesn't, because the Rust call stack is never used for lisp
+          recursion in the first place. All the &quot;stack&quot; lives in
+          <code>Rc&lt;K&gt;</code> chains on the heap.
+        </p>
+      </div>
+    </section>
+
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">II</span>
+        <span class="mark">⌜</span>
+      </div>
+      <div class="body">
+        <h2>The lisp grew up
+          <span class="tag">— closures, cons cells, letrec by way of mutable env cells</span>
+        </h2>
+        <p>
+          Atoms and lambdas alone don't make a useful language. The second slice
+          added the pieces that turn a calculus into something you'd actually
+          program in: symbols, quoting, cons cells, variadic arithmetic, the
+          predicate suite (<code>null?</code> <code>pair?</code> <code>number?</code>
+          <code>symbol?</code> <code>eq?</code>), the comparison chain
+          (<code>(&lt; 1 2 3)</code> ⇒ <code>#t</code>), and the binding family:
+          <code>let</code>, <code>let*</code>, <code>cond</code>, <code>letrec</code>.
+        </p>
+        <p>
+          Three of those are pure desugarings. <code>let</code> becomes an
+          immediately-applied lambda; <code>let*</code> nests one of those per
+          binding; <code>cond</code> folds into a chain of <code>if</code>s.
+          No new AST nodes, no new continuations, ~20 lines in <code>parse.rs</code>.
+        </p>
+        <p>
+          <code>letrec</code> is the interesting one. To let a closure see its own
+          name — and its siblings, for mutual recursion — the bindings have to be
+          in scope <em>before</em> any init expression runs. The trick: each
+          environment slot is not a <code>Val</code> directly but an
+          <code>Rc&lt;RefCell&lt;Val&gt;&gt;</code>. <code>letrec</code> allocates a
+          placeholder cell per binding, extends the env with them all, then
+          evaluates the inits one at a time, patching each cell after its
+          corresponding value is computed. Any closure created during init
+          evaluation captures the recursive environment and resolves its
+          siblings through the cells.
+        </p>
+
+        <pre class="code" data-label="tests/eval.rs · letrec_mutual_recursion"><span class="vio">(letrec</span> <span class="hl">((even? (lambda (n) (if (= n 0) #t (odd?  (- n 1)))))</span>
+         <span class="hl">(odd?  (lambda (n) (if (= n 0) #f (even? (- n 1))))))</span>
+  <span class="vio">(list (even? 10) (odd? 10) (even? 7) (odd? 7)))</span>
+<span class="dim">;; → (#t #f #f #t)</span></pre>
+
+        <p>
+          At this point the lisp can also host its own library code. <code>map</code>
+          is no longer a primitive — it's six lines defined inside a
+          <code>letrec</code>:
+        </p>
+
+        <pre class="code" data-label="tests/eval.rs · map_via_letrec"><span class="vio">(letrec</span> <span class="hl">((map (lambda (f xs)</span>
+                <span class="hl">(if (null? xs) '()</span>
+                    <span class="hl">(cons (f (car xs)) (map f (cdr xs)))))))</span>
+  <span class="vio">(map (lambda (n) (* n n)) '(1 2 3 4 5)))</span>
+<span class="dim">;; → (1 4 9 16 25)</span></pre>
+
+        <p class="aside">
+          The mutable cells in the env never get touched by anything other than
+          <code>letrec</code> in the current code, so the rest of the language
+          stays observably pure-functional. If we ever add <code>set!</code> it's
+          a fifteen-line addition — the cells are already there waiting.
+        </p>
+      </div>
+    </section>
+
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">III</span>
+        <span class="mark">⌬</span>
+      </div>
+      <div class="body">
+        <h2>The spell
+          <span class="tag">— rune tape, threaded ctx, world transition</span>
+        </h2>
+        <p>
+          This is the part that ties back to xsofy. The player surface is a flat
+          sequence of Unicode runes:
+        </p>
+
+        <p style="margin: 18px 0 22px;">
+          <span class="tape">ᚠ</span>
+          <span class="tape">ᚠ ᛊ 3 ᛁ</span>
+          <span class="tape">ᚱ ᚠ ᛏ 5</span>
+          <span class="tape">ᛒ ᛁ ᛊ 2</span>
+        </p>
+
+        <p>
+          A ~50-line Rust translator (<code>examples/spells.rs</code>) tokenizes
+          each rune through a table: plain runes (<code>ᚠ → fire</code>) become
+          unary primitives; parametrized runes (<code>ᛊ → area</code>,
+          <code>ᛏ → power</code>) pair with the following numeral. The result
+          is an s-expression that wraps the rune list in a user-level threading
+          combinator:
+        </p>
+
+        <pre class="code" data-label="ᚠ ᛊ 3 ᛁ · compiled"><span class="vio">(thread (start) (list</span> <span class="hl">fire</span> <span class="hl">(area 3)</span> <span class="hl">ice</span><span class="vio">))</span></pre>
+
+        <p>
+          <code>thread</code> is nine characters of lisp; the primitives are
+          three-line closures over <code>assoc-set</code>; the entire prelude is
+          a single <code>letrec</code>. The engine itself learned nothing new for
+          this — the spell DSL is a vocabulary on top of the lisp, not a
+          modification to it.
+        </p>
+
+        <p>
+          Once a spell has been evaluated it's a <em>ctx</em> — an associative
+          list of (key, value) pairs accumulated by each primitive in turn.
+          A second primitive, <code>(world-apply! ctx)</code>, is the resolver:
+          it reads <code>element</code>, <code>tx</code>, <code>ty</code>,
+          <code>area</code> from the ctx and paints a square neighborhood of the
+          host's grid world.
+        </p>
+
+        <pre class="term" data-label="cargo run --example world"><span class="dim">== cast 'ice (area 2)' at (3,2) ==</span>
+<span class="ok">→ 25 tiles painted</span>
+<span class="vio">.ooooo.</span>
+<span class="vio">.ooooo.</span>
+<span class="vio">.ooooo.</span>
+<span class="vio">.ooooo.</span>
+<span class="vio">.ooooo.</span>
+
+<span class="dim">log:</span>
+  <span class="hl">·</span> cast fire at (1,1) area=0 → 1 tiles
+  <span class="hl">·</span> cast fire at (4,2) area=1 → 9 tiles
+  <span class="hl">·</span> cast ice  at (3,2) area=2 → 25 tiles</pre>
+
+        <p class="note">
+          Notice what happens when a tape mentions two elements:
+          <code>ᚠ ᛊ 3 ᛁ</code> produces a ctx with both
+          <code>(element . fire)</code> and <code>(element . ice)</code> still
+          present. The resolver currently takes the freshest, but the older
+          binding hasn't been erased — it's structurally still there. This is
+          where the emergent payoff lives: a smarter resolver could see both
+          and fork the spell into two effects, blend, or pick a winner by
+          context. Same DSL, different semantics, no engine change.
+        </p>
+
+        <p>
+          The split between the language and the host is the design decision
+          that makes this scale. The lisp returns a ctx — pure data, no side
+          effects, replayable. The host decides what that ctx <em>means</em>
+          this turn. Spells are testable in isolation. The world rolls back
+          for free. Precognition (&quot;show me where this would go&quot;) is a
+          tentative call and a render.
+        </p>
+
+        <table class="compare">
+          <thead>
+            <tr><th>layer</th><th>where it lives</th><th>what it knows</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="col-a">rune tape</td>     <td class="col-b">Rust translator</td>   <td class="col-c">just a substitution table</td></tr>
+            <tr><td class="col-a">s-expression</td>  <td class="col-b">lisp Datum</td>        <td class="col-c">structural only, not yet code</td></tr>
+            <tr><td class="col-a">primitives</td>    <td class="col-b">user-level closures</td><td class="col-c">ctx → ctx, pure</td></tr>
+            <tr><td class="col-a">ctx</td>           <td class="col-b">cons-list of pairs</td><td class="col-c">accumulating spell state</td></tr>
+            <tr><td class="col-a">resolver</td>      <td class="col-b">Rust <code>world-apply!</code></td><td class="col-c">reads ctx, mutates world</td></tr>
+            <tr><td class="col-a">world</td>         <td class="col-b"><code>Rc&lt;RefCell&lt;World&gt;&gt;</code></td><td class="col-c">the host's mutable state</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">IV</span>
+        <span class="mark">∮</span>
+      </div>
+      <div class="body">
+        <h2>The lisp learns to extend itself
+          <span class="tag">— defmacro, quasiquote, the moment syntax becomes a library</span>
+        </h2>
+        <p>
+          A lisp without macros is a calculator with parentheses. The macro
+          system is the moment the language stops being something the host
+          defined and starts being something the user can extend at compile time.
+        </p>
+        <p>
+          Letrs's macros are procedural — every macro is a regular closure that
+          runs at compile time, takes the raw s-expression arguments as quoted
+          data, and returns a new s-expression to be compiled in its place. The
+          implementation is ~80 lines on top of the existing machinery. <code>defmacro</code>
+          is a top-level form; the <code>Vm</code> holds a <code>HashMap&lt;String, Macro&gt;</code>
+          alongside the env; <code>eval_str</code> walks the datum tree
+          first, expands any list whose head is a registered macro, and only then
+          calls <code>parse::compile</code>.
+        </p>
+        <p>
+          Quasiquote is the ergonomic companion: <code>`(if ,c ,t #f)</code>
+          parses to <code>(quasiquote (if (unquote c) (unquote t) #f))</code> and
+          compiles to a runtime expression that builds the list with
+          <code>c</code> and <code>t</code> evaluated. With <code>,@</code>
+          splicing for variadic positions.
+        </p>
+
+        <pre class="code" data-label="thread-first defined in itself · tests/eval.rs"><span class="vio">(defmacro -&gt; args</span>
+  <span class="hl">(letrec ((step (lambda (acc form)</span>
+                   <span class="hl">(if (pair? form)</span>
+                       <span class="hl">(cons (car form) (cons acc (cdr form)))</span>
+                       <span class="hl">(list form acc))))</span>
+           <span class="hl">(loop (lambda (acc fs)</span>
+                   <span class="hl">(if (null? fs) acc</span>
+                       <span class="hl">(loop (step acc (car fs)) (cdr fs))))))</span>
+    <span class="hl">(loop (car args) (cdr args))))</span>
+
+<span class="dim">;; (-&gt; 5 (+ 3) (* 2))  expands to  (* (+ 5 3) 2)  evaluates to  16</span>
+<span class="dim">;; (-&gt; 10 inc inc inc)  expands to  (inc (inc (inc 10)))  →  13</span></pre>
+
+        <p>
+          That <code>-&gt;</code> is the thread-first operator from Clojure,
+          built in lisp from scratch. The trick xsofy uses to compose spell
+          primitives — <code>(-&gt; ctx fire (area 3) ice)</code> — is now
+          expressible as user-level syntax, not a special form baked into the
+          engine.
+        </p>
+        <p class="warn">
+          Hygiene is not implemented. A macro that introduces a binding named
+          <code>tmp</code> can shadow a <code>tmp</code> at the call site.
+          This is the standard Common Lisp tradeoff and intentional for a
+          learning project. Gensyms or syntax-rules would be the next step,
+          but every macro we've actually wanted so far has been hygiene-safe
+          by construction (single-pass templates, no fresh bindings).
+        </p>
+
+        <p>
+          With macros in the language, the special-form list in
+          <code>parse.rs</code> shrinks to just the things that can't be
+          desugared:
+        </p>
+
+        <ol class="tiers">
+          <li><strong>lambda · if · quote · letrec</strong>
+            <span class="why">primitive — these define the calculus</span>
+          </li>
+          <li><strong>quasiquote · unquote · unquote-splicing</strong>
+            <span class="why">primitive at the parse layer because they need data, not values</span>
+          </li>
+          <li><strong>defmacro</strong>
+            <span class="why">top-level only; registers a closure in the macro table</span>
+          </li>
+          <li><strong>let · let* · cond</strong>
+            <span class="why">desugared at parse time; could be macros instead, currently kept in Rust for clearer error messages</span>
+          </li>
+        </ol>
+
+        <p class="lift">
+          Everything else — <code>when</code>, <code>unless</code>,
+          <code>and</code>, <code>or</code>, the threading combinators,
+          eventually <code>defspell</code> itself — lives in user code. The
+          syntax of the spell DSL becomes a library, not a fork of the parser.
+        </p>
+      </div>
+    </section>
+
+    <div class="coda">
+      <h3>What comes after</h3>
+      <p>
+        The substrate is in place. From here the moves are small and additive,
+        each one a clean slice of a couple hundred lines:
+      </p>
+      <ul>
+        <li><strong>WASM bridge.</strong> <code>crates/wasm/</code> + a static <code>web/</code> shell with the REPL in a browser console. The whole COI / SAB / service-worker saga that xsofy fights goes away — wasm-bindgen's async event model means input is JS-pushed, not VM-pulled.</li>
+        <li><strong>More host primitives.</strong> Entities, line-of-sight, A* pathing, sound. Each one is a <code>WorldPrim</code> in a const slice; the lisp learns them by name with no engine change.</li>
+        <li><strong>A real spell library.</strong> <code>defspell</code> as a macro that registers under a rune table; element conflict resolution as a strategy passed to the resolver; the &quot;fork into two effects&quot; behavior the design has been hinting at since day one.</li>
+        <li><strong>Hygienic macros, or not.</strong> An honest pass at gensym + a renaming scheme; or a deliberate decision that lisp-1 unhygienic macros are fine for this codebase and a documented convention is enough.</li>
+        <li><strong>Persistent maps.</strong> When the alist outgrows the cons-list, a <code>Val::Map</code> backed by a small persistent structure. Probably not for a long time.</li>
+        <li><strong>The play loop.</strong> Turn-based render, input → spell → world tick → next state. The game part.</li>
+      </ul>
+      <p>
+        None of those are large; all of them are interesting; most of them are
+        independent. The hard part is done — the language is itself.
+      </p>
+    </div>
+
+    <footer class="colophon">
+      <span>letrs · 2026-05-25</span>
+      <span>three commits · 26 tests · zero dependencies</span>
+      <span>built on a CEK machine</span>
+    </footer>
+
+  </main>
+
+</body>
+</html>
