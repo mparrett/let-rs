@@ -1,0 +1,295 @@
+/* letrs · web shell styles
+ *
+ * Palette + typography lifted from docs/letrs.html. Cooler/more academic than
+ * xsofy's warmer JetBrains-mono look — Cinzel display + IBM Plex Mono body,
+ * indigo/sage/copper/honey accents on a near-black ground.
+ */
+
+:root {
+  --bg:       #0b0c10;
+  --bg-rise:  #11131a;
+  --panel:    #13161e;
+  --ink:      #ece8db;
+  --ink-dim:  #8e8b7e;
+  --ink-dust: #5a584f;
+  --rule:      rgba(236, 232, 219, 0.08);
+  --rule-soft: rgba(236, 232, 219, 0.04);
+  --indigo:   #8b8fff;
+  --sage:     #7fc59a;
+  --copper:   #d97757;
+  --honey:    #e0b34a;
+  --plum:     #b07cb0;
+  --display:  "Cinzel", "Iowan Old Style", "Palatino", serif;
+  --mono:     "IBM Plex Mono", "Menlo", "Consolas", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--ink); }
+body {
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.65;
+  letter-spacing: 0.01em;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  position: relative;
+}
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background: repeating-linear-gradient(to bottom,
+    rgba(255,255,255,0.012) 0, rgba(255,255,255,0.012) 1px,
+    transparent 1px, transparent 3px);
+}
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(ellipse at 50% -10%, rgba(139,143,255,0.10), transparent 55%),
+    radial-gradient(ellipse at 110% 80%, rgba(127,197,154,0.05), transparent 50%),
+    radial-gradient(ellipse at -10% 30%, rgba(217,119,87,0.04), transparent 50%);
+}
+
+.frame {
+  position: relative; z-index: 1;
+  max-width: 1180px; margin: 0 auto;
+  padding: 5vh 5vw 8vh;
+}
+
+/* ─── Masthead ──────────────────────────────────────────── */
+.mast { margin-bottom: 5vh; }
+.mast .strip {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-dust);
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 12px;
+  margin-bottom: 28px;
+  flex-wrap: wrap; gap: 8px;
+}
+.mast .strip .here { color: var(--indigo); }
+.mast h1 {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: clamp(40px, 6vw, 64px);
+  line-height: 1;
+  margin-bottom: 12px;
+}
+.mast h1 .sigil { font-style: italic; color: var(--indigo); }
+.mast .sub {
+  font-family: var(--display); font-style: italic; font-weight: 400;
+  font-size: clamp(15px, 1.5vw, 18px);
+  color: var(--ink-dim); max-width: 60ch;
+}
+
+/* ─── Layout ──────────────────────────────────────────── */
+.cols { display: grid; gap: 24px; grid-template-columns: 1fr; }
+@media (min-width: 940px) {
+  .cols { grid-template-columns: 1fr 1fr; align-items: start; }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--indigo);
+  padding: 20px 22px;
+  position: relative;
+}
+.panel h2 {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin-bottom: 16px;
+  letter-spacing: 0.01em;
+}
+#repl.panel { border-left-color: var(--sage); }
+
+/* ─── Spell Lab ──────────────────────────────────────────── */
+.palette {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 14px;
+}
+.palette-sep {
+  width: 1px; background: var(--rule); margin: 0 6px;
+}
+.rune {
+  font-family: var(--mono);
+  font-size: 1.4em;
+  min-width: 38px; height: 38px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--plum);
+  border: 1px solid rgba(176,124,176,0.35);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 80ms, color 80ms, border-color 80ms;
+}
+.rune:hover {
+  background: rgba(176,124,176,0.12);
+  color: var(--ink);
+}
+.rune.param { color: var(--honey); border-color: rgba(224,179,74,0.35); }
+.rune.param:hover { background: rgba(224,179,74,0.10); }
+.rune.digit { color: var(--sage); border-color: rgba(127,197,154,0.30); font-size: 1.15em; }
+.rune.digit:hover { background: rgba(127,197,154,0.10); }
+.rune.ctl { color: var(--ink-dim); border-color: var(--rule); font-size: 1.1em; }
+.rune.ctl:hover { background: rgba(255,255,255,0.04); color: var(--ink); }
+
+.field {
+  display: flex; flex-direction: column; gap: 4px;
+  margin: 10px 0;
+}
+.field > span {
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-dust);
+}
+.field.coord { width: 70px; }
+input[type="text"], input[type="number"], textarea {
+  font-family: var(--mono);
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  padding: 8px 10px;
+  border-radius: 2px;
+  outline: none;
+  width: 100%;
+}
+input:focus, textarea:focus {
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 2px rgba(139,143,255,0.12);
+}
+input[type="text"] { letter-spacing: 0.05em; font-size: 16px; }
+
+.row {
+  display: flex; align-items: end; gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.hint {
+  font-size: 11px; color: var(--ink-dust);
+  margin-left: auto;
+}
+
+.action {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 9px 18px;
+  background: transparent;
+  color: var(--indigo);
+  border: 1px solid var(--indigo);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background 80ms;
+}
+.action:hover { background: rgba(139,143,255,0.10); }
+.action.primary {
+  background: rgba(139,143,255,0.14);
+  color: var(--ink);
+}
+.action.primary:hover { background: rgba(139,143,255,0.22); }
+.action.subdued {
+  color: var(--ink-dust);
+  border-color: var(--rule);
+}
+.action.subdued:hover { background: rgba(255,255,255,0.04); color: var(--ink); }
+
+.grid {
+  font-family: var(--mono);
+  font-size: 22px;
+  line-height: 1.15;
+  letter-spacing: 0.30em;
+  color: var(--ink-dim);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  padding: 16px 18px;
+  margin: 14px 0;
+  text-align: center;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.legend {
+  display: flex; flex-wrap: wrap; gap: 14px;
+  font-size: 11px; color: var(--ink-dust);
+  letter-spacing: 0.05em;
+  margin: 4px 0 12px;
+}
+.g {
+  font-family: var(--mono);
+  font-size: 13px;
+  margin-right: 4px;
+}
+.g-floor { color: var(--ink-dim); }
+.g-fire  { color: var(--copper); }
+.g-ice   { color: var(--indigo); }
+.g-wall  { color: var(--ink-dust); }
+
+.log, .out {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-dim);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  padding: 12px 14px;
+  border-radius: 2px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log:empty::before, .out:empty::before {
+  content: "— empty —";
+  color: var(--ink-dust);
+  font-style: italic;
+}
+
+/* ─── REPL ──────────────────────────────────────────── */
+textarea {
+  resize: vertical;
+  min-height: 90px;
+  font-size: 13px;
+}
+.out { min-height: 120px; max-height: 320px; }
+
+.cheatsheet {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--honey);
+  background: rgba(224,179,74,0.04);
+  font-size: 12px;
+}
+.cheatsheet summary {
+  cursor: pointer;
+  color: var(--honey);
+  font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+}
+.cheatsheet ul {
+  margin-top: 10px; padding-left: 20px;
+  color: var(--ink-dim);
+}
+.cheatsheet li { margin: 6px 0; }
+.cheatsheet code {
+  font-family: var(--mono);
+  color: var(--ink);
+  background: rgba(255,255,255,0.04);
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-size: 11.5px;
+}
+
+/* ─── Colophon ──────────────────────────────────────────── */
+.colophon {
+  margin-top: 6vh;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+  display: flex; justify-content: space-between;
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-dust);
+  flex-wrap: wrap; gap: 8px;
+}
+#coi-chip.coi-no  { color: var(--sage); }
+#coi-chip.coi-yes { color: var(--copper); }
