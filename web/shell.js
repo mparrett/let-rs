@@ -34,17 +34,20 @@ if (crossOriginIsolated) {
 }
 
 // Rune palette → append to tape input.
+//
+// Deliberately *not* calling tapeEl.focus() here — on mobile, programmatic
+// focus pops the soft keyboard, which is the opposite of what we want when
+// the user is composing a spell via the rune buttons. Tapping the field
+// directly still focuses it normally (default browser behavior).
 document.querySelectorAll('.rune').forEach((btn) => {
   if (btn.id === 'clear-tape') return;
   btn.addEventListener('click', () => {
     tapeEl.value += btn.dataset.rune;
-    tapeEl.focus();
   });
 });
 
 $('#clear-tape').addEventListener('click', () => {
   tapeEl.value = '';
-  tapeEl.focus();
 });
 
 $('#cast-btn').addEventListener('click', () => {
@@ -99,7 +102,8 @@ $('#clear-out').addEventListener('click', () => {
 document.querySelectorAll('.tape-example').forEach((el) => {
   el.addEventListener('click', () => {
     tapeEl.value = el.dataset.tape;
-    tapeEl.focus();
+    // Scroll into view so the user can see what got loaded, but don't focus —
+    // same mobile-keyboard concern as the rune palette handler above.
     tapeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
 });
