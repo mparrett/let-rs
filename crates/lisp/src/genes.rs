@@ -10,7 +10,6 @@
 //! Zero external deps. The CEK engine itself is untouched.
 
 use std::collections::HashSet;
-use std::rc::Rc;
 
 use crate::Vm;
 use crate::val::{Arity, Val};
@@ -29,10 +28,6 @@ pub const PRELUDE_BINDINGS: &str = r#"
 (letrec ((dom        #t)
          (rec        #f)
          (assoc-set  (lambda (k v ctx) (cons (cons k v) ctx)))
-         (assoc-get  (lambda (k ctx)
-                       (if (null? ctx) '()
-                           (if (eq? (car (car ctx)) k) (cdr (car ctx))
-                               (assoc-get k (cdr ctx))))))
          (thread     (lambda (ctx fs)
                        (if (null? fs) ctx
                            (thread ((car fs) ctx) (cdr fs)))))
@@ -169,7 +164,7 @@ fn express_prim(args: &[Val]) -> Result<Val, String> {
         };
         phenotype.push((Val::Sym(key.into()), resolved));
     }
-    Ok(to_pair_list(phenotype))
+    Ok(Val::alist_from(&phenotype))
 }
 
 /// `(mutate! rate seed ctx)` — walk the genome and roll a per-allele
@@ -306,21 +301,11 @@ fn xorshift32(state: &mut u32) -> u32 {
 /// from a Vec of (trait, alleles). The inverse of
 /// `collect_first_pairs` + `unpack_pairs`.
 fn traits_to_genome_ctx(traits: Vec<(String, Vec<(Val, Val)>)>) -> Val {
-    let mut ctx = Val::Nil;
-    for (key, alleles) in traits.into_iter().rev() {
-        let allele_list = alleles
-            .into_iter()
-            .rev()
-            .fold(Val::Nil, |acc, (v, d)| {
-                Val::Cons(Rc::new(Val::Cons(Rc::new(v), Rc::new(d))), Rc::new(acc))
-            });
-        let entry = Val::Cons(
-            Rc::new(Val::Sym(key.into())),
-            Rc::new(allele_list),
-        );
-        ctx = Val::Cons(Rc::new(entry), Rc::new(ctx));
-    }
-    ctx
+    let pairs: Vec<(Val, Val)> = traits
+        .into_iter()
+        .map(|(key, alleles)| (Val::Sym(key.into()), Val::alist_from(&alleles)))
+        .collect();
+    Val::alist_from(&pairs)
 }
 
 fn resolve_numeric(alleles: &[(Val, Val)]) -> Result<Val, String> {
@@ -353,15 +338,6 @@ fn resolve_categorical(alleles: &[(Val, Val)], genome_hash: u32) -> Val {
             if genome_hash & 1 == 0 { pair[0].0.clone() } else { pair[1].0.clone() }
         }
     }
-}
-
-fn to_pair_list(items: Vec<(Val, Val)>) -> Val {
-    let mut acc = Val::Nil;
-    for (k, v) in items.into_iter().rev() {
-        let pair = Val::Cons(Rc::new(k), Rc::new(v));
-        acc = Val::Cons(Rc::new(pair), Rc::new(acc));
-    }
-    acc
 }
 
 /// Render a phenotype alist as a small ASCII creature card. Name is a

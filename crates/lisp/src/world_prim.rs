@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use crate::val::{Arity, Val};
 use crate::world::{Tile, World};
 
@@ -44,10 +42,7 @@ fn world_log(args: &[Val], w: &mut World) -> R {
 }
 
 fn world_size(_args: &[Val], w: &mut World) -> R {
-    Ok(Val::Cons(
-        Rc::new(Val::Num(w.width as i64)),
-        Rc::new(Val::Num(w.height as i64)),
-    ))
+    Ok(Val::cons(Val::Num(w.width as i64), Val::Num(w.height as i64)))
 }
 
 /// `(world-apply! ctx)` — resolver: reads `element`, `tx`, `ty`, optional `area`

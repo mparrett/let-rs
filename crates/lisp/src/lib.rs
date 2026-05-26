@@ -92,6 +92,21 @@ impl Vm {
             .extend(name.into(), Val::Prim { name, arity, f });
     }
 
+    /// Sibling of `register_prim` for world-aware primitives. Same shape
+    /// as the entries `with_world` already installs from
+    /// `world_prim::WORLD_PRIMS`, exposed so demos can add their own
+    /// world-touching vocabulary without editing the lisp crate.
+    pub fn register_world_prim(
+        &mut self,
+        name: &'static str,
+        arity: val::Arity,
+        f: fn(&[Val], &mut World) -> Result<Val, String>,
+    ) {
+        self.env = self
+            .env
+            .extend(name.into(), Val::WorldPrim { name, arity, f });
+    }
+
     pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
         let datum = parse::read(src)?;
 

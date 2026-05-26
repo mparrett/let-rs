@@ -58,11 +58,27 @@ impl Val {
         !matches!(self, Val::Bool(false))
     }
 
+    /// Sugar over `Val::Cons(Rc::new(h), Rc::new(t))`. Same shape Scheme
+    /// uses to build both proper lists and dotted pairs.
+    pub fn cons(head: Val, tail: Val) -> Val {
+        Val::Cons(Rc::new(head), Rc::new(tail))
+    }
+
     /// Build a proper list `(a b c)` from a slice, terminated by `Nil`.
     pub fn list_from(items: &[Val]) -> Val {
         let mut acc = Val::Nil;
         for v in items.iter().rev() {
-            acc = Val::Cons(Rc::new(v.clone()), Rc::new(acc));
+            acc = Val::cons(v.clone(), acc);
+        }
+        acc
+    }
+
+    /// Build an association list `((k1 . v1) (k2 . v2) …)` from a slice
+    /// of key/value pairs. Order preserved.
+    pub fn alist_from(pairs: &[(Val, Val)]) -> Val {
+        let mut acc = Val::Nil;
+        for (k, v) in pairs.iter().rev() {
+            acc = Val::cons(Val::cons(k.clone(), v.clone()), acc);
         }
         acc
     }

@@ -157,6 +157,23 @@ fn tail_calls_dont_grow_the_stack() {
 }
 
 #[test]
+fn assoc_get_prim() {
+    // The reader has no dotted-pair syntax, so build pairs with `cons`
+    // (matches the shape both demo preludes use in practice).
+    let alist = "(list (cons 'a 1) (cons 'b 2) (cons 'c 3))";
+    assert_eq!(eval(&format!("(assoc-get 'b {alist})")), "2");
+    // Earlier key shadows later one.
+    assert_eq!(
+        eval("(assoc-get 'k (list (cons 'k 'first) (cons 'k 'second)))"),
+        "first"
+    );
+    // Missing key returns '().
+    assert_eq!(eval(&format!("(assoc-get 'z {alist})")), "()");
+    // Empty alist returns '().
+    assert_eq!(eval("(assoc-get 'a '())"), "()");
+}
+
+#[test]
 fn map_via_letrec() {
     // Demonstrates closures + letrec + list ops together
     let src = r#"

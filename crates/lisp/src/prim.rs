@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use crate::env::Env;
 use crate::val::{Arity, Val};
 
@@ -91,7 +89,7 @@ fn eq_q(args: &[Val]) -> R {
 // ---- list ops ----
 
 fn cons(args: &[Val]) -> R {
-    Ok(Val::Cons(Rc::new(args[0].clone()), Rc::new(args[1].clone())))
+    Ok(Val::cons(args[0].clone(), args[1].clone()))
 }
 
 fn car(args: &[Val]) -> R {
@@ -129,7 +127,7 @@ fn append(args: &[Val]) -> R {
             }
         }
         for item in items.into_iter().rev() {
-            acc = Val::Cons(Rc::new(item), Rc::new(acc));
+            acc = Val::cons(item, acc);
         }
     }
     Ok(acc)
@@ -149,6 +147,24 @@ fn number_q(args: &[Val]) -> R {
 
 fn symbol_q(args: &[Val]) -> R {
     Ok(Val::Bool(matches!(args[0], Val::Sym(_))))
+}
+
+/// `(assoc-get key alist)` — walk `((k1 . v1) (k2 . v2) …)` and return
+/// the value paired with the first key `eq?`-matching `key`, or `'()`
+/// if not found. Matches the prelude closure both demos used to
+/// hand-roll.
+fn assoc_get(args: &[Val]) -> R {
+    let key = &args[0];
+    let mut cur = &args[1];
+    while let Val::Cons(head, tail) = cur {
+        if let Val::Cons(k, v) = head.as_ref()
+            && k.eq_shallow(key)
+        {
+            return Ok((**v).clone());
+        }
+        cur = tail;
+    }
+    Ok(Val::Nil)
 }
 
 const BUILTINS: &[(&str, Arity, fn(&[Val]) -> R)] = &[
@@ -173,6 +189,7 @@ const BUILTINS: &[(&str, Arity, fn(&[Val]) -> R)] = &[
     ("pair?",   Arity::Exact(1),   pair_q),
     ("number?", Arity::Exact(1),   number_q),
     ("symbol?", Arity::Exact(1),   symbol_q),
+    ("assoc-get", Arity::Exact(2), assoc_get),
 ];
 
 pub fn initial_env() -> Env {
