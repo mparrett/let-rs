@@ -456,3 +456,107 @@ that returns the rendered card; the web shell adds a Gene Lab panel
 below the existing two-column Spell Lab / REPL layout with a 20-button
 codon palette color-coded by trait category. Bundle grew ~19 KB
 (104 KB → 123 KB).
+
+## ADR-012: Mutation primitive — seeded xorshift, codon-style, lexical-scope seed (2026-05-25)
+
+**Context**: ADR-011 deferred the mutation primitive with the note
+"needs RNG (thread-local? WorldPrim against a per-Vm seed?), a
+non-trivial decision." With the genes demo otherwise working, the
+question matured: what shape should `(mutate …)` take so it composes
+with the codon-tape style and stays consistent with letrs's "same
+input → same output" flavor everywhere else (pure CEK eval, FNV
+deterministic tiebreaks, no global state)?
+
+**Decision**: A single `mutate!` host prim with three arguments —
+`(rate-percent, seed, ctx)` — registered alongside `express!` by
+`genes::install`. The seed is **explicit, caller-provided, integer**;
+the RNG is **xorshift32** (4 lines, dep-free); mutations are
+**pure**: same `(rate, seed, ctx)` always produces the same output.
+
+Surface choices:
+- **Codon-style trigger.** A single `MUT` codon emits the symbol
+  `mutate`, bound in the prelude to `(lambda (ctx) (mutate! 25 seed
+  ctx))`. The rate (25%) is baked into the codon's prelude binding —
+  not into the codon itself — so adding higher- or lower-rate codons
+  later is a one-line addition.
+- **Seed comes via lexical scope.** Drivers wrap the prelude in
+  `(let ((seed N)) …)`. The `mutate` closure captures `seed` in its
+  closure env; calling `(mutate ctx)` evaluates `(mutate! 25 seed ctx)`
+  against the outer binding. The CLI passes a per-sequence seed; the
+  WASM bridge's `cast_genome(tape, seed)` gains a second arg; the web
+  shell adds a number input + "evolve →" button that increments the
+  seed and re-expresses.
+- **Mutation rules mirror kaiju.** Per-allele Bernoulli at `rate%`,
+  then ±10 drift clamped `[0,100]` for numerics, swap-to-other-pool
+  for categoricals (which means we extended `Kind::Categorical(&[&str])`
+  to carry an option pool per categorical trait). `dom`/`rec` flag is
+  preserved across mutation — only the value changes.
+- **Default rate raised from kaiju's 5% to 25%** for demo visibility.
+  At 5% over 7 alleles, ~70% of casts are no-ops; at 25% it's ~84%
+  *at least one* visible drift. The kaiju rule is the only thing
+  load-bearing here; the rate is an art choice for an interactive
+  demo and is documented in the prelude binding's comment.
+
+**Alternatives considered**:
+- **True random (non-seeded)** — rejected. Breaks "same input → same
+  output", makes tests flaky, and the web shell's "evolve →" button
+  loses meaning if every click is unrepeatable. Seeded is more letrs-y.
+- **Per-Vm seed via a `seed!` prim** (`(seed! 42)` once, then `(mutate
+  ctx)` consumes the next number) — rejected. Adds mutable RNG state
+  to `Vm` for one consumer's benefit. Lexical scope via outer `let`
+  achieves the same without polluting the engine.
+- **Hash-of-genome as seed** — rejected per the user's note that it
+  defeats the point ("same genome → always same mutation").
+- **Time-based seed** — rejected. Non-reproducible; would force a
+  `js_sys::Date::now()` dep in WASM that the bridge doesn't otherwise
+  need.
+- **`mutate!` as a `WorldPrim`** holding an RNG seed in the World —
+  rejected. World is the spell demo's concept; the gene demo
+  shouldn't reach into it. The pure `Val::Prim` shape (seed-in /
+  ctx-out) keeps genes independent of `world.rs`.
+- **Floating-point rate** (`(mutate 0.05 …)`) — rejected. This lisp
+  is integer-only; adding floats for one prim is a large scope change.
+  Integer percentage is fine.
+- **Mutation as a separate (non-codon) prim call** — rejected. The
+  user prefers codon-style so the demo's full pipeline still reads as
+  a tape. The codon (`MUT`) is the trigger; the prim is just plumbing.
+- **Always-different categorical (force a flip)** vs **random pick
+  from pool (might land on current value)** — chose force-flip. A
+  mutation event that returns the same value isn't visibly a mutation,
+  which would mislead readers. With 2-option pools today it's a
+  deterministic flip; with larger pools later it would be random-pool-
+  minus-current.
+
+**Consequences**:
+- **+** Mutation is composable with the existing pipeline — `(MUT)`
+  just goes anywhere in a tape, before `UAA`, and the `express!`
+  resolver runs over the mutated ctx.
+- **+** Five new tests in `tests/express.rs` lock the contract:
+  same-seed determinism, cross-seed difference, numeric bounds,
+  categorical pool membership, no-MUT-no-effect.
+- **+** Engine still untouched. The `Vm::register_prim` helper from
+  ADR-011 is reused for `mutate!`. The CEK rules / step / k / env
+  files have no idea genes or mutation exist.
+- **+** Seed plumbing via lexical `let` works because the lisp has
+  real closures and lexical scope. This is a small but satisfying
+  proof that the engine's design (env capture in `Val::Clo`) carries
+  weight beyond the basic spell demo.
+- **−** The `MUT` codon makes the codon table technically aware of
+  the prelude binding name `mutate`. Same coupling already exists for
+  `start`/`stop`. Documented in the codon-table comment.
+- **−** Existing example helpers in `tests/express.rs` had to grow a
+  seeded variant; the base helper now wraps with `(let ((seed 0)) …)`
+  unconditionally. Harmless for non-MUT tapes (seed is unreferenced),
+  but tests must be careful to pass a real seed when MUT is present.
+
+**Deferred**:
+- **Breeding** (combine two genomes per Mendelian segregation) — still
+  open. The lexical-seed pattern from this slice transfers directly:
+  `(breed! seed parent-A parent-B)` would be a sibling prim. Decision
+  point is whether the seed comes from the same `seed` binding or
+  whether breeding gets its own.
+- **Multi-rate MUT codons** (`M01`/`M10`/`M50`) — easy to add; punted
+  until a use case appears.
+- **Mutation rate exposed in the Gene Lab UI** (slider 0-100%) —
+  currently fixed at 25%. Could wire a second number input
+  symmetrically to the seed input.

@@ -93,13 +93,16 @@ impl WasmVm {
 
     /// Translate a codon tape, thread it through the genome prelude, and
     /// resolve via `express!`. Returns the rendered ASCII creature card.
-    /// Errors (unknown codon, lex failure, eval failure) throw to JS.
-    pub fn cast_genome(&mut self, tape: &str) -> Result<String, JsValue> {
+    /// `seed` is the lexical RNG seed for any `MUT` codons in the tape;
+    /// strands without `MUT` ignore it. Errors throw to JS.
+    pub fn cast_genome(&mut self, tape: &str, seed: i64) -> Result<String, JsValue> {
         let list_expr = codons::tape_to_sexpr(tape)
             .map_err(|e| JsValue::from_str(&format!("codon: {e}")))?;
+        // (let ((seed N)) …) wraps the prelude so MUT's mutate closure
+        // captures the caller's seed via lexical scope. See ADR-012.
         let src = format!(
-            "{}  (express! (thread '() {list_expr})))",
-            genes::PRELUDE_BINDINGS
+            "(let ((seed {seed})) {}  (express! (thread '() {list_expr}))))",
+            genes::PRELUDE_BINDINGS,
         );
         let phenotype = self
             .inner

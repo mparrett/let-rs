@@ -46,6 +46,9 @@ pub const CODONS: &[(&str, &str)] = &[
     // biome
     ("GAU", "(biome 'volcanic dom)"),
     ("GAC", "(biome 'ocean rec)"),
+    // mutation: 5% per-allele drift using the lexically-scoped `seed`
+    // the driver wraps around the prelude. See ADR-012.
+    ("MUT", "mutate"),
 ];
 
 fn lookup(token: &str) -> Option<&'static str> {

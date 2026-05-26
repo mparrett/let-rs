@@ -49,19 +49,33 @@ pub const PRELUDE_BINDINGS: &str = r#"
          (armor      (lambda (n kind) (lambda (ctx) (add-allele 'armor    n kind ctx))))
          (color      (lambda (v kind) (lambda (ctx) (add-allele 'color    v kind ctx))))
          (ability    (lambda (v kind) (lambda (ctx) (add-allele 'ability  v kind ctx))))
-         (biome      (lambda (v kind) (lambda (ctx) (add-allele 'biome    v kind ctx)))))
+         (biome      (lambda (v kind) (lambda (ctx) (add-allele 'biome    v kind ctx))))
+         (mutate     (lambda (ctx) (mutate! 25 seed ctx))))
 "#;
 
-/// Register the `express!` primitive on `vm`. Idempotent in effect — a
-/// later registration shadows the earlier in the same env.
+/// Register the `express!` and `mutate!` primitives on `vm`. Idempotent
+/// in effect — a later registration shadows the earlier in the same env.
+///
+/// `mutate!` reads its seed via a lexically-scoped `seed` binding the
+/// driver wraps around the prelude — see ADR-012. Calling `(mutate ctx)`
+/// from the prelude expands to `(mutate! 25 seed ctx)`: 25% per-allele
+/// mutation rate (chosen for demo visibility — kaiju uses 5% but at our
+/// 7-trait scale that yields a no-op ~70% of the time; 25% gives ~84%
+/// chance of at least one visible drift per cast), seed from the outer
+/// let.
 pub fn install(vm: &mut Vm) {
     vm.register_prim("express!", Arity::Exact(1), express_prim);
+    vm.register_prim("mutate!",  Arity::Exact(3), mutate_prim);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Numeric,
-    Categorical,
+    /// Categorical traits carry a static option pool — the values
+    /// `mutate!` can pick from when a categorical allele is mutated.
+    /// Today every pool has two values (one dom, one rec in the codon
+    /// table); the resolver itself doesn't care about pool size.
+    Categorical(&'static [&'static str]),
 }
 
 const TRAITS: &[(&str, Kind)] = &[
@@ -69,9 +83,9 @@ const TRAITS: &[(&str, Kind)] = &[
     ("strength", Kind::Numeric),
     ("speed",    Kind::Numeric),
     ("armor",    Kind::Numeric),
-    ("color",    Kind::Categorical),
-    ("ability",  Kind::Categorical),
-    ("biome",    Kind::Categorical),
+    ("color",    Kind::Categorical(&["green", "red"])),
+    ("ability",  Kind::Categorical(&["fire-breath", "sonic-roar"])),
+    ("biome",    Kind::Categorical(&["volcanic", "ocean"])),
 ];
 
 fn trait_kind(name: &str) -> Option<Kind> {
@@ -147,11 +161,106 @@ fn express_prim(args: &[Val]) -> Result<Val, String> {
         }
         let resolved = match kind {
             Kind::Numeric => resolve_numeric(&alleles)?,
-            Kind::Categorical => resolve_categorical(&alleles, genome_hash),
+            Kind::Categorical(_) => resolve_categorical(&alleles, genome_hash),
         };
         phenotype.push((Val::Sym(key.into()), resolved));
     }
     Ok(to_pair_list(phenotype))
+}
+
+/// `(mutate! rate seed ctx)` — walk the genome and roll a per-allele
+/// coin at `rate%` to decide which alleles drift. Same `(rate, seed,
+/// ctx)` → same output (pure function on its inputs). dom/rec is
+/// preserved across mutation; only the value changes.
+///
+/// - Numeric alleles drift by ±10 clamped to [0, 100].
+/// - Categorical alleles swap to a *different* value from the trait's
+///   option pool (so a mutation event is always visible — never a
+///   no-op pick of the same allele).
+///
+/// Implementation uses xorshift32 seeded from `seed`. Iteration order
+/// is the cons-list order, so it's deterministic across runs.
+fn mutate_prim(args: &[Val]) -> Result<Val, String> {
+    let rate = match &args[0] {
+        Val::Num(n) if (0..=100).contains(n) => *n as u32,
+        Val::Num(n) => return Err(format!("mutate!: rate must be 0..=100, got {n}")),
+        other => return Err(format!("mutate!: rate must be an int, got {other}")),
+    };
+    let seed = match &args[1] {
+        Val::Num(n) => *n as u32,
+        other => return Err(format!("mutate!: seed must be an int, got {other}")),
+    };
+    // A 0 seed traps xorshift32 in the all-zero state. Bump it once so the
+    // caller can still pass 0 as a "default" without losing all randomness.
+    let mut rng = if seed == 0 { 0x9E37_79B9 } else { seed };
+
+    let mut out_traits: Vec<(String, Vec<(Val, Val)>)> = Vec::new();
+    for (key, value) in collect_first_pairs(&args[2]) {
+        let kind = match trait_kind(&key) {
+            Some(k) => k,
+            None => continue,
+        };
+        let mut alleles = unpack_pairs(&value);
+        for (val_slot, _dom) in alleles.iter_mut() {
+            if xorshift32(&mut rng) % 100 >= rate {
+                continue;
+            }
+            *val_slot = match (kind, &*val_slot) {
+                (Kind::Numeric, Val::Num(n)) => {
+                    let delta = if xorshift32(&mut rng) & 1 == 0 { 10 } else { -10 };
+                    Val::Num((*n + delta).clamp(0, 100))
+                }
+                (Kind::Categorical(pool), Val::Sym(s)) => {
+                    let cur = s.to_string();
+                    // pick a *different* pool value; for 2-option pools
+                    // this is the other one, for larger pools it's a
+                    // random pick excluding the current value.
+                    let others: Vec<&&str> =
+                        pool.iter().filter(|opt| **opt != cur).collect();
+                    if others.is_empty() {
+                        continue; // pool only contains current value; no-op
+                    }
+                    let pick = others[(xorshift32(&mut rng) as usize) % others.len()];
+                    Val::Sym((*pick).into())
+                }
+                _ => continue, // allele shape doesn't match its kind; skip
+            };
+        }
+        out_traits.push((key, alleles));
+    }
+    Ok(traits_to_genome_ctx(out_traits))
+}
+
+/// xorshift32 PRNG. Tiny, dep-free, deterministic — perfect for a demo.
+/// Bad for cryptography. We're not doing cryptography.
+fn xorshift32(state: &mut u32) -> u32 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    x
+}
+
+/// Build a genome-shaped ctx `((trait . ((v1 . d1) (v2 . d2))) …)`
+/// from a Vec of (trait, alleles). The inverse of
+/// `collect_first_pairs` + `unpack_pairs`.
+fn traits_to_genome_ctx(traits: Vec<(String, Vec<(Val, Val)>)>) -> Val {
+    let mut ctx = Val::Nil;
+    for (key, alleles) in traits.into_iter().rev() {
+        let allele_list = alleles
+            .into_iter()
+            .rev()
+            .fold(Val::Nil, |acc, (v, d)| {
+                Val::Cons(Rc::new(Val::Cons(Rc::new(v), Rc::new(d))), Rc::new(acc))
+            });
+        let entry = Val::Cons(
+            Rc::new(Val::Sym(key.into())),
+            Rc::new(allele_list),
+        );
+        ctx = Val::Cons(Rc::new(entry), Rc::new(ctx));
+    }
+    ctx
 }
 
 fn resolve_numeric(alleles: &[(Val, Val)]) -> Result<Val, String> {

@@ -7,6 +7,7 @@ import { vm, $ } from './common.js';
 
 const tapeEl = $('#tape-genes');
 const cardEl = $('#creature-card');
+const seedEl = $('#seed-genes');
 
 // Codon palette appends triplet + space so successive clicks compose a
 // readable strand (`AUG CGA UAA`). Same focus-avoidance rule as the
@@ -31,14 +32,29 @@ const expressCard = () => {
     cardEl.textContent = '(no codons — paste a strand or click some codons above)';
     return;
   }
+  let seed;
   try {
-    cardEl.textContent = vm.cast_genome(tape);
+    seed = BigInt(seedEl.value || '0');
+  } catch {
+    cardEl.textContent = '⚠ seed must be an integer';
+    return;
+  }
+  try {
+    cardEl.textContent = vm.cast_genome(tape, seed);
   } catch (e) {
     cardEl.textContent = `⚠ ${e}`;
   }
 };
 
 $('#express-btn').addEventListener('click', expressCard);
+
+// Evolve: increment seed and re-express. Same parent strand, fresh
+// drift each click. Only meaningful when the tape contains MUT.
+$('#evolve-btn').addEventListener('click', () => {
+  const cur = Number(seedEl.value || '0');
+  seedEl.value = String(cur + 1);
+  expressCard();
+});
 
 // Strand cheatsheet click-to-load. Scoped by `.cheatsheet.genes` so it
 // can't leak into the REPL (handled in common.js with `.cheatsheet.repl`).

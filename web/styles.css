@@ -344,6 +344,9 @@ textarea {
 /* categorical (color/ability/biome): sage */
 .codon.cat { color: var(--sage); border-color: rgba(127,197,154,0.28); }
 .codon.cat:hover { background: rgba(127,197,154,0.10); }
+/* mutation: copper — visually distinct from the static allele codons */
+.codon.mut { color: var(--copper); border-color: rgba(217,119,87,0.32); }
+.codon.mut:hover { background: rgba(217,119,87,0.12); }
 /* recessive variants dim by 35% so dom/rec read at a glance */
 .codon.rec { opacity: 0.62; }
 .codon.rec:hover { opacity: 1; }

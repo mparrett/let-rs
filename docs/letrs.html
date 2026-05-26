@@ -409,6 +409,31 @@
     .coda li::marker { color: var(--honey); }
     .coda li strong { color: var(--sage); font-weight: 500; }
 
+    /* Further reading */
+    .further { margin-top: 6vh; max-width: 66ch; }
+    .further h3 {
+      font-family: var(--display);
+      font-weight: 500;
+      font-size: 18px;
+      color: var(--ink-dim);
+      letter-spacing: 0.01em;
+      margin-bottom: 10px;
+    }
+    .further ul { margin: 0; padding-left: 22px; }
+    .further li {
+      color: var(--ink-dim);
+      font-size: 13px;
+      line-height: 1.65;
+      padding: 6px 0;
+    }
+    .further li::marker { color: var(--indigo); }
+    .further a {
+      color: var(--ink);
+      text-decoration: none;
+      border-bottom: 1px dotted rgba(139, 143, 255, 0.4);
+    }
+    .further a:hover { border-bottom-style: solid; }
+
     /* Colophon */
     .colophon {
       margin-top: 10vh;
@@ -850,6 +875,27 @@
         None of those are large; all of them are interesting; most of them are
         independent. The hard part is done — the language is itself.
       </p>
+    </div>
+
+    <div class="further">
+      <h3>Further reading on CEK machines</h3>
+      <ul>
+        <li>
+          <a href="https://matt.might.net/articles/cek-machines/" target="_blank" rel="noopener">
+            Matt Might · <em>Writing an interpreter, CEK-style</em>
+          </a>
+          — a clear walkthrough of the three registers, the transition rules, and the
+          path from continuations-as-functions to continuations-as-data.
+        </li>
+        <li>
+          <a href="https://burakemir.ch/post/cek-and-control/" target="_blank" rel="noopener">
+            Burak Emir · <em>CEK and Control</em>
+          </a>
+          — the CEK machine read against the broader landscape of control operators
+          (call/cc, delimited continuations); useful for placing letrs's tiny
+          continuation tower in context.
+        </li>
+      </ul>
     </div>
 
     <footer class="colophon">

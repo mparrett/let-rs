@@ -28,7 +28,7 @@ Slices that have landed:
 - genes demo: codon-tape → diploid genome → phenotype creature card,
   parallel to spells but with genetics vocabulary (see ADR-011)
 
-48 tests pass across the workspace; `lisp` core stays zero-deps.
+53 tests pass across the workspace; `lisp` core stays zero-deps.
 
 ## Architecture (read this first)
 
@@ -64,7 +64,10 @@ Examples in `crates/lisp/examples/`:
 - `world.rs` — spell ctx applied to a 7×5 grid via `world-apply!`
 - `genes.rs` — codon tape → diploid genome → `express!` resolver → ASCII
   creature card. Driver code only — the prelude, prim, and renderer all
-  live in `lisp::genes` (shared with the WASM bridge). See ADR-011.
+  live in `lisp::genes` (shared with the WASM bridge). The `MUT` codon
+  triggers seeded mutation; the example wraps each cast in
+  `(let ((seed N)) …)` so the prelude's `mutate` closure sees it via
+  lexical scope. See ADR-011, ADR-012.
 
 Sibling crates:
 
@@ -162,7 +165,8 @@ ships a larger bundle.
   see it automatically through `lisp::genes`. Categorical allele
   payloads need to be quoted in the codon fragment (`(color 'green
   dom)`) so the evaluator treats them as symbols rather than variable
-  lookups.
+  lookups. For a new categorical trait, add its option pool to
+  `Kind::Categorical(&[…])` so `mutate!` knows what values to draw from.
 
 ## Project Memory
 

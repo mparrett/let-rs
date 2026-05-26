@@ -9,11 +9,20 @@ use lisp::{Vm, genes};
 /// shape is an alist `((trait . value) ...)` printed in lisp form. Tests
 /// assert on substring containment so they're robust to trait ordering.
 fn express(tape: &str) -> String {
+    express_seeded(tape, 0)
+}
+
+/// Same as [`express`] but with an explicit seed in scope so `MUT`
+/// codons see deterministic randomness.
+fn express_seeded(tape: &str, seed: i64) -> String {
     let mut vm = Vm::new();
     genes::install(&mut vm);
     let list = tape_to_sexpr(tape).expect("tape should lex");
     let body = format!("(express! (thread '() {list}))");
-    let src = format!("{}  {body})", genes::PRELUDE_BINDINGS);
+    let src = format!(
+        "(let ((seed {seed})) {}  {body}))",
+        genes::PRELUDE_BINDINGS,
+    );
     format!("{}", vm.eval_str(&src).expect("express should evaluate"))
 }
 
@@ -102,4 +111,89 @@ fn unknown_codon_error_threads_through_tape_lex() {
     // The error surface — codons crate rejects, never reaches express!.
     let r = tape_to_sexpr("AUG XYZ UAA");
     assert!(matches!(r, Err(e) if e.contains("unknown codon") && e.contains("XYZ")));
+}
+
+// ─── mutation (MUT codon + mutate! prim) ────────────────────────
+
+const BALANCED_MUT: &str = "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA";
+
+#[test]
+fn mutation_is_deterministic_for_same_seed() {
+    // Same input → same output. Bedrock of ADR-012's "seeded, pure" choice.
+    let a = express_seeded(BALANCED_MUT, 42);
+    let b = express_seeded(BALANCED_MUT, 42);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn mutation_differs_across_seeds() {
+    // Different seeds → different mutations (with high probability).
+    // We check several pairs to make the test robust against happening
+    // to land on the same drift pattern by chance.
+    let baseline = express_seeded(BALANCED_MUT, 42);
+    let mut seen_diff = false;
+    for seed in [43, 44, 45, 100, 999] {
+        if express_seeded(BALANCED_MUT, seed) != baseline {
+            seen_diff = true;
+            break;
+        }
+    }
+    assert!(seen_diff, "no seed in 43..=999 produced a different phenotype than seed 42");
+}
+
+#[test]
+fn numeric_mutation_stays_in_bounds() {
+    // At 25% per-allele rate, ±10 drift, clamped to [0, 100]. Even after
+    // many seeds, no numeric trait should ever leave the bounds.
+    for seed in 0..20 {
+        let p = express_seeded(BALANCED_MUT, seed);
+        // Walk the phenotype string and extract each `(trait . N)` value.
+        for trait_name in ["size", "strength", "speed", "armor"] {
+            let needle = format!("({trait_name} . ");
+            if let Some(pos) = p.find(&needle) {
+                let tail = &p[pos + needle.len()..];
+                let end = tail.find(')').unwrap();
+                let val: i64 = tail[..end].trim().parse().unwrap();
+                assert!(
+                    (0..=100).contains(&val),
+                    "seed={seed}: {trait_name} = {val} is out of [0,100]; phenotype = {p}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn categorical_mutation_lands_in_pool() {
+    // Categorical mutations must pick a value from the trait's option
+    // pool — never anything else.
+    let pools: &[(&str, &[&str])] = &[
+        ("color",   &["green", "red"]),
+        ("ability", &["fire-breath", "sonic-roar"]),
+        ("biome",   &["volcanic", "ocean"]),
+    ];
+    for seed in 0..10 {
+        let p = express_seeded(BALANCED_MUT, seed);
+        for (trait_name, pool) in pools {
+            let needle = format!("({trait_name} . ");
+            if let Some(pos) = p.find(&needle) {
+                let tail = &p[pos + needle.len()..];
+                let end = tail.find(')').unwrap();
+                let val = tail[..end].trim();
+                assert!(
+                    pool.contains(&val),
+                    "seed={seed}: {trait_name} = {val:?} not in pool {pool:?}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn mutation_without_mut_codon_is_a_no_op() {
+    // No MUT in the tape → seed doesn't matter; same phenotype regardless.
+    let baseline = "AUG CGA GCA ACA UCA GCG AUC GAU UAA";
+    let s42 = express_seeded(baseline, 42);
+    let s99 = express_seeded(baseline, 99);
+    assert_eq!(s42, s99);
 }
