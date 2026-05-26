@@ -114,6 +114,25 @@ fn unknown_codon_error_threads_through_tape_lex() {
 const BALANCED_MUT: &str = "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA";
 
 #[test]
+fn mutate_prim_rejects_rates_outside_zero_to_one() {
+    // The numeric tower switched mutate! from integer percent (0..100)
+    // to rational probability (0..1). Old-style integer percents like
+    // 25 now error rather than silently mutate at the wrong rate.
+    let mut vm = Vm::new();
+    genes::install(&mut vm);
+    for bad in ["25", "100", "-1", "2/1", "-1/4"] {
+        let r = vm.eval_str(&format!("(mutate! {bad} 1 '())"));
+        assert!(r.is_err(), "{bad} should be rejected as a probability: {r:?}");
+    }
+    // 0 and 1 (the integer-shaped endpoints) and any ratio in [0,1]
+    // are accepted.
+    for ok in ["0", "1", "1/4", "1/100"] {
+        let r = vm.eval_str(&format!("(mutate! {ok} 1 '())"));
+        assert!(r.is_ok(), "{ok} should be accepted: {r:?}");
+    }
+}
+
+#[test]
 fn mutation_is_deterministic_for_same_seed() {
     // Same input → same output. Bedrock of ADR-012's "seeded, pure" choice.
     let a = express_seeded(BALANCED_MUT, 42);

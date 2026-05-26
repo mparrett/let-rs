@@ -116,9 +116,13 @@ installer." Two lines to add a new DSL to a Vm.
 > `Val::Num` on den=1). Parser reads `n/d` literals; arithmetic prims
 > promote `Num`/`Ratio` uniformly via i128 intermediates. `/` is now
 > exact: `(/ 1 4)` → `1/4` (breaking change from integer division).
-> `mod` stays integer-only. +7 tests in eval.rs. Follow-on (not
-> done): have `mutate!` accept the rate as a rational instead of
-> integer percent, which was the doc's original motivation.
+> `mod` stays integer-only. +7 tests in eval.rs.
+>
+> Follow-on (also resolved 2026-05-26): `mutate!` now takes a
+> rational probability in [0,1] rather than an integer percent. The
+> genes `seeded` wrapper reads `(mutate! 1/4 seed ctx)` etc. instead
+> of `25` — closing the loop on the doc's original motivating
+> example. +1 test in express.rs pinning the new rate API.
 
 **Problem.** `Val::Num(i64)` is the only numeric type
 (`crates/lisp/src/val.rs:10`). The mutation rate wanted to be

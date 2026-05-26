@@ -68,16 +68,17 @@ pub fn install(vm: &mut Vm) {
 /// seed pattern while still avoiding the per-call cost of parsing the
 /// rest of the prelude.
 ///
-/// Mutation rates: 25% for `mutate` (chosen for demo visibility — at
-/// our 7-trait scale 25% gives ~84% chance of at least one visible
-/// drift per cast); 1% / 10% / 50% for the explicit variants.
+/// Mutation rates expressed as exact rationals: `1/4` for `mutate`
+/// (chosen for demo visibility — at our 7-trait scale ~25% gives a
+/// ~84% chance of at least one visible drift per cast); `1/100`,
+/// `1/10`, `1/2` for the explicit variants.
 pub fn seeded(seed: i64, body: &str) -> String {
     format!(
         "(let ((seed {seed}))\n  \
-           (let ((mutate (lambda (ctx) (mutate! 25 seed ctx)))\n        \
-                 (mut01  (lambda (ctx) (mutate! 1  seed ctx)))\n        \
-                 (mut10  (lambda (ctx) (mutate! 10 seed ctx)))\n        \
-                 (mut50  (lambda (ctx) (mutate! 50 seed ctx))))\n    \
+           (let ((mutate (lambda (ctx) (mutate! 1/4   seed ctx)))\n        \
+                 (mut01  (lambda (ctx) (mutate! 1/100 seed ctx)))\n        \
+                 (mut10  (lambda (ctx) (mutate! 1/10  seed ctx)))\n        \
+                 (mut50  (lambda (ctx) (mutate! 1/2   seed ctx))))\n    \
              {body}))"
     )
 }
@@ -183,23 +184,22 @@ fn express_prim(args: &[Val]) -> Result<Val, String> {
 }
 
 /// `(mutate! rate seed ctx)` — walk the genome and roll a per-allele
-/// coin at `rate%` to decide which alleles drift. Same `(rate, seed,
-/// ctx)` → same output (pure function on its inputs). dom/rec is
-/// preserved across mutation; only the value changes.
+/// coin at probability `rate` to decide which alleles drift. `rate`
+/// is a number in `[0, 1]` — typically a rational like `1/4` (25%).
+/// Same `(rate, seed, ctx)` → same output. dom/rec is preserved
+/// across mutation; only the value changes.
 ///
 /// - Numeric alleles drift by ±10 clamped to [0, 100].
 /// - Categorical alleles swap to a *different* value from the trait's
 ///   option pool (so a mutation event is always visible — never a
 ///   no-op pick of the same allele).
 ///
-/// Implementation uses xorshift32 seeded from `seed`. Iteration order
-/// is the cons-list order, so it's deterministic across runs.
+/// Implementation uses xorshift32 seeded from `seed`. The coin uses
+/// the full 32-bit RNG output against the rate's denominator (widened
+/// to u128 to avoid overflow). Iteration order is the cons-list
+/// order, so it's deterministic across runs.
 fn mutate_prim(args: &[Val]) -> Result<Val, String> {
-    let rate = match &args[0] {
-        Val::Num(n) if (0..=100).contains(n) => *n as u32,
-        Val::Num(n) => return Err(format!("mutate!: rate must be 0..=100, got {n}")),
-        other => return Err(format!("mutate!: rate must be an int, got {other}")),
-    };
+    let (rnum, rden) = rate_as_probability(&args[0])?;
     let seed = match &args[1] {
         Val::Num(n) => *n as u32,
         other => return Err(format!("mutate!: seed must be an int, got {other}")),
@@ -216,7 +216,9 @@ fn mutate_prim(args: &[Val]) -> Result<Val, String> {
         };
         let mut alleles = unpack_pairs(&value);
         for (val_slot, _dom) in alleles.iter_mut() {
-            if xorshift32(&mut rng) % 100 >= rate {
+            // Mutate iff (r / 2^32) < (rnum / rden), i.e. r*rden < rnum*2^32.
+            let r = xorshift32(&mut rng) as u128;
+            if r * rden >= rnum * (1u128 << 32) {
                 continue;
             }
             *val_slot = match (kind, &*val_slot) {
@@ -299,6 +301,28 @@ fn breed_prim(args: &[Val]) -> Result<Val, String> {
         }
     }
     Ok(traits_to_genome_ctx(out_traits))
+}
+
+/// Extract a probability rate as `(numerator, denominator)` u128s.
+/// Accepts `Val::Num` (only 0 or 1 — anything else is out of [0,1])
+/// or `Val::Ratio` (any value in [0,1]). Validates `0 ≤ num/den ≤ 1`.
+fn rate_as_probability(v: &Val) -> Result<(u128, u128), String> {
+    let (n, d): (i128, i128) = match v {
+        Val::Num(n) => (*n as i128, 1),
+        Val::Ratio(n, d) => (*n as i128, *d as i128),
+        other => return Err(format!("mutate!: rate must be a number, got {other}")),
+    };
+    if n < 0 || n > d {
+        return Err(format!(
+            "mutate!: rate must be in [0, 1], got {}",
+            display_ratio(n, d)
+        ));
+    }
+    Ok((n as u128, d as u128))
+}
+
+fn display_ratio(n: i128, d: i128) -> String {
+    if d == 1 { n.to_string() } else { format!("{n}/{d}") }
 }
 
 /// xorshift32 PRNG. Tiny, dep-free, deterministic — perfect for a demo.
