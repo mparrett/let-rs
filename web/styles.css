@@ -367,6 +367,36 @@ textarea {
   min-height: 4em;
 }
 
+/* Breeding pen — a collapsible sibling of the cheatsheet, copper-toned
+   so it visually pairs with the MUT button. */
+.breed-pen {
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--copper);
+  background: rgba(217, 119, 87, 0.04);
+  padding: 10px 14px;
+  margin: 14px 0;
+  font-size: 13px;
+}
+.breed-pen summary {
+  cursor: pointer;
+  color: var(--copper);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  list-style: none;
+}
+.breed-pen summary::-webkit-details-marker { display: none; }
+.breed-pen summary::before { content: '▸ '; }
+.breed-pen[open] summary::before { content: '▾ '; }
+.breed-pen .breed-hint {
+  color: var(--ink-dim);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 12px 0;
+  max-width: 64ch;
+}
+
 /* Gene cheatsheet variant — honey, parallel to the spells/plum variant. */
 .cheatsheet.genes {
   border-left-color: var(--honey);

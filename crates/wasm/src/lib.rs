@@ -91,6 +91,32 @@ impl WasmVm {
         *self.inner.world.borrow_mut() = World::new(self.width, self.height);
     }
 
+    /// Translate two codon tapes into parent genomes, breed them via
+    /// `breed!`, and resolve the child with `express!`. Returns the
+    /// rendered child creature card. Same `(tape_a, tape_b, seed)` →
+    /// same child (Mendelian gamete pick is seeded).
+    pub fn cast_breed(
+        &mut self,
+        tape_a: &str,
+        tape_b: &str,
+        seed: i64,
+    ) -> Result<String, JsValue> {
+        let la = codons::tape_to_sexpr(tape_a)
+            .map_err(|e| JsValue::from_str(&format!("codon (parent A): {e}")))?;
+        let lb = codons::tape_to_sexpr(tape_b)
+            .map_err(|e| JsValue::from_str(&format!("codon (parent B): {e}")))?;
+        let src = format!(
+            "(let ((seed {seed})) {}  \
+               (express! (breed! seed (thread '() {la}) (thread '() {lb}))))) ",
+            genes::PRELUDE_BINDINGS,
+        );
+        let phenotype = self
+            .inner
+            .eval_str(&src)
+            .map_err(|e| JsValue::from_str(&e))?;
+        Ok(genes::render_creature(&phenotype))
+    }
+
     /// Translate a codon tape, thread it through the genome prelude, and
     /// resolve via `express!`. Returns the rendered ASCII creature card.
     /// `seed` is the lexical RNG seed for any `MUT` codons in the tape;

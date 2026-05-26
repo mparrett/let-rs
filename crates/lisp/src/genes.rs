@@ -50,7 +50,10 @@ pub const PRELUDE_BINDINGS: &str = r#"
          (color      (lambda (v kind) (lambda (ctx) (add-allele 'color    v kind ctx))))
          (ability    (lambda (v kind) (lambda (ctx) (add-allele 'ability  v kind ctx))))
          (biome      (lambda (v kind) (lambda (ctx) (add-allele 'biome    v kind ctx))))
-         (mutate     (lambda (ctx) (mutate! 25 seed ctx))))
+         (mutate     (lambda (ctx) (mutate! 25 seed ctx)))
+         (mut01      (lambda (ctx) (mutate! 1  seed ctx)))
+         (mut10      (lambda (ctx) (mutate! 10 seed ctx)))
+         (mut50      (lambda (ctx) (mutate! 50 seed ctx))))
 "#;
 
 /// Register the `express!` and `mutate!` primitives on `vm`. Idempotent
@@ -66,6 +69,7 @@ pub const PRELUDE_BINDINGS: &str = r#"
 pub fn install(vm: &mut Vm) {
     vm.register_prim("express!", Arity::Exact(1), express_prim);
     vm.register_prim("mutate!",  Arity::Exact(3), mutate_prim);
+    vm.register_prim("breed!",   Arity::Exact(3), breed_prim);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -227,6 +231,62 @@ fn mutate_prim(args: &[Val]) -> Result<Val, String> {
             };
         }
         out_traits.push((key, alleles));
+    }
+    Ok(traits_to_genome_ctx(out_traits))
+}
+
+/// `(breed! seed parent-A parent-B)` — Mendelian segregation across
+/// two genomes. For each trait present in either parent, the child
+/// receives one random allele from each parent that has the trait.
+/// A parent with zero alleles for a trait contributes nothing (so the
+/// child is haploid for that trait); a trait missing from both is
+/// missing from the child. Pure: same `(seed, A, B)` → same child.
+///
+/// This is the simplest meiosis model that matches kaiju's "child
+/// inherits one allele per locus from each parent, randomly chosen
+/// when the parent is diploid." Mutation is intentionally NOT
+/// applied here — caller chains `(mutate (breed! …))` if they want
+/// drift on top.
+fn breed_prim(args: &[Val]) -> Result<Val, String> {
+    let seed = match &args[0] {
+        Val::Num(n) => *n as u32,
+        other => return Err(format!("breed!: seed must be an int, got {other}")),
+    };
+    let mut rng = if seed == 0 { 0x9E37_79B9 } else { seed };
+
+    let pa = collect_first_pairs(&args[1]);
+    let pb = collect_first_pairs(&args[2]);
+
+    // Trait union — every trait in either parent. Preserve parent-A's
+    // ordering for stability, then append parent-B's traits that A
+    // didn't have.
+    let mut keys: Vec<String> = pa.iter().map(|(k, _)| k.clone()).collect();
+    for (k, _) in &pb {
+        if !keys.iter().any(|x| x == k) {
+            keys.push(k.clone());
+        }
+    }
+
+    let lookup = |list: &[(String, Val)], key: &str| -> Option<Val> {
+        list.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+    };
+
+    let mut out_traits: Vec<(String, Vec<(Val, Val)>)> = Vec::new();
+    for key in keys {
+        let from_a = lookup(&pa, &key).map(|v| unpack_pairs(&v)).unwrap_or_default();
+        let from_b = lookup(&pb, &key).map(|v| unpack_pairs(&v)).unwrap_or_default();
+        let mut child_alleles: Vec<(Val, Val)> = Vec::new();
+        if !from_a.is_empty() {
+            let pick = (xorshift32(&mut rng) as usize) % from_a.len();
+            child_alleles.push(from_a[pick].clone());
+        }
+        if !from_b.is_empty() {
+            let pick = (xorshift32(&mut rng) as usize) % from_b.len();
+            child_alleles.push(from_b[pick].clone());
+        }
+        if !child_alleles.is_empty() {
+            out_traits.push((key, child_alleles));
+        }
     }
     Ok(traits_to_genome_ctx(out_traits))
 }

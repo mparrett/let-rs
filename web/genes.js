@@ -56,6 +56,30 @@ $('#evolve-btn').addEventListener('click', () => {
   expressCard();
 });
 
+// Breed: cross the main tape (parent A) with the parent-B tape. Renders
+// the child into the same creature card.
+const parentBEl = $('#tape-parent-b');
+$('#breed-btn')?.addEventListener('click', () => {
+  const tapeA = tapeEl.value.trim();
+  const tapeB = parentBEl.value.trim();
+  if (!tapeA || !tapeB) {
+    cardEl.textContent = '(both parent strands required)';
+    return;
+  }
+  let seed;
+  try {
+    seed = BigInt(seedEl.value || '0');
+  } catch {
+    cardEl.textContent = '⚠ seed must be an integer';
+    return;
+  }
+  try {
+    cardEl.textContent = vm.cast_breed(tapeA, tapeB, seed);
+  } catch (e) {
+    cardEl.textContent = `⚠ ${e}`;
+  }
+});
+
 // Strand cheatsheet click-to-load. Scoped by `.cheatsheet.genes` so it
 // can't leak into the REPL (handled in common.js with `.cheatsheet.repl`).
 document.querySelectorAll('.strand-example').forEach((el) => {

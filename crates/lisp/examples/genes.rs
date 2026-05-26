@@ -31,6 +31,30 @@ fn sequence(vm: &mut Vm, label: &str, seed: i64, tape: &str) {
     }
 }
 
+fn breeding(vm: &mut Vm, label: &str, seed: i64, tape_a: &str, tape_b: &str) {
+    println!("── {label}  (seed={seed}) ──");
+    println!("mama:   {tape_a}");
+    println!("papa:   {tape_b}");
+    let (la, lb) = match (tape_to_sexpr(tape_a), tape_to_sexpr(tape_b)) {
+        (Ok(a), Ok(b)) => (a, b),
+        (Err(e), _) | (_, Err(e)) => {
+            println!("err:    compile: {e}\n");
+            return;
+        }
+    };
+    let body = format!(
+        "(express! (breed! seed (thread '() {la}) (thread '() {lb})))"
+    );
+    let src = format!(
+        "(let ((seed {seed})) {}  {body}))",
+        genes::PRELUDE_BINDINGS,
+    );
+    match vm.eval_str(&src) {
+        Ok(phenotype) => println!("{}\n", genes::render_creature(&phenotype)),
+        Err(e) => println!("err:    eval: {e}\n"),
+    }
+}
+
 fn main() {
     let mut vm = Vm::new();
     genes::install(&mut vm);
@@ -64,6 +88,16 @@ fn main() {
         "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA");
     sequence(&mut vm, "balanced + MUT", 99,
         "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA");
+
+    // breeding: two diploid parents. Each parent has TWO alleles per
+    // trait, so the seed actually controls which allele is inherited
+    // by the child (gamete model). With haploid parents (one allele
+    // per trait), every seed produces the same child — the seed only
+    // matters when there's a choice to make.
+    let mama = "AUG CGA CGU GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
+    let papa = "AUG CGC CGG GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
+    breeding(&mut vm, "mama × papa", 7, mama, papa);
+    breeding(&mut vm, "mama × papa", 9, mama, papa);
 
     // error surface — unknown codon
     sequence(&mut vm, "bad-codon", 0, "AUG XYZ UAA");

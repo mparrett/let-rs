@@ -560,3 +560,104 @@ Surface choices:
 - **Mutation rate exposed in the Gene Lab UI** (slider 0-100%) —
   currently fixed at 25%. Could wire a second number input
   symmetrically to the seed input.
+
+**Follow-up landed (2026-05-25, same day)**: multi-rate MUT codons
+shipped — `M01` (1%, kaiju-match), `M10` (10%), `M50` (50%) live
+alongside the default `MUT` (25%). Each maps to a separate prelude
+binding that calls `mutate!` with a different rate. Trivial one-line
+additions; no design wrinkles.
+
+## ADR-013: Breeding primitive — Mendelian segregation across two genomes (2026-05-25)
+
+**Context**: With mutation working (ADR-012), the next obvious move
+was crossing two genomes. Kaiju does this with breeding pairs that
+produce offspring inheriting one allele per locus from each parent.
+The question was how to fit "takes two inputs" into a model that has
+mostly been about "one tape → one creature."
+
+**Decision**: A `breed!` host prim with signature `(seed parent-A
+parent-B) → child-genome`. Pure: same `(seed, A, B)` → same child.
+Parents are arbitrary genome ctxs (whatever any pipeline produces),
+not codon tapes — the prim doesn't know about codons. Drivers
+compose the two parents (typically two `(thread '() (list …))`
+expressions, one per parent tape) and pass them in. The child is
+itself a genome ctx, so it can be `express!`'d, `mutate!`'d, or
+re-bred with another genome — fully composable.
+
+Mendelian rule:
+- For each trait present in either parent, the child receives one
+  random allele from each parent that has the trait.
+- A parent with 0 alleles for a trait contributes nothing — the
+  child is haploid for that trait (one allele, from the other
+  parent).
+- A trait missing from both parents is missing from the child.
+- Trait order in the child preserves parent-A's order, then appends
+  parent-B's unique traits.
+
+Surface details:
+- **No new codon for breeding.** A `XBR` (cross-breed) codon would
+  need to act as a tape delimiter — single-tape semantics break. Two
+  inputs is fundamentally a two-tape operation.
+- **Driver composes both pipelines.** The CLI example gets a
+  `breeding(vm, label, seed, tape_a, tape_b)` helper; the WASM bridge
+  gets `cast_breed(tape_a, tape_b, seed) → String`; the Gene Lab gets
+  a "Breeding Pen" collapsible below the express UI with a parent-B
+  input + breed button.
+- **Mutation stays orthogonal.** `breed!` does NOT apply mutation
+  itself. Callers wanting drift on top do `(express! (mutate (breed!
+  seed A B)))` or include `MUT` in one of the parent tapes (which
+  would mutate that parent's alleles before breeding — a different
+  semantics, intentionally allowed).
+- **Seed source reuses ADR-012's lexical-`seed` pattern.** The
+  prelude has no `breed` closure equivalent to `mutate` because
+  `breed!` is always invoked from driver-composed lisp, not a single
+  codon — so the prim takes `seed` explicitly as its first arg
+  rather than via lexical capture. (The driver still wraps in `(let
+  ((seed N)) …)` so `MUT` continues to work alongside breeding.)
+
+**Alternatives considered**:
+- **`breed!` as a per-Vm operation taking two tape strings** —
+  rejected. Couples the prim to the codon layer; loses the
+  composability of "any genome ctx is a valid parent." Today, a
+  caller can breed two manually-constructed alists or a mutation
+  result with a hand-built genome.
+- **`XBR` codon as tape delimiter** — rejected. Single-tape lex stays
+  simple; a delimiter would force the codon crate's parser to
+  understand multi-genome shape.
+- **Crossover within a chromosome** (multi-locus blocks inherited
+  together) — out of scope. We don't model linkage; each locus
+  segregates independently, which is the textbook simplification.
+- **Mutation as part of breeding** — rejected on the orthogonality
+  argument. Keeping the two prims separate means each is one job;
+  the caller composes.
+
+**Consequences**:
+- **+** Genomes are now first-class values you can pass around,
+  combine, and re-feed into the pipeline. The genes demo gains a
+  recursive structure (express ∘ breed ∘ mutate ∘ thread) it didn't
+  have before.
+- **+** Five new tests in `tests/express.rs` lock the contract:
+  same-seed determinism, cross-seed variation, trait union, trait
+  intersection of absence, child phenotype that differs from both
+  parents (the diploid-averaging case).
+- **+** Engine still untouched. The `breed!` prim reuses the helpers
+  added for `mutate!` (`collect_first_pairs`, `unpack_pairs`,
+  `xorshift32`, `traits_to_genome_ctx`).
+- **−** The codon table now has four MUT variants but no breeding
+  codon — the demo has an asymmetry between "things you do with one
+  parent" (a codon) and "things you do with two parents" (a driver
+  call). Documented in the cheatsheet; the Breeding Pen UI is the
+  user-facing answer.
+- **−** A subtle: invoking `breed!` from inside a `thread` body would
+  re-enter the prim chain mid-flight, which our prelude doesn't
+  attempt. Today `breed!` is always at the top level (wrapping a
+  `express!`); composing it inside thread closures would need a
+  re-shape of the prelude.
+
+**Deferred**:
+- **Generation tracking.** Kaiju records `generation = max(parents) +
+  1`. Could add a `generation` trait that breed increments. Punted.
+- **Per-parent gamete bias** (e.g., recessive-allele suppression in
+  meiosis). Pure simplification; not load-bearing for the demo.
+- **Multi-rate breed variants** (e.g., asymmetric inheritance
+  probabilities) — no use case; deferred.

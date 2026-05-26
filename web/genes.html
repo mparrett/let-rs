@@ -61,7 +61,10 @@
           </span>
           <span class="palette-sep"></span>
           <span class="codon-group" title="mutation — drifts alleles using the seed">
-            <button type="button" class="codon mut" data-codon="MUT" title="mutate at 25% per-allele drift">MUT</button>
+            <button type="button" class="codon mut" data-codon="MUT" title="mutate at 25% per-allele drift (default)">MUT</button>
+            <button type="button" class="codon mut" data-codon="M01" title="mutate at 1% (kaiju-match rate)">M01</button>
+            <button type="button" class="codon mut" data-codon="M10" title="mutate at 10%">M10</button>
+            <button type="button" class="codon mut" data-codon="M50" title="mutate at 50% (heavy drift)">M50</button>
           </span>
           <span class="palette-sep"></span>
           <button type="button" class="rune ctl" id="clear-tape-genes" title="clear tape">⌫</button>
@@ -84,6 +87,25 @@
 
         <pre class="creature-card" id="creature-card"></pre>
 
+        <details class="breed-pen">
+          <summary>breed with another parent →</summary>
+          <p class="breed-hint">
+            The strand above is parent A. Provide parent B's strand and a
+            seed — the child gets one random allele per trait from each
+            parent (Mendelian gamete pick). Diploid parents (two alleles
+            per locus) give the seed something to choose between; with
+            one allele per locus, every seed yields the same child.
+          </p>
+          <label class="field">
+            <span>parent B</span>
+            <input type="text" id="tape-parent-b" value="AUG CGC CGG GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA" autocomplete="off" spellcheck="false">
+          </label>
+          <div class="row">
+            <button type="button" class="action primary" id="breed-btn">breed</button>
+            <span class="hint">child renders in the card above; uses the same seed as MUT</span>
+          </div>
+        </details>
+
         <details class="cheatsheet genes">
           <summary>quick strands</summary>
           <ul>
@@ -93,6 +115,7 @@
             <li><code class="strand-example" data-tape="AUG GCG GCG UAA">AUG GCG GCG UAA</code> — dom/dom tiebreak (hash-deterministic)</li>
             <li><code class="strand-example" data-tape="AUG GCC GCC UAA">AUG GCC GCC UAA</code> — rec/rec tiebreak</li>
             <li><code class="strand-example" data-tape="AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA">AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA</code> — full strand + MUT (try different seeds)</li>
+            <li><code class="strand-example" data-tape="AUG CGA CGU GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA">AUG CGA CGU GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA</code> — diploid parent: two alleles per locus (use for breeding)</li>
           </ul>
         </details>
       </section>
