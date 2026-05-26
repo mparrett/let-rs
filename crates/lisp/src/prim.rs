@@ -178,6 +178,52 @@ fn symbol_q(args: &[Val]) -> R {
     Ok(Val::Bool(matches!(args[0], Val::Sym(_))))
 }
 
+// ---- rational accessors ----
+
+fn numerator(args: &[Val]) -> R {
+    match &args[0] {
+        Val::Num(n) => Ok(Val::Num(*n)),
+        Val::Ratio(n, _) => Ok(Val::Num(*n)),
+        other => Err(format!("numerator: expected number, got {other}")),
+    }
+}
+
+fn denominator(args: &[Val]) -> R {
+    match &args[0] {
+        Val::Num(_) => Ok(Val::Num(1)),
+        Val::Ratio(_, d) => i64::try_from(*d)
+            .map(Val::Num)
+            .map_err(|_| format!("denominator: {d} doesn't fit in i64")),
+        other => Err(format!("denominator: expected number, got {other}")),
+    }
+}
+
+fn floor(args: &[Val]) -> R {
+    floor_or_ceiling(&args[0], "floor", false)
+}
+
+fn ceiling(args: &[Val]) -> R {
+    floor_or_ceiling(&args[0], "ceiling", true)
+}
+
+fn floor_or_ceiling(v: &Val, name: &str, ceil: bool) -> R {
+    match v {
+        Val::Num(n) => Ok(Val::Num(*n)),
+        Val::Ratio(n, d) => {
+            // Work in i128 so the u64 denominator fits without
+            // sign-flip surprises. div_euclid rounds toward
+            // negative infinity (Rust's "Euclidean division").
+            let n = *n as i128;
+            let d = *d as i128;
+            let q = if ceil { -((-n).div_euclid(d)) } else { n.div_euclid(d) };
+            q.try_into()
+                .map(Val::Num)
+                .map_err(|_| format!("{name}: result {q} doesn't fit in i64"))
+        }
+        other => Err(format!("{name}: expected number, got {other}")),
+    }
+}
+
 /// `(assoc-get key alist)` — walk `((k1 . v1) (k2 . v2) …)` and return
 /// the value paired with the first key `eq?`-matching `key`, or `'()`
 /// if not found. Matches the prelude closure both demos used to
@@ -216,9 +262,13 @@ const BUILTINS: &[(&str, Arity, fn(&[Val]) -> R)] = &[
     ("append",  Arity::AtLeast(0), append),
     ("null?",   Arity::Exact(1),   null_q),
     ("pair?",   Arity::Exact(1),   pair_q),
-    ("number?", Arity::Exact(1),   number_q),
-    ("symbol?", Arity::Exact(1),   symbol_q),
-    ("assoc-get", Arity::Exact(2), assoc_get),
+    ("number?",     Arity::Exact(1), number_q),
+    ("symbol?",     Arity::Exact(1), symbol_q),
+    ("assoc-get",   Arity::Exact(2), assoc_get),
+    ("numerator",   Arity::Exact(1), numerator),
+    ("denominator", Arity::Exact(1), denominator),
+    ("floor",       Arity::Exact(1), floor),
+    ("ceiling",     Arity::Exact(1), ceiling),
 ];
 
 pub fn initial_env() -> Env {

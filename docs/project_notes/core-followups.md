@@ -385,5 +385,8 @@ resolved 2026-05-25 → 2026-05-26.** Engine work surfaced since:
   works within a single source string. Cross-call rec is still a
   sharp edge (closures capture env at eval time) — documented and
   pinned by a test.
-- **Numerator/denominator/floor/ceiling accessors** for rationals.
-  YAGNI until a demo wants to pull apart a ratio.
+- ~~**Numerator/denominator/floor/ceiling accessors** for rationals.~~
+  **Resolved 2026-05-26.** All four shipped as pure prims with
+  integer pass-through (numerator of N is N, denominator of N is 1,
+  floor/ceiling of N is N). `floor` rounds toward −∞ and `ceiling`
+  rounds toward +∞ on rationals. +2 tests in eval.rs.

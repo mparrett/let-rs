@@ -101,6 +101,37 @@ fn rational_eq_q_and_number_q() {
 }
 
 #[test]
+fn rational_accessors() {
+    // numerator / denominator on ratios.
+    assert_eq!(eval("(numerator 3/4)"), "3");
+    assert_eq!(eval("(denominator 3/4)"), "4");
+    assert_eq!(eval("(numerator -3/4)"), "-3");
+    assert_eq!(eval("(denominator -3/4)"), "4");
+    // Integers behave like (n / 1).
+    assert_eq!(eval("(numerator 5)"), "5");
+    assert_eq!(eval("(denominator 5)"), "1");
+    assert_eq!(eval("(numerator -7)"), "-7");
+    assert_eq!(eval("(denominator -7)"), "1");
+}
+
+#[test]
+fn floor_and_ceiling() {
+    assert_eq!(eval("(floor 7/2)"), "3");
+    assert_eq!(eval("(ceiling 7/2)"), "4");
+    // Negative rationals: floor rounds toward -infinity, ceiling toward 0.
+    assert_eq!(eval("(floor -7/2)"), "-4");
+    assert_eq!(eval("(ceiling -7/2)"), "-3");
+    // Exact integers pass through unchanged.
+    assert_eq!(eval("(floor 4)"), "4");
+    assert_eq!(eval("(ceiling 4)"), "4");
+    assert_eq!(eval("(floor -4)"), "-4");
+    assert_eq!(eval("(ceiling -4)"), "-4");
+    // Composes with arithmetic.
+    assert_eq!(eval("(* 4 (floor 7/2))"), "12");
+    assert_eq!(eval("(+ (floor 5/3) (ceiling 5/3))"), "3");
+}
+
+#[test]
 fn rational_errors() {
     let mut vm = Vm::new();
     // Division by zero (any form).
