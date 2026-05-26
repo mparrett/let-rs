@@ -176,7 +176,15 @@ addition; existing tests should stay green.
 
 ## Medium-impact (val / parse ergonomics)
 
-### 3. `Val` constructor helpers
+### 3. `Val` constructor helpers — **DONE**
+
+> Resolved 2026-05-25 in commit `2f8d642`. Shipped `Val::cons` and
+> `Val::alist_from`; dropped `Val::pair` from the doc's proposal —
+> same signature as `cons`, no semantic value. Every Rust callsite
+> that builds a cons-structure now goes through one of `cons`,
+> `list_from`, or `alist_from`; `Rc::new(Val::Cons(...))` no longer
+> appears in prim/genes/world_prim. The later numeric tower work
+> rounded out the constructor set with `Val::make_ratio`.
 
 **Problem.** Demos and Rust prims build `Val` cons-structures
 repeatedly, always with the same pattern:
@@ -228,7 +236,13 @@ happens.
 
 ---
 
-### 4. Shared `assoc-get` prim
+### 4. Shared `assoc-get` prim — **DONE**
+
+> Resolved 2026-05-25 in commit `2f8d642`. `(assoc-get key alist)`
+> is now a pure prim in `prim::initial_env`; the genes prelude
+> dropped its hand-rolled closure. `world_prim::assoc_get` (Rust
+> helper) stayed put as an internal implementation detail of the
+> world resolver. +1 test in eval.rs.
 
 **Problem.** `assoc-get` exists twice:
 
@@ -262,7 +276,16 @@ shrinks (no behavioral change).
 
 ---
 
-### 5. Symmetric prim registration
+### 5. Symmetric prim registration — **DONE (transitional)**
+
+> Resolved 2026-05-25 in commit `2f8d642`: `Vm::register_world_prim`
+> mirrors `Vm::register_prim`, closing the asymmetry the doc
+> identified. **Caveat surfaced 2026-05-26 in `host-state.md`**: the
+> deeper move is to remove the asymmetry entirely by letting prims
+> capture state through closures, which would collapse both
+> register methods into one. If we do the host-agnostic refactor,
+> `register_world_prim` goes away. Until then it's load-bearing for
+> anyone extending world-aware vocabulary.
 
 **Problem.** I added `Vm::register_prim` (ADR-011) for pure
 prims, but `Val::WorldPrim` has no public registration path —
@@ -349,18 +372,17 @@ gene work. Listed for context so we don't duplicate them:
 
 ## Suggested order
 
-If the next session does ~one of these:
+~~If the next session does ~one of these:~~ **All five items
+resolved 2026-05-25 → 2026-05-26.** Engine work surfaced since:
 
-1. **Installable preludes + top-level `define`** (#1) — biggest
-   win, most architectural reach. Unlocks "load a `.scm`
-   prelude file" as a real concept. Touches `Vm`, `eval_str`,
-   `parse.rs`. ~100 LOC + reshape both prelude strings.
-2. **Numeric tower** (#2) — clears a real expressiveness wall.
-   Rationals if we care about exactness; floats if we just want
-   the syntax. Open design call.
-3. **`Val` helpers + shared `assoc-get` + `register_world_prim`**
-   (#3 + #4 + #5) — bundle the three small ones as a single
-   cleanup commit. Maybe 90 minutes total, no design
-   controversy.
-
-`#1` is the most interesting; `#3+#4+#5` is the easiest warm-up.
+- **Host-agnostic Vm.** Drop `Val::WorldPrim`, switch to
+  closure-capable prims, move `World` into its own crate. ~150 LOC
+  of mechanical refactor, no behavior change. See `host-state.md`
+  for the rationale and `crates/world/` micro-crate companion idea.
+  Subsumes item #5 if pursued.
+- **Mutual recursion across top-level defines** (ADR-014 deferred).
+  Pre-scan pass that pre-allocates placeholder cells for every
+  top-level `define` in a single `eval_str` call. Independent of
+  the above.
+- **Numerator/denominator/floor/ceiling accessors** for rationals.
+  YAGNI until a demo wants to pull apart a ratio.
