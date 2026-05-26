@@ -208,6 +208,16 @@
       color: var(--ink-dust);
       margin-top: 6px;
     }
+    .act h3.subact {
+      font-family: var(--display);
+      font-weight: 500;
+      font-size: 19px;
+      letter-spacing: 0.005em;
+      color: var(--indigo);
+      margin: 36px 0 8px;
+      padding-top: 16px;
+      border-top: 1px solid var(--rule-soft);
+    }
 
     .act p { margin: 16px 0; max-width: 66ch; color: var(--ink); }
     .act p.aside {
@@ -516,24 +526,24 @@
 
     <header class="mast">
       <div class="strip">
-        <span>Build log · 2026-05-25</span>
-        <span class="here">letrs · day one</span>
-        <span>A lisp at the bottom of a spell</span>
+        <span>Build log · 2026-05-25 → 26</span>
+        <span class="here">letrs · two days in</span>
+        <span>A lisp at the bottom of a spell, then a genome</span>
       </div>
       <h1>Let<span class="sigil">rs</span></h1>
       <p class="sub">
-        A CEK abstract machine, a small functional lisp grown on top, a rune-tape DSL above that, and a host world the spells can actually paint — built in a single sitting, in zero-dependency Rust, with 26 tests and one continuation.
+        A CEK abstract machine, a small functional lisp grown on top, two structurally-different DSLs above that (spells over a tile world, genomes over a diploid resolver), and an engine that learned nothing new for either — built in zero-dependency Rust, with exact rationals, installable preludes, mutual-recursive top-level defines, and 78 tests.
       </p>
       <dl class="seal">
-        <div><dt>Engine</dt><dd>~1.3K LOC Rust</dd></div>
-        <div><dt>Dependencies</dt><dd>0</dd></div>
-        <div><dt>Tests</dt><dd>26 passing</dd></div>
+        <div><dt>Engine (zero-dep)</dt><dd>~1.6K LOC Rust</dd></div>
+        <div><dt>Sibling crates</dt><dd>runes · codons · wasm · bench</dd></div>
+        <div><dt>Tests</dt><dd>78 passing</dd></div>
         <div><dt>Tail depth</dt><dd>100,000 verified</dd></div>
       </dl>
     </header>
 
     <p class="prelude">
-      Xsofy is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Letrs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives.
+      Xsofy is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Letrs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives. The second day proved it twice — a second DSL (genomes, codons, Mendelian breeding) shipped without the engine learning a thing about it.
     </p>
 
     <section class="act">
@@ -857,23 +867,270 @@
       </div>
     </section>
 
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">V</span>
+        <span class="mark">⊛</span>
+      </div>
+      <div class="body">
+        <h2>A second vocabulary
+          <span class="tag">— genes, codons, Mendelian segregation, the substrate proves itself</span>
+        </h2>
+        <p>
+          The spell DSL was the first user of the lisp. To know whether the
+          design holds you need a <em>second</em> user that looks nothing
+          like the first. Day two added it: genetics. Codon tapes
+          (<code>AUG CGA GCA … UAA</code>) compile to a list of
+          trait-applying closures, an <code>express!</code> resolver folds a
+          genome into a single phenotype, a <code>mutate!</code> primitive
+          drifts alleles at a rational rate, and a <code>breed!</code>
+          primitive crosses two parents under Mendelian segregation. The
+          engine learned nothing new for any of it.
+        </p>
+
+        <p style="margin: 18px 0 22px;">
+          <span class="tape">AUG CGA GCA ACA UCA GCG AUC GAU UAA</span>
+        </p>
+
+        <p>
+          That tape — a "balanced" creature — runs through the genes
+          prelude and emerges as a small ASCII card:
+        </p>
+
+        <div class="boxed term-wrap" data-label="cargo run --example genes · balanced">
+        <pre class="term"><span class="dim">╭─ creature #1c7a ─────────────╮</span>
+<span class="dim">│</span> size  70  strength  75  speed  80  armor  60
+<span class="dim">│</span> color <span class="vio">green</span>     ability <span class="ok">fire-breath</span>
+<span class="dim">│</span> biome <span class="hl">volcanic</span>
+<span class="dim">│</span>     <span class="vio">(◉ ◉)</span>
+<span class="dim">│</span>     <span class="vio">▼▽▼</span>
+<span class="dim">╰────────────────────────────╯</span></pre>
+        </div>
+
+        <p>
+          A tape with two alleles per locus — a diploid genome — exercises
+          the resolver's interesting cases. Numeric traits average across
+          the two alleles. Categorical traits follow textbook dominance:
+          <code>dom</code> wins over <code>rec</code>; same-kind ties are
+          broken deterministically by an FNV hash of the genome so the same
+          input always produces the same creature. Append a <code>MUT</code>
+          codon and the prelude's <code>mutate</code> closure drifts every
+          allele with seeded xorshift — same seed, same drift. Cross two
+          parents through <code>breed!</code> and each locus picks one
+          allele from each parent at random, giving the offspring a fresh
+          diploid genome that can be expressed, mutated, or re-bred.
+        </p>
+
+        <div class="boxed code-wrap" data-label="examples/genes.rs · the full pipeline composed">
+        <pre class="code"><span class="vio">(express!</span> <span class="hl">(mutate</span> <span class="hl">(breed! seed</span>
+                  <span class="hl">(thread '() <em>mama-strand</em>)</span>
+                  <span class="hl">(thread '() <em>papa-strand</em>))))</span>
+<span class="dim">;; → phenotype alist → render_creature → ASCII card</span></pre>
+        </div>
+
+        <p>
+          The whole vocabulary is twenty lines of prelude plus three pure
+          Rust prims (<code>express!</code>, <code>mutate!</code>,
+          <code>breed!</code>). It uses <em>nothing</em> from the spell
+          stack — no <code>World</code>, no <code>WorldPrim</code>, no
+          host state at all. The substrate held: <code>Vm</code> ran a
+          structurally different DSL without an engine change. The spell
+          DSL is last-write-wins flat alist; the genes DSL is
+          list-per-key diploid accumulation with hash-deterministic
+          tiebreaks. They share the lisp underneath and nothing else.
+        </p>
+
+        <p class="aside">
+          The architectural lesson written down in <code>ADR-011</code>'s
+          "promote when a second consumer appears" rule had its first
+          real test here: the rune translator (<code>crates/runes/</code>)
+          got pulled into a sibling crate when the WASM bridge became a
+          second consumer; the spell prelude (<code>spells::PRELUDE_DEFINES</code>)
+          got hoisted into the lisp crate; the genes vocabulary
+          (<code>lisp::genes</code>) similarly. The rule kept the
+          deduplication honest — never one consumer ahead of an
+          abstraction.
+        </p>
+
+        <p class="note">
+          What this also surfaced, quietly: the second consumer of
+          <code>Vm</code> didn't want a tile world. The engine's fixed
+          <code>World</code> type — a paintable grid plus an event log,
+          named aspirationally in Act III — turns out to be the
+          <em>spell</em> demo's host state, not a general concept. The
+          genes demo carries a 0×0 <code>World::empty()</code> as dead
+          weight. <code>docs/project_notes/host-state.md</code> captures
+          the design conversation; the host-agnostic-<code>Vm</code>
+          refactor it points at is the next big slice.
+        </p>
+      </div>
+    </section>
+
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">VI</span>
+        <span class="mark">⫯</span>
+      </div>
+      <div class="body">
+        <h2>The engine grows up
+          <span class="tag">— installable preludes, exact rationals, mutual recursion at the top level</span>
+        </h2>
+        <p>
+          Three engine additions came in alongside the second DSL, each
+          one driven by something the second DSL exposed. None of them
+          changed the CEK rules. All of them sharpened the seam between
+          "language" and "vocabulary."
+        </p>
+
+        <h3 class="subact">Installable preludes</h3>
+        <p>
+          Both DSLs were initially shipping their preludes as open
+          <code>letrec</code> source strings that the host had to append
+          a body and a closing paren to. Every <code>cast()</code>
+          retokenized, recompiled, and re-evaluated ~25 lines of
+          prelude. With WASM in the loop this was the dominant per-call
+          cost. The fix: <code>eval_str</code> now accepts a sequence of
+          top-level forms, including a new <code>(define name body)</code>
+          form that extends the <code>Vm</code> env <em>in place</em>.
+          Each DSL crate exposes an <code>install(vm)</code> that runs
+          its prelude defines once at startup. A DSL is now "a const
+          string + an <code>install</code> function" — two lines to add
+          a new pack to a <code>Vm</code>.
+        </p>
+
+        <div class="boxed code-wrap" data-label="ADR-014 · DSL pack as installable concept">
+        <pre class="code"><span class="tea">let</span> <span class="hl">mut</span> vm = Vm::new();
+spells::install(&amp;<span class="hl">mut</span> vm);   <span class="dim">// installs spell vocabulary</span>
+genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// installs gene vocabulary</span>
+<span class="dim">// each cast()/cast_genome() now carries just the body</span></pre>
+        </div>
+
+        <h3 class="subact">Exact rationals</h3>
+        <p>
+          The genes <code>mutate!</code> prim wanted a 5% mutation rate
+          and had to take <code>5</code> (integer percent) because the
+          only numeric type was <code>i64</code>. The first place a
+          non-toy demo asked for a fractional value, the language
+          couldn't say it. So <code>Val</code> grew a
+          <code>Ratio(i64, u64)</code> variant — exact, always stored
+          in lowest terms with positive denominator, collapsing to
+          <code>Num</code> at construction if the reduced denominator
+          is 1. The parser reads <code>1/4</code> literals. Arithmetic
+          uses <code>i128</code> intermediates and a Euclidean
+          <code>gcd</code> for normalization. <code>/</code> became
+          exact division — <code>(/ 1 4) → 1/4</code>, no more
+          integer-divides-and-rounds. The genes prelude now reads
+          <code>(mutate! 1/4 seed ctx)</code> instead of
+          <code>(mutate! 25 seed ctx)</code>, which is what the doc
+          had wanted to say all along.
+        </p>
+
+        <p class="aside">
+          A 99-step rational fold (<code>(+ 1/2 1/3 … 1/100)</code>)
+          benches only ~10% slower than the equivalent integer fold.
+          The <code>i128</code> + <code>gcd</code> pipeline is cheap
+          enough on small numerators that the numeric tower didn't
+          introduce a real performance cliff.
+        </p>
+
+        <h3 class="subact">Mutual-recursive top-level defines</h3>
+        <p>
+          The initial <code>(define name body)</code> only supported
+          self-recursion via a placeholder cell — fine for
+          <code>(define f (lambda () (f)))</code>, but
+          <code>(define even? …) (define odd? …)</code> would fail
+          because <code>even?</code>'s closure captured an env without
+          <code>odd?</code>. A pre-pass over the parsed forms now
+          allocates placeholder cells for <em>every</em> top-level
+          <code>define</code> before any body evaluates, so siblings in
+          the same <code>eval_str</code> call freely refer to each
+          other. The cross-call case (define <code>foo</code> in one
+          REPL line, define <code>bar</code> in the next, expect
+          <code>foo</code> to call <code>bar</code>) still doesn't
+          work — closures capture env at evaluation time — and that
+          limitation is documented and pinned by a test.
+        </p>
+
+        <p>
+          The supporting cast: a shared <code>assoc-get</code> pure
+          prim that both demos now use instead of redefining locally;
+          <code>numerator</code>, <code>denominator</code>,
+          <code>floor</code>, <code>ceiling</code> accessors for
+          rationals; <code>Val::cons</code> and
+          <code>Val::alist_from</code> constructor helpers that
+          eliminated <code>Val::Cons(Rc::new(…), Rc::new(…))</code>
+          long-hand from every Rust call site; a benchmark crate
+          (<code>crates/bench/</code>) with thirteen criterion
+          benches covering the engine and both DSLs so the next
+          refactor has numbers to compare against.
+        </p>
+
+        <p class="lift">
+          The "Vm + DSL pack" idea is real now. A vocabulary is no
+          longer a fork of the parser or a special wrapping
+          expression — it's a const string of defines and a handful
+          of pure prims, installable in two lines. Two DSLs on day
+          two; the third one is just paperwork.
+        </p>
+      </div>
+    </section>
+
     <div class="coda">
       <h3>What comes after</h3>
       <p>
-        The substrate is in place. From here the moves are small and additive,
-        each one a clean slice of a couple hundred lines:
+        The substrate is in place — and now it's a substrate with two
+        consumers, which makes the next moves both clearer and less
+        urgent than they looked on day one. The shortlist:
       </p>
       <ul>
-        <li><strong>WASM bridge.</strong> <code>crates/wasm/</code> + a static <code>web/</code> shell with the REPL in a browser console. The whole COI / SAB / service-worker saga that xsofy fights goes away — wasm-bindgen's async event model means input is JS-pushed, not VM-pulled.</li>
-        <li><strong>More host primitives.</strong> Entities, line-of-sight, A* pathing, sound. Each one is a <code>WorldPrim</code> in a const slice; the lisp learns them by name with no engine change.</li>
-        <li><strong>A real spell library.</strong> <code>defspell</code> as a macro that registers under a rune table; element conflict resolution as a strategy passed to the resolver; the &quot;fork into two effects&quot; behavior the design has been hinting at since day one.</li>
-        <li><strong>Hygienic macros, or not.</strong> An honest pass at gensym + a renaming scheme; or a deliberate decision that lisp-1 unhygienic macros are fine for this codebase and a documented convention is enough.</li>
-        <li><strong>Persistent maps.</strong> When the alist outgrows the cons-list, a <code>Val::Map</code> backed by a small persistent structure. Probably not for a long time.</li>
-        <li><strong>The play loop.</strong> Turn-based render, input → spell → world tick → next state. The game part.</li>
+        <li><strong>Host-agnostic <code>Vm</code>.</strong> Drop the
+          fixed <code>Val::WorldPrim</code> variant and the
+          <code>Rc&lt;RefCell&lt;World&gt;&gt;</code> field, switch to
+          closure-capable prims that capture whatever host state the
+          caller cares to expose. Move the <code>World</code> /
+          <code>Tile</code> code into its own sibling crate. ~150 LOC
+          of mechanical refactor, no behavior change, and the engine
+          stops naming any specific host type. Design rationale in
+          <code>docs/project_notes/host-state.md</code>.</li>
+        <li><strong>A <code>crates/world/</code> micro-crate.</strong>
+          <code>Grid&lt;T&gt;</code> + <code>EventLog</code> as a
+          reusable building block, opt-in for hosts whose state shape
+          fits. Sibling to <code>runes</code> and <code>codons</code>.
+          Companion to the host-agnostic <code>Vm</code> move.</li>
+        <li><strong>Structured errors.</strong> Today
+          <code>eval_str</code> returns <code>Result&lt;Val, String&gt;</code>
+          and the web REPL surfaces those strings raw. Track
+          (line, column) in the tokenizer; propagate through compile +
+          eval. Visible win in the Spell Lab and Gene Lab when a user
+          mistypes.</li>
+        <li><strong>A real spell library.</strong> <code>defspell</code>
+          as a macro that registers under a rune table; element
+          conflict resolution as a strategy passed to the resolver;
+          the &quot;fork into two effects&quot; behavior the design has been
+          hinting at since day one. The substrate's ready; this is
+          host-side modelling work.</li>
+        <li><strong>Hygienic macros, or not.</strong> An honest pass at
+          gensym + a renaming scheme; or a deliberate decision that
+          unhygienic procedural macros are fine for this codebase and
+          a documented convention is enough.</li>
+        <li><strong>Persistent maps.</strong> When the alist outgrows
+          the cons-list, a <code>Val::Map</code> backed by a small
+          persistent structure. Both DSLs use alists; both are
+          comfortable below ~30 keys; this isn't urgent.</li>
+        <li><strong>The play loop.</strong> Turn-based render, input →
+          spell → world tick → next state. The game part. The lisp
+          and host-state pieces are in place; this is mostly UI.</li>
       </ul>
       <p>
-        None of those are large; all of them are interesting; most of them are
-        independent. The hard part is done — the language is itself.
+        Crossed off since day one: the WASM bridge (<code>crates/wasm/</code>
+        plus a three-page web shell — landing, Spell Lab, Gene Lab),
+        installable preludes, the numeric tower, mutual-recursive
+        top-level defines, the genes vocabulary itself. None of the
+        remaining items are large; all of them are interesting; most
+        of them are independent. The hard parts are done — the
+        language is itself, and the second DSL proved it.
       </p>
     </div>
 
@@ -899,8 +1156,8 @@
     </div>
 
     <footer class="colophon">
-      <span>letrs · 2026-05-25</span>
-      <span>three commits · 26 tests · zero dependencies</span>
+      <span>letrs · 2026-05-25 → 26</span>
+      <span>fifteen commits · 78 tests · core stays zero-dep</span>
       <span>built on a CEK machine</span>
     </footer>
 
