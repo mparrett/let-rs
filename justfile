@@ -15,6 +15,9 @@ spells:
 world:
     cargo run -q -p lisp --example world
 
+genes:
+    cargo run -q -p lisp --example genes
+
 check:
     cargo check --all-targets
 

@@ -25,8 +25,10 @@ Slices that have landed:
 - rune translation extracted to `crates/runes/` (zero-dep micro-crate)
 - WASM bridge (`crates/wasm/` + `web/`) — REPL + Spell Lab in the browser via
   `wasm-bindgen`, no COI / SAB required (see ADR-009)
+- genes demo: codon-tape → diploid genome → phenotype creature card,
+  parallel to spells but with genetics vocabulary (see ADR-011)
 
-34 tests pass across the workspace; `lisp` core stays zero-deps.
+40 tests pass across the workspace; `lisp` core stays zero-deps.
 
 ## Architecture (read this first)
 
@@ -52,12 +54,19 @@ Examples in `crates/lisp/examples/`:
 - `repl.rs` — interactive REPL (`just repl`)
 - `spells.rs` — rune tape → ctx pipeline; engine untouched, primitives in lisp
 - `world.rs` — spell ctx applied to a 7×5 grid via `world-apply!`
+- `genes.rs` — codon tape → diploid genome → `express!` resolver → ASCII
+  creature card. Engine and lisp crate untouched; `express!` is a pure
+  `Val::Prim` registered locally via `Vm::register_prim`. See ADR-011.
 
 Sibling crates:
 
 - `crates/runes/` — Unicode rune tape → `(list …)` sexpr. Zero deps; the only
   source of truth for the rune table; consumed by both `examples/spells` and
   the WASM bridge. See ADR-010.
+- `crates/codons/` — ASCII RNA codon tape (`AUG CGA …`) → `(list …)` sexpr.
+  Zero deps; sole source of truth for the codon table. Consumed only by
+  `examples/genes` for now (no WASM consumer yet — the genes prelude lives
+  in one place). Mirrors the `runes/` shape; ADR-011.
 - `crates/wasm/` — JS-facing bridge (`wasm-bindgen` `cdylib`). Wraps
   `lisp::Vm` + `World`, embeds the spell prelude as a const string, exposes
   `new(width, height)`, `eval(src)`, `cast(tape, x, y)`, `grid()`, `log()`,
@@ -75,18 +84,19 @@ Web shell at `web/`:
 ## Build / test
 
 ```bash
-just              # default: cargo test --workspace (34 tests)
+just              # default: cargo test --workspace (40 tests)
 just test         # same — explicit
 just repl
 just spells       # CLI rune-tape demo
 just world        # CLI spell-paints-tiles demo
+just genes        # CLI codon-tape → creature card demo
 just check
 just wasm-build   # cargo build --target wasm32-unknown-unknown + wasm-bindgen
 just wasm-serve   # build + python3 -m http.server -d web 8000
 ```
 
 Rust 1.93+, edition 2024. The core `lisp` crate stays zero-deps —
-keep it that way. `runes` is zero-deps too. `wasm` may take deps
+keep it that way. `runes` and `codons` are zero-deps too. `wasm` may take deps
 (`wasm-bindgen`, `console_error_panic_hook`); this is allowed by
 ADR-002's "lisp stays platform-independent" caveat.
 
@@ -123,6 +133,13 @@ ships a larger bundle.
   `crates/lisp/examples/spells.rs` AND `crates/wasm/src/lib.rs`
   (`SPELL_PRELUDE_BINDINGS`). The two prelude copies will eventually
   consolidate — until then, keep them in sync.
+- Adding a new codon: edit `crates/codons/src/lib.rs`. If the codon
+  introduces a new trait, also extend the genome prelude
+  (`PRELUDE_BINDINGS`) and the `TRAITS` classification table in
+  `crates/lisp/examples/genes.rs`. Categorical allele payloads need to be
+  quoted in the codon fragment (`(color 'green dom)`) so the evaluator
+  treats them as symbols rather than variable lookups. No WASM consumer
+  yet — the genes prelude lives in one place.
 
 ## Project Memory
 

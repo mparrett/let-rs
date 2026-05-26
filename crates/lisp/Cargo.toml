@@ -7,10 +7,11 @@ license.workspace = true
 [lints]
 workspace = true
 
-# Dev-only: the spells example consumes the runes crate to demonstrate the
-# rune-tape pipeline. ADR-002 still holds — no runtime deps on the lisp crate.
+# Dev-only: example binaries consume DSL crates. The lisp crate itself
+# stays zero-deps — ADR-002 still holds.
 [dev-dependencies]
-runes = { path = "../runes" }
+runes  = { path = "../runes" }
+codons = { path = "../codons" }
 
 [[example]]
 name = "repl"
@@ -23,3 +24,7 @@ path = "examples/spells.rs"
 [[example]]
 name = "world"
 path = "examples/world.rs"
+
+[[example]]
+name = "genes"
+path = "examples/genes.rs"

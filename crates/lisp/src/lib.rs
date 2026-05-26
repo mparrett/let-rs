@@ -75,6 +75,21 @@ impl Vm {
         }
     }
 
+    /// Install a host primitive into the VM's initial env. Mirrors how
+    /// `world_prim::WORLD_PRIMS` is installed in `with_world`, but for
+    /// pure (non-world-touching) prims so demo binaries can extend the
+    /// vocabulary without going through `eval_str`.
+    pub fn register_prim(
+        &mut self,
+        name: &'static str,
+        arity: val::Arity,
+        f: fn(&[Val]) -> Result<Val, String>,
+    ) {
+        self.env = self
+            .env
+            .extend(name.into(), Val::Prim { name, arity, f });
+    }
+
     pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
         let datum = parse::read(src)?;
 

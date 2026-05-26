@@ -344,3 +344,98 @@ String>` plus the `PLAIN`/`PARAM` rune tables. Both the CLI example
 - **−** Slight indirection: changing `(area 3)`'s rune now requires editing
   `crates/runes/src/lib.rs` rather than the example. Documented in
   `CLAUDE.md`.
+
+## ADR-011: Genes demo — codon tape, diploid-by-accumulation, host-side phenotype resolver (2026-05-25)
+
+**Context**: The runes/spells demo proves the mini-lisp can host a real
+vocabulary on top of the CEK engine. The open question was whether the
+three-layer pattern (tape → lisp pipeline → host resolver) *generalized*
+or just happened to fit magic. Genetics is structurally different from
+spells in three load-bearing ways: alleles are diploid (two values per
+locus, not one), numeric traits average rather than last-write-wins, and
+categorical traits resolve by Mendelian dominance rather than simple
+overwrite. If the same architecture absorbs all three twists with no
+engine change, the pattern is real. Sibling project `../kaiju-elements`
+provided the concrete genetic model (`Gene { value, dominant }` diploid
+pairs, numeric averaging, Mendelian categoricals, biome affinities).
+
+**Decision**: Mirror the runes/spells slice with three deliberate twists:
+
+1. **Codon tape.** RNA-style ASCII triplets (`AUG CGA UUA UGA`) in a new
+   zero-dep `crates/codons/` micro-crate parallel to `crates/runes/`.
+   Codons don't take following numerals — the allele payload is baked
+   into the table fragment — so the lexer is whitespace-split +
+   triplet-validate. Kaiju doesn't actually use codons; we added them as
+   the cleanest possible parallel to runes (one tape symbol → one
+   binding call) and because biology gives us `AUG`/`UAA`/`UGA` as
+   ready-made start/stop anchors.
+2. **Diploid by accumulation in the ctx.** Stating two codons for the
+   same trait stacks two alleles in a per-trait list under that key. A
+   new ctx idiom (list-per-key) that contrasts with spells' flat
+   key/value alist. Fragmentary genomes still express what they have.
+3. **`express!` as a pure `Val::Prim`** registered by the example via
+   a new `Vm::register_prim` helper (~5 lines added to
+   `crates/lisp/src/lib.rs`). The resolver walks the genome ctx,
+   averages numerics, runs Mendelian dominance on categoricals
+   (deterministic tiebreak from FNV hash of the genome string), and
+   returns a phenotype alist. ASCII creature-card rendering happens in
+   Rust on the example side.
+
+**Alternatives**:
+- **Allele-as-tape** (one tape token = one fully-formed allele, no codon
+  indirection): rejected. Codons are the parallel to runes (single
+  symbol → binding call); the start/stop biology nod is essentially
+  free; "codon → allele → trait" is a story worth telling.
+- **Diploid as explicit pairs in tape** (e.g. `pair(AUG, AUG)`):
+  rejected. Accumulation in the ctx is the more lispy answer and lets
+  fragmentary genomes express. The cost is permissiveness (N>2 alleles
+  per locus possible) which the resolver handles by taking the first
+  two.
+- **`express!` in the lisp crate** (next to `world_prim.rs`): rejected
+  for now. World is a shared host concept (CLI + WASM); creatures are
+  demo-local. Promote later if a second consumer appears.
+- **`express!` in pure lisp**: rejected. Phenotype resolution +
+  Mendelian dominance + deterministic hashing is cleaner in 40 lines of
+  Rust than 80 lines of lisp, and the structured `Val` output threads
+  naturally to the Rust-side card renderer.
+- **`crates/codons/` as a second table inside `runes/`**: rejected per
+  ADR-010's logic. Sibling DSLs each get their own table — keeps
+  `cargo test -p codons` isolated and the "extending the rune table"
+  story uncluttered.
+- **Categorical payloads unquoted** (e.g. `(color green dom)`):
+  rejected — `green` resolves as a variable lookup and bombs. Quoted
+  form (`(color 'green dom)`) keeps the prelude small (no need to bind
+  every color/ability/biome symbol as a self-referential variable).
+
+**Consequences**:
+- **+** Vocabulary swap validated end-to-end. The CEK engine, the
+  parser, and `crates/lisp/src/*` (except the 5-line `register_prim`
+  helper) are untouched.
+- **+** New ctx idiom (list-per-key for diploids) demonstrated; future
+  DSLs that need multi-value-per-key state have a pattern to borrow.
+- **+** `codons` is zero-dep and self-contained (`cargo test -p codons`
+  runs in <1s).
+- **+** `Vm::register_prim` is generally useful — any future example
+  that needs a custom pure prim can use it.
+- **−** Now two example-local preludes (spells, genes). The "two copies
+  in sync" warning from ADR-010 doesn't apply yet (no WASM exposure for
+  genes), but if/when genes goes to WASM, the duplicate-prelude
+  bookkeeping starts.
+- **−** The `(color 'green dom)` quote-symbol convention is a sharp
+  edge — easy to forget when adding a new categorical codon. Documented
+  in `CLAUDE.md`'s "Adding a new codon" paragraph and protected by the
+  fact that an unquoted symbol bombs loudly at eval time.
+
+**Deferred to future slices** (each their own ADR):
+- Mutation primitive `(mutate 0.05)` — needs RNG (thread-local?
+  WorldPrim against a per-Vm seed?), a non-trivial decision.
+- Breeding primitive that combines two genomes per Mendelian
+  segregation. Trivial in lisp once we have the ctx representation;
+  the question is whether breeding belongs in the pipeline or the
+  resolver.
+- WASM exposure as a "Gene Lab" panel. Requires duplicating the genome
+  prelude into `crates/wasm/src/lib.rs` and adding `cast_genome` /
+  `creature_card` / `reset_genome` to the bridge. The
+  prelude-duplication warning starts applying.
+- Promoting a `Creature` host type to the lisp crate. Only when a
+  second consumer (WASM, a game loop) needs it.
