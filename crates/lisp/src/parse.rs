@@ -10,6 +10,10 @@ use crate::val::Val;
 #[derive(Debug, Clone)]
 pub enum Datum {
     Num(i64),
+    /// Pre-normalization ratio as read from source. `compile` and
+    /// `datum_to_val` route this through `Val::make_ratio` so the
+    /// runtime always sees normalized form.
+    Ratio(i64, u64),
     Bool(bool),
     Sym(Sym),
     List(Vec<Datum>),
@@ -24,6 +28,7 @@ enum Tok {
     Unquote,
     UnquoteSplice,
     Num(i64),
+    Ratio(i64, u64),
     Bool(bool),
     Sym(String),
 }
@@ -127,12 +132,22 @@ fn classify(s: &str) -> Tok {
     if let Ok(n) = s.parse::<i64>() {
         return Tok::Num(n);
     }
+    // Rational literal: `<sign?digits>/<digits>` with non-zero den.
+    // Anything else (e.g. `1/`, `/3`, `1/0`, `foo/bar`) stays a symbol.
+    if let Some((num_s, den_s)) = s.split_once('/')
+        && let Ok(num) = num_s.parse::<i64>()
+        && let Ok(den) = den_s.parse::<u64>()
+        && den > 0
+    {
+        return Tok::Ratio(num, den);
+    }
     Tok::Sym(s.to_string())
 }
 
 fn read_datum(it: &mut Peekable<IntoIter<Tok>>) -> Result<Datum, String> {
     match it.next().ok_or_else(|| "unexpected eof".to_string())? {
         Tok::Num(n) => Ok(Datum::Num(n)),
+        Tok::Ratio(num, den) => Ok(Datum::Ratio(num, den)),
         Tok::Bool(b) => Ok(Datum::Bool(b)),
         Tok::Sym(s) => Ok(Datum::Sym(s.into())),
         Tok::Quote => prefixed("quote", read_datum(it)?),
@@ -164,6 +179,13 @@ fn prefixed(head: &str, inner: Datum) -> Result<Datum, String> {
 pub fn compile(d: &Datum) -> Result<Expr, String> {
     match d {
         Datum::Num(n) => Ok(Expr::Num(*n)),
+        // Quote-wrap a normalized ratio so eval surfaces a Val::Ratio.
+        // The reader already validated den != 0, so make_ratio shouldn't
+        // fail here in practice; surface any constructor error directly.
+        Datum::Ratio(n, d) => {
+            let v = Val::make_ratio(*n as i128, *d as i128)?;
+            Ok(Expr::Quote(Rc::new(v)))
+        }
         Datum::Bool(b) => Ok(Expr::Bool(*b)),
         Datum::Sym(s) => Ok(Expr::Var(s.clone())),
         Datum::List(items) => {
@@ -231,6 +253,11 @@ fn compile_quote(rest: &[Datum]) -> Result<Expr, String> {
 pub fn datum_to_val(d: &Datum) -> Val {
     match d {
         Datum::Num(n) => Val::Num(*n),
+        // A reader-validated ratio (den > 0) cannot fail to normalize —
+        // unwrap is safe here. If make_ratio ever grows another failure
+        // mode, this is where to revisit.
+        Datum::Ratio(n, d) => Val::make_ratio(*n as i128, *d as i128)
+            .expect("reader-validated ratio failed to normalize"),
         Datum::Bool(b) => Val::Bool(*b),
         Datum::Sym(s) => Val::Sym(s.clone()),
         Datum::List(items) => {
@@ -328,7 +355,7 @@ fn compile_quasiquote_form(rest: &[Datum]) -> Result<Expr, String> {
 /// splicing xs (a list) into the surrounding list.
 fn compile_qq(d: &Datum) -> Result<Expr, String> {
     match d {
-        Datum::Num(_) | Datum::Bool(_) | Datum::Sym(_) => {
+        Datum::Num(_) | Datum::Ratio(_, _) | Datum::Bool(_) | Datum::Sym(_) => {
             Ok(Expr::Quote(Rc::new(datum_to_val(d))))
         }
         Datum::List(items) => {

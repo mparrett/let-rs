@@ -3,47 +3,71 @@ use crate::val::{Arity, Val};
 
 type R = Result<Val, String>;
 
-// ---- arithmetic (variadic) ----
+// ---- numeric tower helpers ----
+//
+// Internal representation during arithmetic is `(i128, i128)` for
+// (numerator, denominator). Integers promote to `(n, 1)`. All ops go
+// through `Val::make_ratio` for normalization on the way out, which
+// also collapses ratios that simplify to integers back to `Val::Num`.
 
-fn nums(args: &[Val], name: &str) -> Result<Vec<i64>, String> {
-    args.iter()
-        .map(|v| match v {
-            Val::Num(n) => Ok(*n),
-            other => Err(format!("{name}: expected number, got {other}")),
-        })
-        .collect()
+fn as_ratio(v: &Val, name: &str) -> Result<(i128, i128), String> {
+    match v {
+        Val::Num(n) => Ok((*n as i128, 1)),
+        Val::Ratio(n, d) => Ok((*n as i128, *d as i128)),
+        other => Err(format!("{name}: expected number, got {other}")),
+    }
 }
 
+fn ratio_args(args: &[Val], name: &str) -> Result<Vec<(i128, i128)>, String> {
+    args.iter().map(|v| as_ratio(v, name)).collect()
+}
+
+// ---- arithmetic (variadic) ----
+
 fn add(args: &[Val]) -> R {
-    Ok(Val::Num(nums(args, "+")?.iter().sum()))
+    let xs = ratio_args(args, "+")?;
+    let (n, d) = xs.into_iter().fold((0i128, 1i128), |(an, ad), (bn, bd)| {
+        (an * bd + bn * ad, ad * bd)
+    });
+    Val::make_ratio(n, d)
 }
 
 fn sub(args: &[Val]) -> R {
-    let ns = nums(args, "-")?;
-    match ns.as_slice() {
+    let xs = ratio_args(args, "-")?;
+    match xs.as_slice() {
         [] => Err("-: needs at least one argument".into()),
-        [x] => Ok(Val::Num(-x)),
-        [x, rest @ ..] => Ok(Val::Num(rest.iter().fold(*x, |a, b| a - b))),
+        [(n, d)] => Val::make_ratio(-n, *d),
+        [first, rest @ ..] => {
+            let (n, d) = rest.iter().fold(*first, |(an, ad), (bn, bd)| {
+                (an * bd - bn * ad, ad * bd)
+            });
+            Val::make_ratio(n, d)
+        }
     }
 }
 
 fn mul(args: &[Val]) -> R {
-    Ok(Val::Num(nums(args, "*")?.iter().product()))
+    let xs = ratio_args(args, "*")?;
+    let (n, d) = xs
+        .into_iter()
+        .fold((1i128, 1i128), |(an, ad), (bn, bd)| (an * bn, ad * bd));
+    Val::make_ratio(n, d)
 }
 
 fn div(args: &[Val]) -> R {
-    let ns = nums(args, "/")?;
-    match ns.as_slice() {
+    let xs = ratio_args(args, "/")?;
+    match xs.as_slice() {
         [] | [_] => Err("/: needs at least two arguments".into()),
-        [x, rest @ ..] => {
-            let mut acc = *x;
-            for d in rest {
-                if *d == 0 {
+        [first, rest @ ..] => {
+            let mut acc = *first;
+            for &(bn, bd) in rest {
+                if bn == 0 {
                     return Err("/: division by zero".into());
                 }
-                acc /= d;
+                // Divide by (bn/bd) = multiply by (bd/bn).
+                acc = (acc.0 * bd, acc.1 * bn);
             }
-            Ok(Val::Num(acc))
+            Val::make_ratio(acc.0, acc.1)
         }
     }
 }
@@ -56,16 +80,21 @@ fn modulo(args: &[Val]) -> R {
             }
             Ok(Val::Num(a.rem_euclid(*b)))
         }
-        _ => Err("mod: expected two numbers".into()),
+        _ => Err("mod: expected two integers".into()),
     }
 }
 
 // ---- comparison ----
 
-fn cmp_chain(args: &[Val], name: &str, ok: fn(i64, i64) -> bool) -> R {
-    let ns = nums(args, name)?;
-    for w in ns.windows(2) {
-        if !ok(w[0], w[1]) {
+fn cmp_chain(args: &[Val], name: &str, ok: fn(i128, i128) -> bool) -> R {
+    let xs = ratio_args(args, name)?;
+    // Compare a < b by cross-multiplying: a.n * b.d  ?  b.n * a.d.
+    // Both denominators are positive (Val::make_ratio invariant), so
+    // the cross-multiplied compare preserves direction.
+    for w in xs.windows(2) {
+        let (an, ad) = w[0];
+        let (bn, bd) = w[1];
+        if !ok(an * bd, bn * ad) {
             return Ok(Val::Bool(false));
         }
     }
@@ -142,7 +171,7 @@ fn pair_q(args: &[Val]) -> R {
 }
 
 fn number_q(args: &[Val]) -> R {
-    Ok(Val::Bool(matches!(args[0], Val::Num(_))))
+    Ok(Val::Bool(matches!(args[0], Val::Num(_) | Val::Ratio(_, _))))
 }
 
 fn symbol_q(args: &[Val]) -> R {

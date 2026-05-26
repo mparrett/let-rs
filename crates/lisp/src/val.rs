@@ -8,6 +8,11 @@ use crate::world::World;
 #[derive(Clone)]
 pub enum Val {
     Num(i64),
+    /// Exact rational. Always stored in lowest terms with `den > 0`;
+    /// construct via `Val::make_ratio` to enforce both invariants.
+    /// A ratio that simplifies to an integer is returned as `Val::Num`
+    /// by the constructor, so a `Val::Ratio` always has `den >= 2`.
+    Ratio(i64, u64),
     Bool(bool),
     Sym(Sym),
     Nil,
@@ -83,11 +88,47 @@ impl Val {
         acc
     }
 
+    /// Construct an exact rational. Normalizes:
+    /// - errors on zero denominator
+    /// - moves sign onto the numerator (denominator always positive)
+    /// - reduces by gcd
+    /// - collapses to `Val::Num` when the reduced denominator is 1
+    ///
+    /// Intermediates use `i128` to survive the kind of denominator
+    /// growth common in unreduced arithmetic; the final values must
+    /// fit in `(i64, u64)` or the call errors.
+    pub fn make_ratio(num: i128, den: i128) -> Result<Val, String> {
+        if den == 0 {
+            return Err("ratio: zero denominator".into());
+        }
+        let (mut n, mut d) = if den < 0 { (-num, -den) } else { (num, den) };
+        let g = gcd_i128(n.unsigned_abs(), d as u128) as i128;
+        n /= g;
+        d /= g;
+        if d == 1 {
+            let n64: i64 = n
+                .try_into()
+                .map_err(|_| format!("ratio: numerator {n} out of i64 range"))?;
+            return Ok(Val::Num(n64));
+        }
+        let n64: i64 = n
+            .try_into()
+            .map_err(|_| format!("ratio: numerator {n} out of i64 range"))?;
+        let d64: u64 = (d as u128)
+            .try_into()
+            .map_err(|_| format!("ratio: denominator {d} out of u64 range"))?;
+        Ok(Val::Ratio(n64, d64))
+    }
+
     /// Pointer-style equality for atoms; `#f` for compound values (Scheme `eq?`
-    /// behavior on conses/closures without interning).
+    /// behavior on conses/closures without interning). Ratios are stored in
+    /// lowest terms so structural eq matches numerical eq for them. A `Num`
+    /// and a `Ratio` are never `eq?` because `make_ratio` collapses any
+    /// integer-valued ratio to `Num` at construction.
     pub fn eq_shallow(&self, other: &Val) -> bool {
         match (self, other) {
             (Val::Num(a), Val::Num(b)) => a == b,
+            (Val::Ratio(an, ad), Val::Ratio(bn, bd)) => an == bn && ad == bd,
             (Val::Bool(a), Val::Bool(b)) => a == b,
             (Val::Sym(a), Val::Sym(b)) => &**a == &**b,
             (Val::Nil, Val::Nil) => true,
@@ -96,10 +137,20 @@ impl Val {
     }
 }
 
+fn gcd_i128(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a.max(1)
+}
+
 impl fmt::Display for Val {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Val::Num(n) => write!(f, "{n}"),
+            Val::Ratio(n, d) => write!(f, "{n}/{d}"),
             Val::Bool(true) => write!(f, "#t"),
             Val::Bool(false) => write!(f, "#f"),
             Val::Sym(s) => write!(f, "{s}"),

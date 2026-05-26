@@ -109,7 +109,16 @@ installer." Two lines to add a new DSL to a Vm.
 
 ---
 
-### 2. Numeric tower (rationals or floats)
+### 2. Numeric tower (rationals or floats) — **DONE (rationals)**
+
+> Resolved 2026-05-26. `Val::Ratio(i64, u64)` added; `Val::make_ratio`
+> normalizes (gcd-reduces, positive denominator, collapses to
+> `Val::Num` on den=1). Parser reads `n/d` literals; arithmetic prims
+> promote `Num`/`Ratio` uniformly via i128 intermediates. `/` is now
+> exact: `(/ 1 4)` → `1/4` (breaking change from integer division).
+> `mod` stays integer-only. +7 tests in eval.rs. Follow-on (not
+> done): have `mutate!` accept the rate as a rational instead of
+> integer percent, which was the doc's original motivation.
 
 **Problem.** `Val::Num(i64)` is the only numeric type
 (`crates/lisp/src/val.rs:10`). The mutation rate wanted to be

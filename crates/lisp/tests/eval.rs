@@ -34,6 +34,88 @@ fn arithmetic_variadic() {
 }
 
 #[test]
+fn rational_literals_normalize_at_read_time() {
+    // Lowest terms; denominator always positive.
+    assert_eq!(eval("1/2"), "1/2");
+    assert_eq!(eval("2/4"), "1/2");
+    assert_eq!(eval("-3/6"), "-1/2");
+    // Sign migrates to numerator. `-1/-2` isn't valid input — parser
+    // wants a single sign on the numerator — but a Ratio constructed
+    // from negative-den intermediates normalizes to positive-den form.
+    // `1/1` collapses to an integer.
+    assert_eq!(eval("1/1"), "1");
+    assert_eq!(eval("4/2"), "2");
+    assert_eq!(eval("-6/3"), "-2");
+}
+
+#[test]
+fn rational_arithmetic() {
+    assert_eq!(eval("(+ 1/2 1/3)"), "5/6");
+    assert_eq!(eval("(- 1/2 1/3)"), "1/6");
+    assert_eq!(eval("(* 2/3 3/4)"), "1/2");
+    assert_eq!(eval("(/ 1/2 1/4)"), "2");
+    // Negation of a ratio.
+    assert_eq!(eval("(- 1/3)"), "-1/3");
+}
+
+#[test]
+fn division_of_integers_produces_a_ratio() {
+    // Breaking change from integer-div semantics: `/` is now exact.
+    assert_eq!(eval("(/ 1 4)"), "1/4");
+    assert_eq!(eval("(/ 10 4)"), "5/2");
+    // Existing integer-divisible case still returns an int.
+    assert_eq!(eval("(/ 100 2 5)"), "10");
+}
+
+#[test]
+fn mixed_int_ratio_arithmetic() {
+    assert_eq!(eval("(+ 1 1/2)"), "3/2");
+    assert_eq!(eval("(+ 1/2 1)"), "3/2");
+    assert_eq!(eval("(* 4 1/2)"), "2");
+    assert_eq!(eval("(- 1 1/3)"), "2/3");
+}
+
+#[test]
+fn rational_comparison_across_types() {
+    assert_eq!(eval("(= 1 1/1)"), "#t");
+    assert_eq!(eval("(= 1/2 2/4)"), "#t");
+    assert_eq!(eval("(< 1/3 1/2)"), "#t");
+    assert_eq!(eval("(< 1/3 1/2 2/3)"), "#t");
+    assert_eq!(eval("(<= 1/2 1/2)"), "#t");
+    assert_eq!(eval("(> 2/3 1/2 1/3)"), "#t");
+    // Mixed int/ratio comparisons.
+    assert_eq!(eval("(< 1/2 1)"), "#t");
+    assert_eq!(eval("(< 0 1/2)"), "#t");
+}
+
+#[test]
+fn rational_eq_q_and_number_q() {
+    assert_eq!(eval("(eq? 1/2 1/2)"), "#t");
+    // Normalized — these are the same Val::Ratio.
+    assert_eq!(eval("(eq? 1/2 2/4)"), "#t");
+    // An integer-valued ratio collapses to Num, so eq? to an int succeeds.
+    assert_eq!(eval("(eq? 4 4/1)"), "#t");
+    assert_eq!(eval("(number? 1/2)"), "#t");
+    assert_eq!(eval("(number? 42)"), "#t");
+    assert_eq!(eval("(number? 'foo)"), "#f");
+}
+
+#[test]
+fn rational_errors() {
+    let mut vm = Vm::new();
+    // Division by zero (any form).
+    assert!(vm.eval_str("(/ 1 0)").is_err());
+    assert!(vm.eval_str("(/ 1/2 0)").is_err());
+    // mod stays integer-only.
+    assert!(vm.eval_str("(mod 1/2 2)").is_err());
+    assert!(vm.eval_str("(mod 4 1/2)").is_err());
+    // `1/0` in source is a symbol (parser rejects ratio with zero den).
+    // So it's an unbound variable at eval, not a ratio error.
+    let r = vm.eval_str("1/0");
+    assert!(r.is_err(), "1/0 should be rejected (unbound symbol): {r:?}");
+}
+
+#[test]
 fn comparison_chains() {
     assert_eq!(eval("(< 1 2 3)"), "#t");
     assert_eq!(eval("(< 1 2 2)"), "#f");
