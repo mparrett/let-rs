@@ -31,6 +31,7 @@ pub mod genes;
 pub mod k;
 pub mod parse;
 pub mod prim;
+pub mod spells;
 pub mod step;
 pub mod val;
 pub mod world;

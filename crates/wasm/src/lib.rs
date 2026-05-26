@@ -5,12 +5,12 @@
 //! - **`eval(src)`** — arbitrary lisp evaluation. Returns the formatted Val
 //!   on success; throws (rejected `Result` → JS exception) on error.
 //! - **`cast(tape, x, y)`** — rune-tape translation + spell prelude + the
-//!   `world-apply!` resolver in one call. Reuses the rune translator from
-//!   the `runes` crate (ADR-010) so it stays in sync with the CLI demo.
+//!   `world-apply!` resolver in one call. Reuses both `runes::tape_to_sexpr`
+//!   and `lisp::spells::PRELUDE_BINDINGS` so the CLI and the bridge stay
+//!   bit-identical (ADR-010).
 //! - **`cast_genome(tape)`** — codon-tape translation + genome prelude +
-//!   the `express!` resolver. Returns a rendered creature card. The
-//!   prelude, prim, and renderer all come from `lisp::genes` so the CLI
-//!   demo and this bridge share one source of truth (ADR-011).
+//!   the `express!` resolver. Returns a rendered creature card. Prelude,
+//!   prim, and renderer all come from `lisp::genes` (ADR-011).
 //!
 //! Plus read-only `grid()` / `log()` accessors and a `reset_world()` that
 //! replaces the world tiles in place while preserving dimensions.
@@ -21,24 +21,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use lisp::{Vm as LispVm, World, genes};
-
-/// The spell prelude — the user-level closures that turn rune symbols into
-/// pipeline primitives. Closes the letrec bindings list but leaves letrec
-/// itself open: `cast()` appends the body and a closing paren.
-const SPELL_PRELUDE_BINDINGS: &str = r#"
-(letrec ((assoc-set (lambda (k v ctx) (cons (cons k v) ctx)))
-         (thread    (lambda (ctx fs)
-                      (if (null? fs) ctx
-                          (thread ((car fs) ctx) (cdr fs)))))
-         (start     (lambda (x y) (assoc-set 'ty y (assoc-set 'tx x '()))))
-         (fire      (lambda (ctx) (assoc-set 'element 'fire ctx)))
-         (ice       (lambda (ctx) (assoc-set 'element 'ice ctx)))
-         (bolt      (lambda (ctx) (assoc-set 'shape   'bolt ctx)))
-         (self      (lambda (ctx) (assoc-set 'target  'self ctx)))
-         (area      (lambda (n)   (lambda (ctx) (assoc-set 'area  n ctx))))
-         (power     (lambda (n)   (lambda (ctx) (assoc-set 'power n ctx)))))
-"#;
+use lisp::{Vm as LispVm, World, genes, spells};
 
 #[wasm_bindgen(js_name = "Vm")]
 pub struct WasmVm {
@@ -72,8 +55,15 @@ impl WasmVm {
     pub fn cast(&mut self, tape: &str, x: i64, y: i64) -> Result<String, JsValue> {
         let list_expr =
             runes::tape_to_sexpr(tape).map_err(|e| JsValue::from_str(&format!("rune: {e}")))?;
+        // Coord seeding lives at the call site (assoc-set wrap) rather than
+        // inside the shared prelude — keeps `start` zero-arg and identical
+        // across CLI + WASM consumers. See ADR-010.
         let src = format!(
-            "{SPELL_PRELUDE_BINDINGS}  (world-apply! (thread (start {x} {y}) {list_expr})))"
+            "{}  (world-apply! \
+               (assoc-set 'tx {x} \
+                 (assoc-set 'ty {y} \
+                   (thread (start) {list_expr})))))",
+            spells::PRELUDE_BINDINGS,
         );
         self.inner
             .eval_str(&src)

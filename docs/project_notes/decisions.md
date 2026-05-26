@@ -345,6 +345,15 @@ String>` plus the `PLAIN`/`PARAM` rune tables. Both the CLI example
   `crates/runes/src/lib.rs` rather than the example. Documented in
   `CLAUDE.md`.
 
+**Follow-up landed (2026-05-25)**: the rune *prelude* (the lisp source
+defining `assoc-set`, `thread`, `start`, `fire`, `ice`, etc.) was
+extracted into `lisp::spells::PRELUDE_BINDINGS`, mirroring the
+`lisp::genes` pattern from ADR-011. The wasm bridge's previous local
+`SPELL_PRELUDE_BINDINGS` const is gone; coord seeding for `(world-apply!
+…)` moved out of the prelude into a call-site `assoc-set` wrap, which
+keeps `start` zero-arg and bit-identical across CLI + WASM. Closes the
+"two prelude copies will eventually consolidate" caveat above.
+
 ## ADR-011: Genes demo — codon tape, diploid-by-accumulation, host-side phenotype resolver (2026-05-25)
 
 **Context**: The runes/spells demo proves the mini-lisp can host a real

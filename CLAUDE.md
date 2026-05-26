@@ -28,7 +28,7 @@ Slices that have landed:
 - genes demo: codon-tape → diploid genome → phenotype creature card,
   parallel to spells but with genetics vocabulary (see ADR-011)
 
-40 tests pass across the workspace; `lisp` core stays zero-deps.
+48 tests pass across the workspace; `lisp` core stays zero-deps.
 
 ## Architecture (read this first)
 
@@ -45,6 +45,10 @@ file before anything else; the rest of the engine is decoration.
 - `prim.rs` — pure built-ins (arithmetic, list ops, predicates, eq?)
 - `world.rs` — minimal grid + log used by the spell demo
 - `world_prim.rs` — `Val::WorldPrim` primitives that take `&mut World`
+- `spells.rs` — the rune prelude as a single `PRELUDE_BINDINGS` const.
+  Shared by `examples/spells.rs` and the WASM bridge so the two
+  consumers can never drift. Coord seeding (when needed) happens at
+  the call site via `assoc-set`, not inside the prelude. See ADR-010.
 - `genes.rs` — genome prelude, `express!` resolver, creature-card
   renderer. Pure `Val::Prim`, no engine coupling. Shared by the CLI
   demo (`examples/genes.rs`) and the WASM bridge (`crates/wasm/`).
@@ -149,9 +153,8 @@ ships a larger bundle.
 - Adding a new rune: edit `crates/runes/src/lib.rs` — both the CLI demo
   and the WASM bridge see it automatically. If the new rune needs a
   matching primitive, also extend the spell prelude in
-  `crates/lisp/examples/spells.rs` AND `crates/wasm/src/lib.rs`
-  (`SPELL_PRELUDE_BINDINGS`). The two prelude copies will eventually
-  consolidate — until then, keep them in sync.
+  `crates/lisp/src/spells.rs` (`PRELUDE_BINDINGS`) — both consumers
+  import from there, so one edit is enough.
 - Adding a new codon: edit `crates/codons/src/lib.rs`. If the codon
   introduces a new trait, also extend the genome prelude
   (`PRELUDE_BINDINGS`) and the `TRAITS` classification table in
