@@ -19,10 +19,7 @@ fn express_seeded(tape: &str, seed: i64) -> String {
     genes::install(&mut vm);
     let list = tape_to_sexpr(tape).expect("tape should lex");
     let body = format!("(express! (thread '() {list}))");
-    let src = format!(
-        "(let ((seed {seed})) {}  {body}))",
-        genes::PRELUDE_BINDINGS,
-    );
+    let src = genes::seeded(seed, &body);
     format!("{}", vm.eval_str(&src).expect("express should evaluate"))
 }
 
@@ -95,8 +92,7 @@ fn render_creature_produces_stable_name_for_same_genome() {
     let mut vm = Vm::new();
     genes::install(&mut vm);
     let list = tape_to_sexpr("AUG CGA GCA ACA UCA GCG AUC GAU UAA").unwrap();
-    let body = format!("(express! (thread '() {list}))");
-    let src = format!("{}  {body})", genes::PRELUDE_BINDINGS);
+    let src = format!("(express! (thread '() {list}))");
     let p1 = vm.eval_str(&src).unwrap();
     let p2 = vm.eval_str(&src).unwrap();
     let card1 = genes::render_creature(&p1);
@@ -211,10 +207,7 @@ fn breed(tape_a: &str, tape_b: &str, seed: i64) -> String {
     let body = format!(
         "(express! (breed! seed (thread '() {la}) (thread '() {lb})))"
     );
-    let src = format!(
-        "(let ((seed {seed})) {}  {body}))",
-        genes::PRELUDE_BINDINGS,
-    );
+    let src = genes::seeded(seed, &body);
     format!("{}", vm.eval_str(&src).expect("breed should evaluate"))
 }
 

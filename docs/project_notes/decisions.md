@@ -661,3 +661,137 @@ Surface details:
   meiosis). Pure simplification; not load-bearing for the demo.
 - **Multi-rate breed variants** (e.g., asymmetric inheritance
   probabilities) — no use case; deferred.
+
+---
+
+## ADR-014: Installable preludes via top-level `define` (2026-05-26)
+
+**Context**: Both DSL demos (spells, genes) were shipping their
+preludes as `(letrec ((…))` open-bindings strings that consumers
+appended a body and a closing paren to. Every `cast()` re-tokenized,
+re-expanded, re-compiled, and re-evaluated ~25 lines of prelude just
+to evaluate a one-line body. The lisp had no way to "install" bindings
+into a `Vm`'s env in place — every form had to be wrapped in some
+expression. With WASM in the loop, this per-call parsing was the
+dominant cost. The `core-followups.md` plan's #1 item.
+
+**Decision**: Two coupled engine additions, plus a prelude reshape:
+
+1. **`Vm::eval_str` accepts a sequence of top-level forms.** Built on
+   `parse::read_many`. Each form is either `(defmacro …)` (registers a
+   macro, no value), `(define name body)` (extends `self.env` in
+   place, no value), or any expression (compiled + run normally). The
+   return value is the last expression's value, or `#t` if every form
+   was a `defmacro`/`define`. Subsequent `eval_str` calls see all
+   prior `define`s and `defmacro`s.
+
+2. **Top-level `(define name body)`.** Mirrors how `defmacro` is
+   detected and side-effects `self.env` at the top level. Uses
+   `Env::extend_placeholder` (already present, originally for
+   `letrec`) so a lambda body can refer to its own name — single-
+   binding self-recursion works: `(define f (lambda () (f)))`.
+   Mutual recursion *across* separate defines does **not** work — the
+   first `define` runs before the second exists, so its lambda
+   captures an env without the second binding. Users wanting mutual
+   recursion wrap the group in `letrec`.
+
+   `define` is rejected anywhere other than the top level (mirroring
+   `defmacro`'s rejection), so silent mis-registration inside a `let`
+   or `lambda` body fails loudly.
+
+3. **Per-DSL `install(vm)` entry points.** Each DSL crate exposes:
+   - A `PRELUDE_DEFINES` const — a sequence of `(define …)` forms.
+   - An `install(vm)` function that registers any host prims AND
+     evaluates `PRELUDE_DEFINES`, leaving the DSL vocabulary baked
+     into the Vm's env.
+
+   Consumers call `install` once at Vm construction, then each cast
+   is just the per-cast body — no prelude string carried per call.
+
+4. **Genes' seed-dependent half stays per-cast.** ADR-012's lexical-
+   seed pattern (`mutate` reads `seed` from its captured env) is
+   load-bearing. Installing `mutate` once at Vm construction would
+   capture the install-time env, which has no `seed` — a runtime
+   `(let ((seed N)) (mutate ctx))` cannot reach into a pre-built
+   closure to inject one (lexical scope, working as intended).
+
+   Resolution: `genes::install` installs the 14 seed-independent
+   bindings (dom, rec, assoc-set, thread, start, stop, add-allele,
+   size/strength/speed/armor/color/ability/biome) as defines. The
+   four seed-dependent mutate variants (mutate, mut01, mut10, mut50)
+   are re-bound per cast by `genes::seeded(seed, body) -> String`,
+   which produces a `(let ((seed N)) (let ((mutate …) (mut01 …) (mut10
+   …) (mut50 …)) body))` wrapper. The closures still capture seed
+   lexically; ADR-012 still holds; ~85% of the per-cast prelude
+   parsing is gone.
+
+**Alternatives considered**:
+- **`Vm::install_prelude(src)` as a separate API surface from
+  `eval_str`.** Rejected as redundant once `eval_str` understands
+  top-level forms. `install_prelude(src)` is just `eval_str(src)`
+  where `src` happens to be all defines; making it a distinct method
+  would just split the same machinery into two doors.
+- **Implicit two-pass evaluation across all top-level defines** (so
+  mutual recursion works without `letrec`). Rejected on
+  YAGNI / Scheme-tradition grounds. R5RS top-level defines are
+  *not* generally mutually recursive between separate top-level
+  forms; they are within a single `define` if the body is a lambda
+  (the self-cell trick). Adding multi-define mutual recursion would
+  cost a pre-scan pass and a documented "your define ran out of
+  order" edge case, with no demo needing it. If a future demo wants
+  it, `letrec` already provides it inline.
+- **Move seed to a host-side mutable cell + `current-seed` prim.**
+  Would let mutate install once and ~100% of the prelude parsing go
+  away. Rejected — breaks ADR-012's choice of lexical-scope-as-
+  parameter-passing and introduces hidden mutable state for one demo's
+  convenience. The 85% / 100% tradeoff is small; the architectural
+  cost is real.
+- **Drop the `letrec`-wrapping prelude pattern entirely without
+  adding `define`.** Could have made `install(vm)` build the bindings
+  in Rust by walking the letrec source and calling `env.extend` per
+  binding. Rejected as a worse version of the same idea — it
+  duplicates evaluation logic in Rust that already exists in the
+  CEK loop, and it doesn't help anyone wanting to write a `.scm`
+  file of top-level defines.
+
+**Consequences**:
+- **+** `Vm` is now usefully stateful in a *lispy* way: a DSL is "a
+  const string + an `install(vm)` function." Two lines to add a new
+  DSL pack to a Vm. The "Vm + DSL pack" concept core-followups.md
+  predicted is now load-bearing.
+- **+** Per-cast eval is much leaner. Spell cast: one `(world-apply!
+  …)` form, ~5 lines down from ~30. Genome cast: the body plus the
+  per-cast `(let …)` wrapper, ~8 lines down from ~35. The actual
+  tokenize/expand/compile cost scales with what's left.
+- **+** `eval_str` is more useful generally. A user can now feed it a
+  `.scm`-style source with defines + a result expression and get the
+  result back. The CLI repl, web repl, and tests all benefit.
+- **+** Six new engine tests in `eval.rs` lock the contract: multi-
+  form return value, define-extends-env, self-recursion, define
+  persistence across calls, mixed define+expression sequencing,
+  top-level-only enforcement.
+- **−** WASM bundle grew ~10 KB (133 → 143 KB raw). One-time bundle
+  cost for per-call win.
+- **−** Mutual recursion across separate defines is a sharp edge —
+  someone will hit it. Mitigated by clear error path ("unbound
+  variable: foo") + the doc on `eval_str` saying "wrap in letrec for
+  mutual recursion." Could be revisited if it bites in practice.
+- **−** `genes::seeded` is now a third place (after `PRELUDE_DEFINES`
+  and the `install` registration) where the seed-related prelude
+  lives. Mitigated by the function being the *only* place those four
+  bindings exist as source — there's no duplication, just a split
+  between "installable" and "per-cast" halves of the same vocabulary.
+
+**Deferred**:
+- **Multi-define mutual recursion via two-pass scan.** If a future
+  demo wants it without `letrec`. Estimated: a pre-scan that
+  pre-allocates placeholder cells for every top-level `define` in a
+  given `eval_str` call. Independent of this change.
+- **`.scm` file loading.** Now trivial — `vm.eval_str(read_to_string("foo.scm"))`
+  already works. A `Vm::load(path)` helper would just be sugar.
+- **Macro-aware `define`.** Today `(define name body)` runs `body`
+  through `expand_all` before compile, so macros inside the body
+  work. But `(define foo (defmacro …))` doesn't, because `defmacro`
+  isn't an expression that produces a value. If a future DSL needs
+  macros generated from data, this is the seam to look at.
+

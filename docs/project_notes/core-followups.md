@@ -14,7 +14,14 @@ future session can pick it up cold.
 
 ## High-impact (engine-level)
 
-### 1. Installable preludes  +  top-level `define`
+### 1. Installable preludes  +  top-level `define` — **DONE (ADR-014)**
+
+> Resolved 2026-05-26. `eval_str` accepts top-level forms; `(define
+> name body)` extends the Vm env in place. Both DSLs ship
+> `install(vm)` entry points; the genes seed-dependent half is
+> per-cast via `genes::seeded(seed, body)` so ADR-012 still holds.
+> Engine adds: `parse::read_many`, `try_register_define`. +6 tests.
+> Original problem statement below kept for posterity.
 
 **Problem.** Today the only way to install bindings into a `Vm`'s
 env is to send a full source string through

@@ -36,6 +36,7 @@ impl WasmVm {
     pub fn new(width: u32, height: u32) -> WasmVm {
         console_error_panic_hook::set_once();
         let mut inner = LispVm::with_world(World::new(width, height));
+        spells::install(&mut inner);
         genes::install(&mut inner);
         WasmVm { inner, width, height }
     }
@@ -59,11 +60,10 @@ impl WasmVm {
         // inside the shared prelude — keeps `start` zero-arg and identical
         // across CLI + WASM consumers. See ADR-010.
         let src = format!(
-            "{}  (world-apply! \
+            "(world-apply! \
                (assoc-set 'tx {x} \
                  (assoc-set 'ty {y} \
-                   (thread (start) {list_expr})))))",
-            spells::PRELUDE_BINDINGS,
+                   (thread (start) {list_expr}))))"
         );
         self.inner
             .eval_str(&src)
@@ -85,8 +85,8 @@ impl WasmVm {
     }
 
     /// Replace the world with a fresh empty one of the same dimensions.
-    /// Does *not* reset the interpreter env (the lisp prelude is rebuilt per
-    /// cast, so there's nothing persistent to clear).
+    /// Does *not* reset the interpreter env (the preludes were installed
+    /// at construction and stay valid).
     pub fn reset_world(&mut self) {
         *self.inner.world.borrow_mut() = World::new(self.width, self.height);
     }
@@ -105,11 +105,10 @@ impl WasmVm {
             .map_err(|e| JsValue::from_str(&format!("codon (parent A): {e}")))?;
         let lb = codons::tape_to_sexpr(tape_b)
             .map_err(|e| JsValue::from_str(&format!("codon (parent B): {e}")))?;
-        let src = format!(
-            "(let ((seed {seed})) {}  \
-               (express! (breed! seed (thread '() {la}) (thread '() {lb}))))) ",
-            genes::PRELUDE_BINDINGS,
+        let body = format!(
+            "(express! (breed! seed (thread '() {la}) (thread '() {lb})))"
         );
+        let src = genes::seeded(seed, &body);
         let phenotype = self
             .inner
             .eval_str(&src)
@@ -124,12 +123,11 @@ impl WasmVm {
     pub fn cast_genome(&mut self, tape: &str, seed: i64) -> Result<String, JsValue> {
         let list_expr = codons::tape_to_sexpr(tape)
             .map_err(|e| JsValue::from_str(&format!("codon: {e}")))?;
-        // (let ((seed N)) …) wraps the prelude so MUT's mutate closure
-        // captures the caller's seed via lexical scope. See ADR-012.
-        let src = format!(
-            "(let ((seed {seed})) {}  (express! (thread '() {list_expr}))))",
-            genes::PRELUDE_BINDINGS,
-        );
+        // `genes::seeded` wraps the body in a let chain so MUT's mutate
+        // closure captures the caller's seed via lexical scope. See
+        // ADR-012.
+        let body = format!("(express! (thread '() {list_expr}))");
+        let src = genes::seeded(seed, &body);
         let phenotype = self
             .inner
             .eval_str(&src)

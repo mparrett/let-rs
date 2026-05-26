@@ -266,10 +266,59 @@ fn macro_defmacro_only_top_level() {
 
 #[test]
 fn multiple_top_level_evals_share_state() {
-    // Sanity: Vm carries env across eval_str calls (currently the initial env
-    // never changes, but this protects against a future `define`).
+    // Sanity: Vm carries env across eval_str calls.
     assert_eq!(
         evals(&["(+ 1 2)", "(* 4 5)", "((lambda (x) x) 'hi)"]),
         "hi"
     );
+}
+
+#[test]
+fn multiple_forms_in_one_eval_str() {
+    // eval_str now accepts a sequence of top-level forms; returns the
+    // value of the last value-producing one.
+    assert_eq!(eval("(+ 1 1) (+ 2 2) (+ 3 3)"), "6");
+}
+
+#[test]
+fn define_extends_env() {
+    let mut vm = Vm::new();
+    vm.eval_str("(define x 7)").unwrap();
+    assert_eq!(format!("{}", vm.eval_str("(* x 6)").unwrap()), "42");
+}
+
+#[test]
+fn define_self_recursion() {
+    // The classic test: define a recursive lambda referring to its own name.
+    let src = r#"
+        (define fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))
+        (fact 6)
+    "#;
+    assert_eq!(eval(src), "720");
+}
+
+#[test]
+fn define_persists_across_eval_str_calls() {
+    let mut vm = Vm::new();
+    vm.eval_str("(define greet (lambda (name) (list 'hello name)))").unwrap();
+    assert_eq!(
+        format!("{}", vm.eval_str("(greet 'world)").unwrap()),
+        "(hello world)"
+    );
+}
+
+#[test]
+fn define_returns_marker_then_expression_wins() {
+    // A mixed sequence — defines + expressions — returns the last expr.
+    assert_eq!(
+        eval("(define x 10) (define y 20) (+ x y) 'done"),
+        "done"
+    );
+}
+
+#[test]
+fn define_only_valid_at_top_level() {
+    let mut vm = Vm::new();
+    let r = vm.eval_str("(let ((x 1)) (define y 2))");
+    assert!(r.is_err(), "nested define should error: {r:?}");
 }

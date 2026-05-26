@@ -107,16 +107,61 @@ impl Vm {
             .extend(name.into(), Val::WorldPrim { name, arity, f });
     }
 
+    /// Evaluate a sequence of top-level forms. Each form is one of:
+    /// `(defmacro …)` (registers a macro), `(define name body)` (extends
+    /// the Vm env in place), or any expression (compiled + run normally).
+    /// Returns the value of the last expression — or `#t` if every form
+    /// was a `defmacro`/`define` (i.e. nothing produced a value).
+    ///
+    /// A `(define name body)` allocates a self-reference cell before
+    /// evaluating `body`, so `(define f (lambda () (f)))` works. Mutual
+    /// recursion *across* separate `define`s is not supported — wrap
+    /// such a group in `letrec` if you need it.
     pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
-        let datum = parse::read(src)?;
-
-        if self.try_register_defmacro(&datum)? {
-            return Ok(Val::Bool(true));
+        let forms = parse::read_many(src)?;
+        let mut last = Val::Bool(true);
+        for datum in forms {
+            if self.try_register_defmacro(&datum)? {
+                continue;
+            }
+            if self.try_register_define(&datum)? {
+                continue;
+            }
+            let expanded = self.expand_all(datum)?;
+            let expr = parse::compile(&expanded)?;
+            last = run(expr, self.env.clone(), self.world.clone())?;
         }
+        Ok(last)
+    }
 
-        let expanded = self.expand_all(datum)?;
-        let expr = parse::compile(&expanded)?;
-        run(expr, self.env.clone(), self.world.clone())
+    /// Top-level `(define name body)`. Extends `self.env` in place so
+    /// subsequent forms (and subsequent `eval_str` calls) see the
+    /// binding. Uses `extend_placeholder` so a lambda body can refer to
+    /// its own name (single-binding self-recursion). Mutual recursion
+    /// across separate defines is *not* supported — see `eval_str` doc.
+    fn try_register_define(&mut self, d: &Datum) -> Result<bool, String> {
+        let items = match d {
+            Datum::List(items) => items,
+            _ => return Ok(false),
+        };
+        match items.first() {
+            Some(Datum::Sym(s)) if &**s == "define" => {}
+            _ => return Ok(false),
+        }
+        if items.len() != 3 {
+            return Err("define: expected (define name value)".into());
+        }
+        let name: Sym = match &items[1] {
+            Datum::Sym(s) => s.clone(),
+            _ => return Err("define: name must be a symbol".into()),
+        };
+        let body_datum = self.expand_all(items[2].clone())?;
+        let body_expr = parse::compile(&body_datum)?;
+        let (new_env, cell) = self.env.extend_placeholder(name);
+        let val = run(body_expr, new_env.clone(), self.world.clone())?;
+        *cell.borrow_mut() = val;
+        self.env = new_env;
+        Ok(true)
     }
 
     fn try_register_defmacro(&mut self, d: &Datum) -> Result<bool, String> {
@@ -215,10 +260,13 @@ impl Vm {
                 }
                 return Ok(Datum::List(out));
             }
-            // Defmacro inside other code: refuse so silent misregistration
-            // doesn't bite us.
+            // Defmacro / define inside other code: refuse so silent
+            // misregistration doesn't bite us.
             if name_str == "defmacro" {
                 return Err("defmacro only valid at top level".into());
+            }
+            if name_str == "define" {
+                return Err("define only valid at top level".into());
             }
 
             // Macro lookup

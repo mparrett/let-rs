@@ -14,57 +14,72 @@ use std::collections::HashSet;
 use crate::Vm;
 use crate::val::{Arity, Val};
 
-/// The genome prelude. `dom` / `rec` bind to `#t` / `#f` so the codon
-/// fragments (e.g. `(size 70 dom)`) evaluate without quoting. `start` and
-/// `stop` are ctx-identity anchors so the codon table can lean on the
-/// biological start/stop convention without special-casing them in
+/// Seed-independent half of the genome prelude — installed once via
+/// `install(vm)`. `dom` / `rec` bind to `#t` / `#f` so the codon
+/// fragments (e.g. `(size 70 dom)`) evaluate without quoting. `start`
+/// and `stop` are ctx-identity anchors so the codon table can lean on
+/// the biological start/stop convention without special-casing them in
 /// `thread`. Each trait closure is curried: `(size 70 dom)` returns a
 /// `ctx → ctx` that adds the allele.
-///
-/// The string closes the `letrec` *bindings* but leaves `letrec` itself
-/// open — consumers append `(express! (thread '() <list>))` and a closing
-/// paren.
-pub const PRELUDE_BINDINGS: &str = r#"
-(letrec ((dom        #t)
-         (rec        #f)
-         (assoc-set  (lambda (k v ctx) (cons (cons k v) ctx)))
-         (thread     (lambda (ctx fs)
-                       (if (null? fs) ctx
-                           (thread ((car fs) ctx) (cdr fs)))))
-         (start      (lambda (ctx) ctx))
-         (stop       (lambda (ctx) ctx))
-         (add-allele (lambda (trait value kind ctx)
-                       (assoc-set trait
-                                  (cons (cons value kind)
-                                        (assoc-get trait ctx))
-                                  ctx)))
-         (size       (lambda (n kind) (lambda (ctx) (add-allele 'size     n kind ctx))))
-         (strength   (lambda (n kind) (lambda (ctx) (add-allele 'strength n kind ctx))))
-         (speed      (lambda (n kind) (lambda (ctx) (add-allele 'speed    n kind ctx))))
-         (armor      (lambda (n kind) (lambda (ctx) (add-allele 'armor    n kind ctx))))
-         (color      (lambda (v kind) (lambda (ctx) (add-allele 'color    v kind ctx))))
-         (ability    (lambda (v kind) (lambda (ctx) (add-allele 'ability  v kind ctx))))
-         (biome      (lambda (v kind) (lambda (ctx) (add-allele 'biome    v kind ctx))))
-         (mutate     (lambda (ctx) (mutate! 25 seed ctx)))
-         (mut01      (lambda (ctx) (mutate! 1  seed ctx)))
-         (mut10      (lambda (ctx) (mutate! 10 seed ctx)))
-         (mut50      (lambda (ctx) (mutate! 50 seed ctx))))
+pub const PRELUDE_DEFINES: &str = r#"
+(define dom        #t)
+(define rec        #f)
+(define assoc-set  (lambda (k v ctx) (cons (cons k v) ctx)))
+(define thread     (lambda (ctx fs)
+                     (if (null? fs) ctx
+                         (thread ((car fs) ctx) (cdr fs)))))
+(define start      (lambda (ctx) ctx))
+(define stop       (lambda (ctx) ctx))
+(define add-allele (lambda (trait value kind ctx)
+                     (assoc-set trait
+                                (cons (cons value kind)
+                                      (assoc-get trait ctx))
+                                ctx)))
+(define size       (lambda (n kind) (lambda (ctx) (add-allele 'size     n kind ctx))))
+(define strength   (lambda (n kind) (lambda (ctx) (add-allele 'strength n kind ctx))))
+(define speed      (lambda (n kind) (lambda (ctx) (add-allele 'speed    n kind ctx))))
+(define armor      (lambda (n kind) (lambda (ctx) (add-allele 'armor    n kind ctx))))
+(define color      (lambda (v kind) (lambda (ctx) (add-allele 'color    v kind ctx))))
+(define ability    (lambda (v kind) (lambda (ctx) (add-allele 'ability  v kind ctx))))
+(define biome      (lambda (v kind) (lambda (ctx) (add-allele 'biome    v kind ctx))))
 "#;
 
-/// Register the `express!` and `mutate!` primitives on `vm`. Idempotent
-/// in effect — a later registration shadows the earlier in the same env.
+/// Register the genes prims AND install the seed-independent prelude
+/// defines. Idempotent: re-installing shadows prior bindings.
 ///
-/// `mutate!` reads its seed via a lexically-scoped `seed` binding the
-/// driver wraps around the prelude — see ADR-012. Calling `(mutate ctx)`
-/// from the prelude expands to `(mutate! 25 seed ctx)`: 25% per-allele
-/// mutation rate (chosen for demo visibility — kaiju uses 5% but at our
-/// 7-trait scale that yields a no-op ~70% of the time; 25% gives ~84%
-/// chance of at least one visible drift per cast), seed from the outer
-/// let.
+/// Seed-dependent mutate variants are *not* installed here — they're
+/// re-created per cast inside `seeded`'s let chain so the closure can
+/// capture the caller's seed via lexical scope (ADR-012).
 pub fn install(vm: &mut Vm) {
     vm.register_prim("express!", Arity::Exact(1), express_prim);
     vm.register_prim("mutate!",  Arity::Exact(3), mutate_prim);
     vm.register_prim("breed!",   Arity::Exact(3), breed_prim);
+    vm.eval_str(PRELUDE_DEFINES)
+        .expect("genes prelude failed to install");
+}
+
+/// Wrap `body` in the per-cast let chain that exposes `seed` and the
+/// four mutate variants (`mutate`, `mut01`, `mut10`, `mut50`) to the
+/// body. Each variant is a `ctx → ctx` closure that captures `seed`
+/// lexically and threads it into `mutate!`.
+///
+/// This split — install the bulk of the prelude once, re-bind the
+/// seed-dependent closures per call — preserves ADR-012's lexical
+/// seed pattern while still avoiding the per-call cost of parsing the
+/// rest of the prelude.
+///
+/// Mutation rates: 25% for `mutate` (chosen for demo visibility — at
+/// our 7-trait scale 25% gives ~84% chance of at least one visible
+/// drift per cast); 1% / 10% / 50% for the explicit variants.
+pub fn seeded(seed: i64, body: &str) -> String {
+    format!(
+        "(let ((seed {seed}))\n  \
+           (let ((mutate (lambda (ctx) (mutate! 25 seed ctx)))\n        \
+                 (mut01  (lambda (ctx) (mutate! 1  seed ctx)))\n        \
+                 (mut10  (lambda (ctx) (mutate! 10 seed ctx)))\n        \
+                 (mut50  (lambda (ctx) (mutate! 50 seed ctx))))\n    \
+             {body}))"
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -17,14 +17,11 @@ fn sequence(vm: &mut Vm, label: &str, seed: i64, tape: &str) {
             return;
         }
     };
-    // Wrap the prelude in (let ((seed N)) …) so the MUT codon's
-    // `(mutate ctx)` closure can read the caller's seed via lexical
-    // scope. See ADR-012.
+    // `genes::seeded` wraps the body in a let chain so the MUT codon's
+    // `(mutate ctx)` closure captures `seed` via lexical scope. See
+    // ADR-012.
     let body = format!("(express! (thread '() {list}))");
-    let src = format!(
-        "(let ((seed {seed})) {}  {body}))",
-        genes::PRELUDE_BINDINGS,
-    );
+    let src = genes::seeded(seed, &body);
     match vm.eval_str(&src) {
         Ok(phenotype) => println!("{}\n", genes::render_creature(&phenotype)),
         Err(e) => println!("err:    eval: {e}\n"),
@@ -45,10 +42,7 @@ fn breeding(vm: &mut Vm, label: &str, seed: i64, tape_a: &str, tape_b: &str) {
     let body = format!(
         "(express! (breed! seed (thread '() {la}) (thread '() {lb})))"
     );
-    let src = format!(
-        "(let ((seed {seed})) {}  {body}))",
-        genes::PRELUDE_BINDINGS,
-    );
+    let src = genes::seeded(seed, &body);
     match vm.eval_str(&src) {
         Ok(phenotype) => println!("{}\n", genes::render_creature(&phenotype)),
         Err(e) => println!("err:    eval: {e}\n"),

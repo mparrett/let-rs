@@ -45,17 +45,25 @@ file before anything else; the rest of the engine is decoration.
 - `prim.rs` — pure built-ins (arithmetic, list ops, predicates, eq?)
 - `world.rs` — minimal grid + log used by the spell demo
 - `world_prim.rs` — `Val::WorldPrim` primitives that take `&mut World`
-- `spells.rs` — the rune prelude as a single `PRELUDE_BINDINGS` const.
-  Shared by `examples/spells.rs` and the WASM bridge so the two
-  consumers can never drift. Coord seeding (when needed) happens at
-  the call site via `assoc-set`, not inside the prelude. See ADR-010.
-- `genes.rs` — genome prelude, `express!` resolver, creature-card
-  renderer. Pure `Val::Prim`, no engine coupling. Shared by the CLI
-  demo (`examples/genes.rs`) and the WASM bridge (`crates/wasm/`).
-  See ADR-011.
-- `parse.rs` — tokenize, `read` (→ Datum), `compile` (→ Expr), special forms,
-  quasiquote compilation
-- `lib.rs` — `Vm`, macro expansion, datum⇄val conversion
+- `spells.rs` — the rune prelude as `PRELUDE_DEFINES` (sequence of
+  top-level `(define …)` forms) + `install(vm)` that installs them
+  into the Vm env once. Consumers (`examples/spells.rs`, WASM bridge)
+  call `spells::install` at startup; each cast then evaluates just
+  the body. Coord seeding still happens at the call site via
+  `assoc-set`. See ADR-010, ADR-014.
+- `genes.rs` — genome vocabulary: `PRELUDE_DEFINES` (seed-independent
+  half) + `install(vm)` (registers prims + installs defines) +
+  `seeded(seed, body)` (per-cast wrapper that re-binds the four
+  mutate variants over the caller's seed so ADR-012's lexical-seed
+  pattern still holds). Plus the `express!` resolver and the
+  creature-card renderer. Shared by `examples/genes.rs` and the WASM
+  bridge. See ADR-011, ADR-014.
+- `parse.rs` — tokenize, `read` (→ Datum), `read_many` (→ Vec<Datum>),
+  `compile` (→ Expr), special forms, quasiquote compilation
+- `lib.rs` — `Vm`, top-level `define` / `defmacro` registration,
+  macro expansion, datum⇄val conversion. `eval_str` accepts a
+  sequence of top-level forms; returns the last expression's value
+  (ADR-014).
 
 Examples in `crates/lisp/examples/`:
 
@@ -158,17 +166,23 @@ ships a larger bundle.
 - Adding a new rune: edit `crates/runes/src/lib.rs` — both the CLI demo
   and the WASM bridge see it automatically. If the new rune needs a
   matching primitive, also extend the spell prelude in
-  `crates/lisp/src/spells.rs` (`PRELUDE_BINDINGS`) — both consumers
+  `crates/lisp/src/spells.rs` (`PRELUDE_DEFINES`) — both consumers
   import from there, so one edit is enough.
 - Adding a new codon: edit `crates/codons/src/lib.rs`. If the codon
   introduces a new trait, also extend the genome prelude
-  (`PRELUDE_BINDINGS`) and the `TRAITS` classification table in
+  (`PRELUDE_DEFINES`) and the `TRAITS` classification table in
   `crates/lisp/src/genes.rs` — both the CLI demo and the WASM bridge
   see it automatically through `lisp::genes`. Categorical allele
   payloads need to be quoted in the codon fragment (`(color 'green
   dom)`) so the evaluator treats them as symbols rather than variable
   lookups. For a new categorical trait, add its option pool to
   `Kind::Categorical(&[…])` so `mutate!` knows what values to draw from.
+- Installable preludes (ADR-014): `eval_str` accepts a sequence of
+  top-level forms. `(define name body)` extends the Vm env in place;
+  single-binding self-recursion works via `extend_placeholder`,
+  mutual recursion across separate defines does not (wrap in
+  `letrec`). Both `define` and `defmacro` are rejected at non-top-
+  level positions. DSL packs expose `install(vm)` for one-shot setup.
 
 ## Project Memory
 

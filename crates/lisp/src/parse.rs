@@ -29,7 +29,7 @@ enum Tok {
 }
 
 /// Read source → Datum (no compilation). Used by Vm so it can macro-expand
-/// before producing an Expr.
+/// before producing an Expr. Errors if `src` contains more than one form.
 pub fn read(src: &str) -> Result<Datum, String> {
     let toks = tokenize(src)?;
     let mut it = toks.into_iter().peekable();
@@ -38,6 +38,19 @@ pub fn read(src: &str) -> Result<Datum, String> {
         return Err("extra tokens after expression".into());
     }
     Ok(d)
+}
+
+/// Read a sequence of top-level forms. Used by `Vm::eval_str` to accept
+/// `(define …) (define …) (expr)` style sources without an outer `begin`
+/// or `letrec` wrapper.
+pub fn read_many(src: &str) -> Result<Vec<Datum>, String> {
+    let toks = tokenize(src)?;
+    let mut it = toks.into_iter().peekable();
+    let mut out = Vec::new();
+    while it.peek().is_some() {
+        out.push(read_datum(&mut it)?);
+    }
+    Ok(out)
 }
 
 /// Read + compile, no macro support. Vm::eval_str expands first and then

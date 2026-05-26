@@ -10,19 +10,28 @@
 //! 'ty … (thread (start) …)))`. Keeping coord data out of the prelude
 //! means there's exactly one prelude string to keep in sync.
 
-/// The spell prelude: user-level closures that turn rune symbols into
-/// pipeline primitives. Closes the `letrec` *bindings* but leaves
-/// `letrec` itself open — consumers append the body and a closing paren.
-pub const PRELUDE_BINDINGS: &str = r#"
-(letrec ((assoc-set (lambda (k v ctx) (cons (cons k v) ctx)))
-         (thread    (lambda (ctx fs)
-                      (if (null? fs) ctx
-                          (thread ((car fs) ctx) (cdr fs)))))
-         (start     (lambda () '()))
-         (fire      (lambda (ctx) (assoc-set 'element 'fire ctx)))
-         (ice       (lambda (ctx) (assoc-set 'element 'ice ctx)))
-         (bolt      (lambda (ctx) (assoc-set 'shape   'bolt ctx)))
-         (self      (lambda (ctx) (assoc-set 'target  'self ctx)))
-         (area      (lambda (n)   (lambda (ctx) (assoc-set 'area  n ctx))))
-         (power     (lambda (n)   (lambda (ctx) (assoc-set 'power n ctx)))))
+use crate::Vm;
+
+/// The spell prelude as a sequence of top-level `(define …)` forms.
+/// Install once with `spells::install(vm)` and every subsequent
+/// `vm.eval_str(body)` sees the vocabulary.
+pub const PRELUDE_DEFINES: &str = r#"
+(define assoc-set (lambda (k v ctx) (cons (cons k v) ctx)))
+(define thread    (lambda (ctx fs)
+                    (if (null? fs) ctx
+                        (thread ((car fs) ctx) (cdr fs)))))
+(define start     (lambda () '()))
+(define fire      (lambda (ctx) (assoc-set 'element 'fire ctx)))
+(define ice       (lambda (ctx) (assoc-set 'element 'ice ctx)))
+(define bolt      (lambda (ctx) (assoc-set 'shape   'bolt ctx)))
+(define self      (lambda (ctx) (assoc-set 'target  'self ctx)))
+(define area      (lambda (n)   (lambda (ctx) (assoc-set 'area  n ctx))))
+(define power     (lambda (n)   (lambda (ctx) (assoc-set 'power n ctx))))
 "#;
+
+/// Install the spell prelude into `vm`. Idempotent in effect — a later
+/// install shadows earlier defines of the same name.
+pub fn install(vm: &mut Vm) {
+    vm.eval_str(PRELUDE_DEFINES)
+        .expect("spells prelude failed to install");
+}

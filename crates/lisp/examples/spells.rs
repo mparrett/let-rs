@@ -18,8 +18,7 @@ fn cast(vm: &mut Vm, tape: &str) {
     };
     let body = format!("(thread (start) {list})");
     println!("sexpr:  {body}");
-    let src = format!("{}  {body})", spells::PRELUDE_BINDINGS);
-    match vm.eval_str(&src) {
+    match vm.eval_str(&body) {
         Ok(v) => println!("ctx:    {v}\n"),
         Err(e) => println!("err:    eval: {e}\n"),
     }
@@ -27,6 +26,7 @@ fn cast(vm: &mut Vm, tape: &str) {
 
 fn main() {
     let mut vm = Vm::new();
+    spells::install(&mut vm);
     println!("letrs spell demo\n================\n");
 
     cast(&mut vm, "ᚠ");              // just fire
