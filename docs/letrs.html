@@ -82,7 +82,10 @@
       z-index: 2;
       max-width: 920px;
       margin: 0 auto;
-      padding: 6vh 6vw 14vh;
+      /* clamp the horizontal padding so wide viewports don't keep
+         eating into the 920px max-width frame. The mobile media
+         query below tightens this further. */
+      padding: 6vh clamp(20px, 5vw, 48px) 14vh;
     }
 
     /* ─── Masthead ──────────────────────────────────────────── */
@@ -528,7 +531,7 @@
       <div class="strip">
         <span>Build log · 2026-05-25 → 26</span>
         <span class="here">letrs · two days in</span>
-        <span>A lisp at the bottom of a spell, then a genome</span>
+        <span>Two vocabularies, one lisp</span>
       </div>
       <h1>Let<span class="sigil">rs</span></h1>
       <p class="sub">
@@ -536,7 +539,7 @@
       </p>
       <dl class="seal">
         <div><dt>Engine (zero-dep)</dt><dd>~1.6K LOC Rust</dd></div>
-        <div><dt>Sibling crates</dt><dd>runes · codons · wasm · bench</dd></div>
+        <div><dt>Sibling crates</dt><dd>runes · codons · wasm</dd></div>
         <div><dt>Tests</dt><dd>78 passing</dd></div>
         <div><dt>Tail depth</dt><dd>100,000 verified</dd></div>
       </dl>
