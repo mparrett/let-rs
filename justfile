@@ -21,6 +21,12 @@ genes:
 check:
     cargo check --all-targets
 
+# Clippy gate. `-D warnings` so this fails on any lint at warn level (the
+# workspace-wide config in Cargo.toml). Keep separate from `check` so the
+# fast cargo-check feedback loop stays fast.
+lint:
+    cargo clippy --workspace --all-targets -- -D warnings
+
 fmt:
     cargo fmt --all
 

@@ -8,3 +8,11 @@ license = "MIT"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+# Clippy defaults workspace-wide. We stay on the `correctness`/`suspicious`/
+# `style`/`complexity`/`perf` groups (clippy's default `all`) — `pedantic`
+# and `nursery` produce too much noise against the CEK style (deep matches,
+# Rc<RefCell<…>>, small helpers) without improving the code. Local runs
+# warn; CI/`just lint` denies via `-D warnings`.
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
