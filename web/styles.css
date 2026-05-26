@@ -302,6 +302,70 @@ textarea {
 .cheatsheet.spells code:hover  { background: rgba(176,124,176,0.20); color: var(--ink); }
 .cheatsheet.spells code:active { background: rgba(176,124,176,0.34); }
 
+/* ─── Gene Lab ──────────────────────────────────────────── */
+#gene-lab { margin-top: 24px; border-left-color: var(--honey); }
+
+/* Codon palette: groups of triplet-buttons, separated by .palette-sep */
+.codon-group {
+  display: inline-flex; flex-wrap: wrap; gap: 4px;
+  align-items: center;
+}
+.codon {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 6px 9px;
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 80ms, color 80ms, border-color 80ms;
+}
+.codon:hover { background: rgba(255,255,255,0.04); color: var(--ink); }
+/* control (start/stop): honey to match the existing label/anchor accent */
+.codon.ctl { color: var(--honey); border-color: rgba(224,179,74,0.30); }
+.codon.ctl:hover { background: rgba(224,179,74,0.10); }
+/* numeric (size/strength/speed/armor): indigo */
+.codon.num { color: var(--indigo); border-color: rgba(139,143,255,0.28); }
+.codon.num:hover { background: rgba(139,143,255,0.10); }
+/* categorical (color/ability/biome): sage */
+.codon.cat { color: var(--sage); border-color: rgba(127,197,154,0.28); }
+.codon.cat:hover { background: rgba(127,197,154,0.10); }
+/* recessive variants dim by 35% so dom/rec read at a glance */
+.codon.rec { opacity: 0.62; }
+.codon.rec:hover { opacity: 1; }
+
+/* Creature card: monospace pre with subtle inset glow, ASCII-art-friendly. */
+.creature-card {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: var(--bg-rise);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--sage);
+  padding: 14px 18px;
+  margin: 14px 0;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--ink);
+  min-height: 4em;
+}
+
+/* Gene cheatsheet variant — honey, parallel to the spells/plum variant. */
+.cheatsheet.genes {
+  border-left-color: var(--honey);
+  background: rgba(224,179,74,0.05);
+}
+.cheatsheet.genes summary { color: var(--honey); }
+.cheatsheet.genes code {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--honey);
+}
+.cheatsheet.genes code:hover  { background: rgba(224,179,74,0.18); color: var(--ink); }
+.cheatsheet.genes code:active { background: rgba(224,179,74,0.30); }
+
 /* ─── Colophon ──────────────────────────────────────────── */
 .colophon {
   margin-top: 6vh;

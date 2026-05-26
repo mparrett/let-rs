@@ -43,8 +43,12 @@ file before anything else; the rest of the engine is decoration.
 - `k.rs` — continuation variants: `Halt | App | If | Letrec`
 - `step.rs` — `step(State, &world) -> Step` and the driver `run` loop
 - `prim.rs` — pure built-ins (arithmetic, list ops, predicates, eq?)
-- `world.rs` — minimal grid + log used by the demo
+- `world.rs` — minimal grid + log used by the spell demo
 - `world_prim.rs` — `Val::WorldPrim` primitives that take `&mut World`
+- `genes.rs` — genome prelude, `express!` resolver, creature-card
+  renderer. Pure `Val::Prim`, no engine coupling. Shared by the CLI
+  demo (`examples/genes.rs`) and the WASM bridge (`crates/wasm/`).
+  See ADR-011.
 - `parse.rs` — tokenize, `read` (→ Datum), `compile` (→ Expr), special forms,
   quasiquote compilation
 - `lib.rs` — `Vm`, macro expansion, datum⇄val conversion
@@ -55,8 +59,8 @@ Examples in `crates/lisp/examples/`:
 - `spells.rs` — rune tape → ctx pipeline; engine untouched, primitives in lisp
 - `world.rs` — spell ctx applied to a 7×5 grid via `world-apply!`
 - `genes.rs` — codon tape → diploid genome → `express!` resolver → ASCII
-  creature card. Engine and lisp crate untouched; `express!` is a pure
-  `Val::Prim` registered locally via `Vm::register_prim`. See ADR-011.
+  creature card. Driver code only — the prelude, prim, and renderer all
+  live in `lisp::genes` (shared with the WASM bridge). See ADR-011.
 
 Sibling crates:
 
@@ -64,21 +68,29 @@ Sibling crates:
   source of truth for the rune table; consumed by both `examples/spells` and
   the WASM bridge. See ADR-010.
 - `crates/codons/` — ASCII RNA codon tape (`AUG CGA …`) → `(list …)` sexpr.
-  Zero deps; sole source of truth for the codon table. Consumed only by
-  `examples/genes` for now (no WASM consumer yet — the genes prelude lives
-  in one place). Mirrors the `runes/` shape; ADR-011.
+  Zero deps; sole source of truth for the codon table. Consumed by both
+  `examples/genes` and the WASM bridge. The genome prelude + resolver +
+  renderer live in `lisp::genes` (one source of truth, no prelude
+  duplication). Mirrors the `runes/` shape; ADR-011.
 - `crates/wasm/` — JS-facing bridge (`wasm-bindgen` `cdylib`). Wraps
   `lisp::Vm` + `World`, embeds the spell prelude as a const string, exposes
   `new(width, height)`, `eval(src)`, `cast(tape, x, y)`, `grid()`, `log()`,
-  `reset_world()`. ~90 LOC. Pinned to `wasm-bindgen =0.2.114` to match the
+  `reset_world()`, and `cast_genome(tape)` (returns a rendered creature
+  card; consumes `lisp::genes` so there's a single source of truth across
+  CLI + WASM). ~120 LOC. Pinned to `wasm-bindgen =0.2.114` to match the
   installed CLI (ADR-009).
 
 Web shell at `web/`:
 
-- `web/index.html` — Cinzel masthead + two `<section>` panels (Spell Lab,
-  REPL) + rune palette + cheatsheet
-- `web/styles.css` — palette + typography lifted from `docs/letrs.html`
-- `web/shell.js` — plain ESM: `await init(); const vm = new Vm(7, 5); …`
+- `web/index.html` — Cinzel masthead + three panels: Spell Lab + REPL
+  (two-column at ≥940px), then Gene Lab full-width below. Each panel has
+  its own palette (rune / codon) and cheatsheet.
+- `web/styles.css` — palette + typography lifted from `docs/letrs.html`.
+  Codon buttons color-code by category (honey=control, indigo=numeric,
+  sage=categorical) with recessive variants dimmed via opacity.
+- `web/shell.js` — plain ESM: `await init(); const vm = new Vm(7, 5); …`.
+  Drives Spell Lab (`vm.cast`), REPL (`vm.eval`), and Gene Lab
+  (`vm.cast_genome`).
 - `web/pkg/` — `wasm-bindgen` output (gitignored)
 
 ## Build / test
@@ -136,10 +148,11 @@ ships a larger bundle.
 - Adding a new codon: edit `crates/codons/src/lib.rs`. If the codon
   introduces a new trait, also extend the genome prelude
   (`PRELUDE_BINDINGS`) and the `TRAITS` classification table in
-  `crates/lisp/examples/genes.rs`. Categorical allele payloads need to be
-  quoted in the codon fragment (`(color 'green dom)`) so the evaluator
-  treats them as symbols rather than variable lookups. No WASM consumer
-  yet — the genes prelude lives in one place.
+  `crates/lisp/src/genes.rs` — both the CLI demo and the WASM bridge
+  see it automatically through `lisp::genes`. Categorical allele
+  payloads need to be quoted in the codon fragment (`(color 'green
+  dom)`) so the evaluator treats them as symbols rather than variable
+  lookups.
 
 ## Project Memory
 

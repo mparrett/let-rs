@@ -27,6 +27,7 @@ use std::rc::Rc;
 
 pub mod env;
 pub mod expr;
+pub mod genes;
 pub mod k;
 pub mod parse;
 pub mod prim;

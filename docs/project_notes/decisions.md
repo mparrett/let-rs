@@ -433,9 +433,17 @@ pairs, numeric averaging, Mendelian categoricals, biome affinities).
   segregation. Trivial in lisp once we have the ctx representation;
   the question is whether breeding belongs in the pipeline or the
   resolver.
-- WASM exposure as a "Gene Lab" panel. Requires duplicating the genome
-  prelude into `crates/wasm/src/lib.rs` and adding `cast_genome` /
-  `creature_card` / `reset_genome` to the bridge. The
-  prelude-duplication warning starts applying.
-- Promoting a `Creature` host type to the lisp crate. Only when a
-  second consumer (WASM, a game loop) needs it.
+
+**Follow-up landed**: WASM exposure as a Gene Lab panel (2026-05-25,
+same day). The "promote to lisp crate when a second consumer appears"
+clause fired immediately: rather than duplicate the genome prelude,
+`express!` prim, and creature renderer into `crates/wasm/src/lib.rs`,
+we hoisted them into a new `lisp::genes` module alongside `world.rs` /
+`world_prim.rs`. Both `examples/genes.rs` (slimmed to driver code)
+and the WASM bridge import from `lisp::genes`, so unlike the spells
+demo there is no "two prelude copies to keep in sync" warning. The
+WASM bridge gains a single `cast_genome(tape: &str) -> String` method
+that returns the rendered card; the web shell adds a Gene Lab panel
+below the existing two-column Spell Lab / REPL layout with a 20-button
+codon palette color-coded by trait category. Bundle grew ~19 KB
+(104 KB → 123 KB).

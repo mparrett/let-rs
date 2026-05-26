@@ -20,7 +20,7 @@
         <span>five rules · a lisp · a spell</span>
       </div>
       <h1>Let<span class="sigil">rs</span></h1>
-      <p class="sub">A CEK lisp in your browser, with a runic spell DSL on top.</p>
+      <p class="sub">A CEK lisp in your browser. Two DSLs riding on it: a runic spell language that paints tiles, and a codon language that grows creatures.</p>
     </header>
 
     <div class="cols">
@@ -113,10 +113,72 @@
 
     </div>
 
+    <section class="panel" id="gene-lab">
+      <h2>Gene Lab</h2>
+
+      <div class="palette" id="codon-palette" aria-label="codon buttons">
+        <span class="codon-group" title="control codons">
+          <button type="button" class="codon ctl" data-codon="AUG" title="start (also methionine)">AUG</button>
+          <button type="button" class="codon ctl" data-codon="UAA" title="stop">UAA</button>
+          <button type="button" class="codon ctl" data-codon="UGA" title="stop (alternate)">UGA</button>
+        </span>
+        <span class="palette-sep"></span>
+        <span class="codon-group" title="numeric — size (0–100)">
+          <button type="button" class="codon num"  data-codon="CGA" title="size 70 dominant">CGA</button>
+          <button type="button" class="codon num rec" data-codon="CGU" title="size 30 recessive">CGU</button>
+          <button type="button" class="codon num"  data-codon="CGC" title="size 90 dominant">CGC</button>
+          <button type="button" class="codon num rec" data-codon="CGG" title="size 10 recessive">CGG</button>
+        </span>
+        <span class="palette-sep"></span>
+        <span class="codon-group" title="numeric — strength / speed / armor">
+          <button type="button" class="codon num"  data-codon="GCA" title="strength 75 dominant">GCA</button>
+          <button type="button" class="codon num rec" data-codon="GCU" title="strength 25 recessive">GCU</button>
+          <button type="button" class="codon num"  data-codon="ACA" title="speed 80 dominant">ACA</button>
+          <button type="button" class="codon num rec" data-codon="ACU" title="speed 20 recessive">ACU</button>
+          <button type="button" class="codon num"  data-codon="UCA" title="armor 60 dominant">UCA</button>
+          <button type="button" class="codon num rec" data-codon="UCU" title="armor 15 recessive">UCU</button>
+        </span>
+        <span class="palette-sep"></span>
+        <span class="codon-group" title="categorical — color / ability / biome">
+          <button type="button" class="codon cat"  data-codon="GCG" title="color green dominant">GCG</button>
+          <button type="button" class="codon cat rec" data-codon="GCC" title="color red recessive">GCC</button>
+          <button type="button" class="codon cat"  data-codon="AUC" title="ability fire-breath dominant">AUC</button>
+          <button type="button" class="codon cat rec" data-codon="AUA" title="ability sonic-roar recessive">AUA</button>
+          <button type="button" class="codon cat"  data-codon="GAU" title="biome volcanic dominant">GAU</button>
+          <button type="button" class="codon cat rec" data-codon="GAC" title="biome ocean recessive">GAC</button>
+        </span>
+        <span class="palette-sep"></span>
+        <button type="button" class="rune ctl" id="clear-tape-genes" title="clear tape">⌫</button>
+      </div>
+
+      <label class="field">
+        <span>tape</span>
+        <input type="text" id="tape-genes" value="AUG CGA GCA ACA UCA GCG AUC GAU UAA" autocomplete="off" spellcheck="false">
+      </label>
+
+      <div class="row">
+        <button type="button" class="action primary" id="express-btn">express</button>
+        <span class="hint">click codons to append · use any tape that starts with <code>AUG</code></span>
+      </div>
+
+      <pre class="creature-card" id="creature-card"></pre>
+
+      <details class="cheatsheet genes">
+        <summary>quick strands</summary>
+        <ul>
+          <li><code class="strand-example" data-tape="AUG CGA GCA ACA UCA GCG AUC GAU UAA">AUG CGA GCA ACA UCA GCG AUC GAU UAA</code> — balanced creature, all traits</li>
+          <li><code class="strand-example" data-tape="AUG CGA CGU GCA UAA">AUG CGA CGU GCA UAA</code> — diploid size (70+30 averages to 50)</li>
+          <li><code class="strand-example" data-tape="AUG GCG UAA">AUG GCG UAA</code> — fragmentary genome (only color expresses)</li>
+          <li><code class="strand-example" data-tape="AUG GCG GCG UAA">AUG GCG GCG UAA</code> — dom/dom tiebreak (hash-deterministic)</li>
+          <li><code class="strand-example" data-tape="AUG GCC GCC UAA">AUG GCC GCC UAA</code> — rec/rec tiebreak</li>
+        </ul>
+      </details>
+    </section>
+
     <footer class="colophon">
       <span>letrs · 2026-05-25</span>
       <span id="coi-chip">checking COI…</span>
-      <span>five rules and a spell</span>
+      <span>five rules · a spell · a gene</span>
     </footer>
 
   </main>

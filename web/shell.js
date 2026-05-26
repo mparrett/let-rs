@@ -6,14 +6,16 @@
 import init, { Vm } from './pkg/wasm.js';
 
 const $ = (sel) => document.querySelector(sel);
-const tapeEl  = $('#tape');
-const xEl     = $('#x');
-const yEl     = $('#y');
-const gridEl  = $('#grid');
-const logEl   = $('#log');
-const outEl   = $('#out');
-const replEl  = $('#repl-input');
-const coiChip = $('#coi-chip');
+const tapeEl    = $('#tape');
+const xEl       = $('#x');
+const yEl       = $('#y');
+const gridEl    = $('#grid');
+const logEl     = $('#log');
+const outEl     = $('#out');
+const replEl    = $('#repl-input');
+const coiChip   = $('#coi-chip');
+const geneTape  = $('#tape-genes');
+const cardEl    = $('#creature-card');
 
 await init();
 const vm = new Vm(7, 5);
@@ -139,10 +141,52 @@ replEl.addEventListener('keydown', (e) => {
   }
 });
 
-// Render a seed cast so first-time visitors see the spell pipeline in action.
+// ─── Gene Lab ──────────────────────────────────────────────
+//
+// Codon palette appends triplet + space, so successive clicks compose a
+// readable strand (`AUG CGA UAA`). Same focus-avoidance reasoning as the
+// rune palette — programmatic focus pops mobile keyboards.
+document.querySelectorAll('.codon').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const t = geneTape.value;
+    geneTape.value = t && !t.endsWith(' ') ? `${t} ${btn.dataset.codon}` : `${t}${btn.dataset.codon}`;
+  });
+});
+
+$('#clear-tape-genes').addEventListener('click', () => {
+  geneTape.value = '';
+  cardEl.textContent = '';
+});
+
+const expressCard = () => {
+  const tape = geneTape.value.trim();
+  if (!tape) {
+    cardEl.textContent = '(no codons — paste a strand or click some codons above)';
+    return;
+  }
+  try {
+    cardEl.textContent = vm.cast_genome(tape);
+  } catch (e) {
+    cardEl.textContent = `⚠ ${e}`;
+  }
+};
+
+$('#express-btn').addEventListener('click', expressCard);
+
+// Strand cheatsheet: click loads into the gene tape (not focused — mobile).
+document.querySelectorAll('.strand-example').forEach((el) => {
+  el.addEventListener('click', () => {
+    geneTape.value = el.dataset.tape;
+    geneTape.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    expressCard();
+  });
+});
+
+// Seed casts so first-time visitors see both pipelines rendered immediately.
 try {
   vm.cast('ᚠ ᛊ 3 ᛁ', 3n, 2n);
   refresh();
 } catch (e) {
   console.warn('seed cast failed:', e);
 }
+expressCard();
