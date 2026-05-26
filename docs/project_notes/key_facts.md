@@ -87,6 +87,17 @@ letrs/
 - `quasiquote_splice` — `\`(1 ,@xs 4)` with `xs = '(2 3)` → `(1 2 3 4)`
 - `canonical_example` (runes) — `tape_to_sexpr("ᚠ ᛊ 3 ᛁ") == "(list fire (area 3) ice)"`
 
+## Style & conventions
+
+- Dev doc: `docs/style.md` — clippy gate, lint-override convention
+  (`#[expect(..., reason = "…")]`), comment prefixes (`SAFETY:`, `PERF:`,
+  `CONTEXT:`, `TODO(issue #N):`), TODO workflow (file in
+  `docs/project_incoming/`, not GitHub Issues), error stance (zero-dep,
+  `Result<_, String>` — see ADR-002), import order.
+- Reference: [Apollo Rust Best Practices](https://github.com/apollographql/rust-best-practices).
+  Not authoritative — we cherry-pick. Deviations are documented in
+  `docs/style.md` and the relevant ADRs.
+
 ## Related repos
 
 - `../xsofy` — the original roguelike whose spell DSL inspired this. Same
