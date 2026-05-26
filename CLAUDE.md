@@ -129,6 +129,7 @@ just genes        # CLI codon-tape → creature card demo
 just check
 just wasm-build   # cargo build --target wasm32-unknown-unknown + wasm-bindgen
 just wasm-serve   # build + python3 -m http.server -d web 8000
+just bench        # criterion benches under crates/bench/ (core + demos)
 ```
 
 Rust 1.93+, edition 2024. The core `lisp` crate stays zero-deps —

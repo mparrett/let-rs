@@ -24,6 +24,12 @@ check:
 fmt:
     cargo fmt --all
 
+# Run all benches. Use `just bench-save NAME` (TODO: as needed) to lock
+# a baseline before a refactor, then re-run after to see deltas.
+# Criterion writes HTML reports under target/criterion/.
+bench *args:
+    cargo bench -p bench {{args}}
+
 # ─── WASM bridge ─────────────────────────────────────────────────
 #
 # Three-stage pipeline:
