@@ -113,18 +113,40 @@ impl Vm {
     /// Returns the value of the last expression — or `#t` if every form
     /// was a `defmacro`/`define` (i.e. nothing produced a value).
     ///
-    /// A `(define name body)` allocates a self-reference cell before
-    /// evaluating `body`, so `(define f (lambda () (f)))` works. Mutual
-    /// recursion *across* separate `define`s is not supported — wrap
-    /// such a group in `letrec` if you need it.
+    /// All `(define name body)` forms in a single call have placeholder
+    /// cells pre-allocated *before* any body runs, so defines in the
+    /// same batch may freely refer to each other (mutual recursion). A
+    /// closure's body sees all sibling defines via the captured env.
+    ///
+    /// Mutual recursion *across* separate `eval_str` calls is not
+    /// supported — closures capture the env at evaluation time, and a
+    /// later `define` only extends the *current* env tail, not the
+    /// already-captured one. If a REPL user needs this, wrap the
+    /// mutually-recursive group in a single source string or a
+    /// `letrec`.
     pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
         let forms = parse::read_many(src)?;
+
+        // Pre-pass: allocate placeholder cells for every top-level
+        // (define name body) in this batch. Map keyed by name; if
+        // the same name is defined twice in this batch, the second
+        // pre-allocation shadows the first in the env (env still
+        // gains both frames; lookups hit the latest).
+        let mut define_cells: HashMap<String, Rc<RefCell<Val>>> = HashMap::new();
+        for datum in &forms {
+            if let Some(name) = extract_define_name(datum)? {
+                let (next_env, cell) = self.env.extend_placeholder(name.clone());
+                self.env = next_env;
+                define_cells.insert(name.to_string(), cell);
+            }
+        }
+
         let mut last = Val::Bool(true);
         for datum in forms {
             if self.try_register_defmacro(&datum)? {
                 continue;
             }
-            if self.try_register_define(&datum)? {
+            if self.try_register_define(&datum, &define_cells)? {
                 continue;
             }
             let expanded = self.expand_all(datum)?;
@@ -134,33 +156,31 @@ impl Vm {
         Ok(last)
     }
 
-    /// Top-level `(define name body)`. Extends `self.env` in place so
-    /// subsequent forms (and subsequent `eval_str` calls) see the
-    /// binding. Uses `extend_placeholder` so a lambda body can refer to
-    /// its own name (single-binding self-recursion). Mutual recursion
-    /// across separate defines is *not* supported — see `eval_str` doc.
-    fn try_register_define(&mut self, d: &Datum) -> Result<bool, String> {
+    /// Evaluate `(define name body)` against `self.env`, then write
+    /// the result into the cell pre-allocated for `name` by the
+    /// `eval_str` pre-pass. Returns `Ok(false)` if `d` isn't a
+    /// `define` form, propagating non-define forms to the caller.
+    fn try_register_define(
+        &mut self,
+        d: &Datum,
+        cells: &HashMap<String, Rc<RefCell<Val>>>,
+    ) -> Result<bool, String> {
+        let name = match extract_define_name(d)? {
+            Some(n) => n,
+            None => return Ok(false),
+        };
         let items = match d {
             Datum::List(items) => items,
-            _ => return Ok(false),
-        };
-        match items.first() {
-            Some(Datum::Sym(s)) if &**s == "define" => {}
-            _ => return Ok(false),
-        }
-        if items.len() != 3 {
-            return Err("define: expected (define name value)".into());
-        }
-        let name: Sym = match &items[1] {
-            Datum::Sym(s) => s.clone(),
-            _ => return Err("define: name must be a symbol".into()),
+            _ => unreachable!("extract_define_name returned Some, so d is a List"),
         };
         let body_datum = self.expand_all(items[2].clone())?;
         let body_expr = parse::compile(&body_datum)?;
-        let (new_env, cell) = self.env.extend_placeholder(name);
-        let val = run(body_expr, new_env.clone(), self.world.clone())?;
-        *cell.borrow_mut() = val;
-        self.env = new_env;
+        let val = run(body_expr, self.env.clone(), self.world.clone())?;
+        cells
+            .get(name.as_ref())
+            .expect("pre-pass should have allocated a cell for this define")
+            .borrow_mut()
+            .clone_from(&val);
         Ok(true)
     }
 
@@ -339,6 +359,28 @@ impl Vm {
 impl Default for Vm {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Inspect a datum and, if it's a well-formed `(define name body)`,
+/// return the bound name. Used by `eval_str`'s pre-pass (to allocate
+/// placeholder cells) and `try_register_define` (to validate the
+/// form structure and find its cell).
+fn extract_define_name(d: &Datum) -> Result<Option<Sym>, String> {
+    let items = match d {
+        Datum::List(items) => items,
+        _ => return Ok(None),
+    };
+    match items.first() {
+        Some(Datum::Sym(s)) if &**s == "define" => {}
+        _ => return Ok(None),
+    }
+    if items.len() != 3 {
+        return Err("define: expected (define name value)".into());
+    }
+    match &items[1] {
+        Datum::Sym(s) => Ok(Some(s.clone())),
+        _ => Err("define: name must be a symbol".into()),
     }
 }
 

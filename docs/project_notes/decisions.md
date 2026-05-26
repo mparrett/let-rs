@@ -775,7 +775,9 @@ dominant cost. The `core-followups.md` plan's #1 item.
 - **−** Mutual recursion across separate defines is a sharp edge —
   someone will hit it. Mitigated by clear error path ("unbound
   variable: foo") + the doc on `eval_str` saying "wrap in letrec for
-  mutual recursion." Could be revisited if it bites in practice.
+  mutual recursion." (Update 2026-05-26: pre-pass scan added in the
+  same session; mutual rec now works freely within a single
+  `eval_str` call. Cross-call rec is still a sharp edge, by design.)
 - **−** `genes::seeded` is now a third place (after `PRELUDE_DEFINES`
   and the `install` registration) where the seed-related prelude
   lives. Mitigated by the function being the *only* place those four
@@ -783,10 +785,16 @@ dominant cost. The `core-followups.md` plan's #1 item.
   between "installable" and "per-cast" halves of the same vocabulary.
 
 **Deferred**:
-- **Multi-define mutual recursion via two-pass scan.** If a future
-  demo wants it without `letrec`. Estimated: a pre-scan that
-  pre-allocates placeholder cells for every top-level `define` in a
-  given `eval_str` call. Independent of this change.
+- ~~**Multi-define mutual recursion via two-pass scan.**~~
+  **Resolved 2026-05-26.** `eval_str` now does a pre-pass that
+  allocates placeholder cells for every top-level `define` in a
+  single source string before any body runs, so siblings in the
+  same batch can refer to each other freely. Mutual recursion
+  *across* separate `eval_str` calls still doesn't work — closures
+  capture env at evaluation time, and a later define only extends
+  the current env tail. That limitation is documented on `eval_str`
+  and pinned by a test
+  (`mutual_recursion_does_not_cross_eval_str_boundaries`).
 - **`.scm` file loading.** Now trivial — `vm.eval_str(read_to_string("foo.scm"))`
   already works. A `Vm::load(path)` helper would just be sugar.
 - **Macro-aware `define`.** Today `(define name body)` runs `body`

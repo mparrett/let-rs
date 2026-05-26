@@ -399,6 +399,46 @@ fn define_returns_marker_then_expression_wins() {
 }
 
 #[test]
+fn defines_in_one_eval_str_are_mutually_recursive() {
+    // Two defines in the same source — each refers to the other.
+    // The pre-pass allocates both placeholder cells before either
+    // body evaluates, so their lambdas capture an env containing
+    // both names.
+    let src = r#"
+        (define even? (lambda (n) (if (= n 0) #t (odd?  (- n 1)))))
+        (define odd?  (lambda (n) (if (= n 0) #f (even? (- n 1)))))
+        (list (even? 10) (odd? 10) (even? 7) (odd? 7))
+    "#;
+    assert_eq!(eval(src), "(#t #f #f #t)");
+}
+
+#[test]
+fn three_way_mutual_recursion() {
+    let src = r#"
+        (define a (lambda (n) (if (= n 0) 'done-a (b (- n 1)))))
+        (define b (lambda (n) (if (= n 0) 'done-b (c (- n 1)))))
+        (define c (lambda (n) (if (= n 0) 'done-c (a (- n 1)))))
+        (list (a 0) (a 1) (a 2) (a 3))
+    "#;
+    assert_eq!(eval(src), "(done-a done-b done-c done-a)");
+}
+
+#[test]
+fn mutual_recursion_does_not_cross_eval_str_boundaries() {
+    // Closures capture env at evaluation time. A later define only
+    // extends the *current* env tail; an earlier closure's captured
+    // env doesn't see it. Document the limitation with a test.
+    let mut vm = Vm::new();
+    vm.eval_str("(define foo (lambda () (bar)))").unwrap();
+    vm.eval_str("(define bar (lambda () 42))").unwrap();
+    let r = vm.eval_str("(foo)");
+    assert!(
+        r.is_err(),
+        "foo's closure should not see bar defined after the fact: {r:?}"
+    );
+}
+
+#[test]
 fn define_only_valid_at_top_level() {
     let mut vm = Vm::new();
     let r = vm.eval_str("(let ((x 1)) (define y 2))");

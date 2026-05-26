@@ -380,9 +380,10 @@ resolved 2026-05-25 → 2026-05-26.** Engine work surfaced since:
   of mechanical refactor, no behavior change. See `host-state.md`
   for the rationale and `crates/world/` micro-crate companion idea.
   Subsumes item #5 if pursued.
-- **Mutual recursion across top-level defines** (ADR-014 deferred).
-  Pre-scan pass that pre-allocates placeholder cells for every
-  top-level `define` in a single `eval_str` call. Independent of
-  the above.
+- ~~**Mutual recursion across top-level defines** (ADR-014 deferred).~~
+  **Resolved 2026-05-26.** Pre-pass added to `eval_str`; mutual rec
+  works within a single source string. Cross-call rec is still a
+  sharp edge (closures capture env at eval time) — documented and
+  pinned by a test.
 - **Numerator/denominator/floor/ceiling accessors** for rationals.
   YAGNI until a demo wants to pull apart a ratio.
