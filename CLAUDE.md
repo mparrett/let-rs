@@ -80,18 +80,25 @@ Sibling crates:
   CLI + WASM). ~120 LOC. Pinned to `wasm-bindgen =0.2.114` to match the
   installed CLI (ADR-009).
 
-Web shell at `web/`:
+Web shell at `web/` — three pages, one bundle:
 
-- `web/index.html` — Cinzel masthead + three panels: Spell Lab + REPL
-  (two-column at ≥940px), then Gene Lab full-width below. Each panel has
-  its own palette (rune / codon) and cheatsheet.
-- `web/styles.css` — palette + typography lifted from `docs/letrs.html`.
-  Codon buttons color-code by category (honey=control, indigo=numeric,
-  sage=categorical) with recessive variants dimmed via opacity.
-- `web/shell.js` — plain ESM: `await init(); const vm = new Vm(7, 5); …`.
-  Drives Spell Lab (`vm.cast`), REPL (`vm.eval`), and Gene Lab
-  (`vm.cast_genome`).
-- `web/pkg/` — `wasm-bindgen` output (gitignored)
+- `web/index.html` — landing page. Two `.lab-card` links to the demos
+  (plum-accented Spell Lab, honey-accented Gene Lab) over a Letrs
+  masthead. No WASM init on this page; it's pure HTML.
+- `web/spells.html` — Spell Lab + REPL, two-column at ≥940px. Plum
+  rune-palette aesthetic.
+- `web/genes.html` — Gene Lab + REPL, two-column at ≥940px. Honey/sage
+  codon-palette aesthetic.
+- `web/styles.css` — shared. Palette + typography lifted from
+  `docs/letrs.html`. Per-page accents picked via per-element classes
+  (`.sigil.gene`, `.lab-card.spells`, etc).
+- `web/common.js` — plain ESM. `await init()`, `Vm` construction, COI
+  chip, REPL wiring. Imported by spells.js and genes.js.
+- `web/spells.js` — Spell Lab page module: rune palette, `vm.cast`,
+  world refresh, seed cast.
+- `web/genes.js` — Gene Lab page module: codon palette,
+  `vm.cast_genome`, render card, seed.
+- `web/pkg/` — `wasm-bindgen` output (gitignored).
 
 ## Build / test
 

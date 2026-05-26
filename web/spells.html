@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>letrs · spell lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+  <main class="frame">
+
+    <header class="mast">
+      <div class="strip">
+        <span><a class="back" href="./index.html">← letrs</a></span>
+        <span class="here">spell lab</span>
+        <span>runes → ctx → painted tiles</span>
+      </div>
+      <h1>Spell <span class="sigil">Lab</span></h1>
+      <p class="sub">Unicode runes compile to s-expressions that thread a context through a pipeline of primitives, then a resolver paints tiles on a 7×5 grid.</p>
+    </header>
+
+    <div class="cols">
+
+      <section class="panel" id="spell-lab">
+        <h2>Spell Lab</h2>
+
+        <div class="palette" id="rune-palette" aria-label="rune buttons">
+          <button type="button" class="rune"        data-rune="ᚠ"  title="fire">ᚠ</button>
+          <button type="button" class="rune"        data-rune="ᛁ"  title="ice">ᛁ</button>
+          <button type="button" class="rune"        data-rune="ᚱ"  title="bolt">ᚱ</button>
+          <button type="button" class="rune"        data-rune="ᛒ"  title="self">ᛒ</button>
+          <button type="button" class="rune param"  data-rune="ᛊ "  title="area (followed by a number)">ᛊ</button>
+          <button type="button" class="rune param"  data-rune="ᛏ "  title="power (followed by a number)">ᛏ</button>
+          <span class="palette-sep"></span>
+          <button type="button" class="rune digit" data-rune="1">1</button>
+          <button type="button" class="rune digit" data-rune="2">2</button>
+          <button type="button" class="rune digit" data-rune="3">3</button>
+          <button type="button" class="rune digit" data-rune="5">5</button>
+          <button type="button" class="rune ctl"   id="space-rune" data-rune=" " title="space">␣</button>
+          <button type="button" class="rune ctl"   id="clear-tape" title="clear tape">⌫</button>
+        </div>
+
+        <label class="field">
+          <span>tape</span>
+          <input type="text" id="tape" value="ᚠ ᛊ 3 ᛁ" autocomplete="off" spellcheck="false">
+        </label>
+
+        <div class="row">
+          <label class="field coord">
+            <span>x</span>
+            <input type="number" id="x" value="3" min="0" max="6">
+          </label>
+          <label class="field coord">
+            <span>y</span>
+            <input type="number" id="y" value="2" min="0" max="4">
+          </label>
+          <button type="button" class="action primary" id="cast-btn">cast</button>
+          <button type="button" class="action subdued" id="reset-btn">reset</button>
+        </div>
+
+        <pre class="grid" id="grid"></pre>
+
+        <div class="legend">
+          <span><b class="g g-floor">·</b> floor</span>
+          <span><b class="g g-fire">*</b> fire</span>
+          <span><b class="g g-ice">o</b> ice</span>
+          <span><b class="g g-wall">#</b> wall</span>
+        </div>
+
+        <pre class="log" id="log"></pre>
+
+        <details class="cheatsheet spells">
+          <summary>quick tapes</summary>
+          <ul>
+            <li><code class="tape-example" data-tape="ᚠ">ᚠ</code> — single fire tile</li>
+            <li><code class="tape-example" data-tape="ᚠ ᛊ 1">ᚠ ᛊ 1</code> — 3×3 fire patch</li>
+            <li><code class="tape-example" data-tape="ᚠ ᛊ 3 ᛁ">ᚠ ᛊ 3 ᛁ</code> — fire then ice (last-write wins on :element)</li>
+            <li><code class="tape-example" data-tape="ᛁ ᛊ 2">ᛁ ᛊ 2</code> — 5×5 ice arena</li>
+            <li><code class="tape-example" data-tape="ᛒ ᛁ">ᛒ ᛁ</code> — self-targeted ice (sets :target self)</li>
+            <li><code class="tape-example" data-tape="ᚱ ᚠ ᛏ 5">ᚱ ᚠ ᛏ 5</code> — bolt + fire + power-5 (:shape and :power linger in ctx)</li>
+          </ul>
+        </details>
+      </section>
+
+      <section class="panel" id="repl">
+        <h2>REPL</h2>
+
+        <textarea id="repl-input" rows="5" spellcheck="false" autocomplete="off">((lambda (n) (* n n)) 7)</textarea>
+
+        <div class="row">
+          <button type="button" class="action primary" id="eval-btn">eval</button>
+          <button type="button" class="action subdued" id="clear-out">clear output</button>
+          <span class="hint">⌘/Ctrl + ↵ to evaluate</span>
+        </div>
+
+        <pre class="out" id="out"></pre>
+
+        <details class="cheatsheet repl">
+          <summary>quick examples</summary>
+          <ul>
+            <li><code>(+ 1 2 3 4 5)</code> — variadic arithmetic</li>
+            <li><code>'(a (b c) d)</code> — quoted nested list</li>
+            <li><code>(letrec ((f (lambda (n) (if (= n 0) 1 (* n (f (- n 1))))))) (f 6))</code> — factorial via letrec</li>
+            <li><code>(defmacro when args (list 'if (car args) (car (cdr args)) #f))</code> then <code>(when #t 'yes)</code></li>
+            <li><code>`(1 ,(+ 1 1) ,@'(3 4))</code> — quasiquote with splice</li>
+          </ul>
+        </details>
+      </section>
+
+    </div>
+
+    <footer class="colophon">
+      <span>letrs · spell lab</span>
+      <span id="coi-chip">checking COI…</span>
+      <span><a class="back" href="./genes.html">gene lab →</a></span>
+    </footer>
+
+  </main>
+
+  <script type="module" src="./spells.js"></script>
+</body>
+</html>
