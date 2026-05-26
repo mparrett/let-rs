@@ -400,7 +400,7 @@ pub fn render_creature(phenotype: &Val) -> String {
     let cell = |n: Option<i64>| n.map(|x| x.to_string()).unwrap_or("—".into());
     // portrait bucket uses size if present, falls back to mid
     let portrait_size = size.unwrap_or(50);
-    let spikes = armor.map(|a| (a / 20).max(0).min(5)).unwrap_or(0) as usize;
+    let spikes = armor.map(|a| (a / 20).clamp(0, 5)).unwrap_or(0) as usize;
 
     let portrait = portrait_for(portrait_size, &color, spikes);
     let mut out = String::new();

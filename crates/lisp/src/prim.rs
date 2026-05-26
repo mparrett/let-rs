@@ -2,6 +2,7 @@ use crate::env::Env;
 use crate::val::{Arity, Val};
 
 type R = Result<Val, String>;
+type PrimFn = fn(&[Val]) -> R;
 
 // ---- numeric tower helpers ----
 //
@@ -242,7 +243,7 @@ fn assoc_get(args: &[Val]) -> R {
     Ok(Val::Nil)
 }
 
-const BUILTINS: &[(&str, Arity, fn(&[Val]) -> R)] = &[
+const BUILTINS: &[(&str, Arity, PrimFn)] = &[
     ("+",       Arity::AtLeast(0), add),
     ("-",       Arity::AtLeast(1), sub),
     ("*",       Arity::AtLeast(0), mul),

@@ -130,7 +130,7 @@ impl Val {
             (Val::Num(a), Val::Num(b)) => a == b,
             (Val::Ratio(an, ad), Val::Ratio(bn, bd)) => an == bn && ad == bd,
             (Val::Bool(a), Val::Bool(b)) => a == b,
-            (Val::Sym(a), Val::Sym(b)) => &**a == &**b,
+            (Val::Sym(a), Val::Sym(b)) => **a == **b,
             (Val::Nil, Val::Nil) => true,
             _ => false,
         }

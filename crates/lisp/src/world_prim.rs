@@ -2,6 +2,7 @@ use crate::val::{Arity, Val};
 use crate::world::{Tile, World};
 
 type R = Result<Val, String>;
+type WorldPrimFn = fn(&[Val], &mut World) -> R;
 
 fn coord(v: &Val, name: &str) -> Result<u32, String> {
     match v {
@@ -85,12 +86,11 @@ fn assoc_get(ctx: &Val, key: &str) -> Option<Val> {
     loop {
         match cur {
             Val::Cons(head, tail) => {
-                if let Val::Cons(k, v) = head.as_ref() {
-                    if let Val::Sym(s) = k.as_ref()
-                        && &**s == key
-                    {
-                        return Some((**v).clone());
-                    }
+                if let Val::Cons(k, v) = head.as_ref()
+                    && let Val::Sym(s) = k.as_ref()
+                    && &**s == key
+                {
+                    return Some((**v).clone());
                 }
                 cur = tail.as_ref();
             }
@@ -106,7 +106,7 @@ fn as_num(v: Val) -> Option<i64> {
     }
 }
 
-pub const WORLD_PRIMS: &[(&str, Arity, fn(&[Val], &mut World) -> R)] = &[
+pub const WORLD_PRIMS: &[(&str, Arity, WorldPrimFn)] = &[
     ("world-tile",      Arity::Exact(2),   world_tile),
     ("world-set-tile!", Arity::Exact(3),   world_set_tile),
     ("world-log!",      Arity::AtLeast(1), world_log),

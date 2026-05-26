@@ -68,7 +68,7 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
             if exprs.is_empty() {
                 return Err("empty application".into());
             }
-            let mut remaining: Vec<Rc<Expr>> = exprs.iter().cloned().collect();
+            let mut remaining: Vec<Rc<Expr>> = exprs.to_vec();
             let first = remaining.remove(0);
             let new_k = Rc::new(K::App {
                 evaled: Vec::with_capacity(exprs.len()),
