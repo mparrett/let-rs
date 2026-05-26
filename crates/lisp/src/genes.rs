@@ -403,16 +403,30 @@ pub fn render_creature(phenotype: &Val) -> String {
     let spikes = armor.map(|a| (a / 20).clamp(0, 5)).unwrap_or(0) as usize;
 
     let portrait = portrait_for(portrait_size, &color, spikes);
+    // Card width: 48 cells, sized to fit the widest interior line
+    // (the stats row) plus a left+right `│` border. Every interior
+    // line is padded to the same width so the right border lines up
+    // and the top/bottom rules match.
+    //
+    // Caveat: padding uses Rust's char-count formatting (`{:<N}`),
+    // which assumes one unicode codepoint = one display cell. That
+    // holds for the ASCII glyphs and box-drawing chars we use, and
+    // for the portrait's CJK-ish unicode (`◉`, `▽`, etc.) in every
+    // mono font we render against today (terminals + the web demo).
+    // A double-width font would push the right border on portrait
+    // rows over by a cell — we'd need a wcwidth-aware padding helper.
     let mut out = String::new();
-    out.push_str(&format!("╭─ creature #{name} ─────────────╮\n"));
-    out.push_str(&format!("│ size {:>3}  strength {:>3}  speed {:>3}  armor {:>3}\n",
-        cell(size), cell(strength), cell(speed), cell(armor)));
-    out.push_str(&format!("│ color {color:<8}  ability {ability}\n"));
-    out.push_str(&format!("│ biome {biome}\n"));
+    out.push_str(&format!("╭─ creature #{name} ─────────────────────────────╮\n"));
+    out.push_str(&format!(
+        "│ size {:>3}  strength {:>3}  speed {:>3}  armor {:>3} │\n",
+        cell(size), cell(strength), cell(speed), cell(armor)
+    ));
+    out.push_str(&format!("│ color {color:<8}  ability {ability:<20} │\n"));
+    out.push_str(&format!("│ biome {biome:<38} │\n"));
     for line in portrait {
-        out.push_str(&format!("│   {line}\n"));
+        out.push_str(&format!("│   {line:<42} │\n"));
     }
-    out.push_str("╰────────────────────────────────╯");
+    out.push_str("╰──────────────────────────────────────────────╯");
     out
 }
 
