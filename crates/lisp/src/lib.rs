@@ -125,6 +125,22 @@ impl Vm {
     /// mutually-recursive group in a single source string or a
     /// `letrec`.
     pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
+        // Atomic semantics: if any form in the batch fails, restore env
+        // and macros to their pre-call state. Pre-fix, a failed define
+        // left its placeholder cell in env shadowing the previous
+        // binding (e.g. `(define + (/ 1 0))` masking the builtin `+`
+        // with `#f`), which then took every subsequent REPL line down.
+        let saved_env = self.env.clone();
+        let saved_macros = self.macros.borrow().clone();
+        let result = self.eval_str_inner(src);
+        if result.is_err() {
+            self.env = saved_env;
+            *self.macros.borrow_mut() = saved_macros;
+        }
+        result
+    }
+
+    fn eval_str_inner(&mut self, src: &str) -> Result<Val, String> {
         let forms = parse::read_many(src)?;
 
         // Pre-pass: allocate placeholder cells for every top-level

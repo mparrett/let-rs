@@ -263,6 +263,31 @@ fn cond_form() {
 }
 
 #[test]
+fn failed_define_does_not_corrupt_env() {
+    // Pre-fix the pre-pass cell for `+` was already installed when the
+    // body `(/ 1 0)` failed, leaving env with `+` bound to the placeholder
+    // (Val::Bool(false)) — every subsequent call to `+` then errored with
+    // "not callable: #f". After the fix, env rolls back atomically.
+    let mut vm = Vm::new();
+    assert_eq!(format!("{}", vm.eval_str("(+ 1 2)").unwrap()), "3");
+    let r = vm.eval_str("(define + (/ 1 0))");
+    assert!(r.is_err(), "define with failing body should error: {r:?}");
+    // The builtin must still work after the failed redefinition.
+    assert_eq!(format!("{}", vm.eval_str("(+ 1 2)").unwrap()), "3");
+}
+
+#[test]
+fn failed_define_in_batch_rolls_back_earlier_defines() {
+    // Both defines in one eval_str — atomicity means a later failure
+    // also rolls back the earlier success.
+    let mut vm = Vm::new();
+    let r = vm.eval_str("(define foo 1) (define bar (/ 1 0))");
+    assert!(r.is_err());
+    let r2 = vm.eval_str("foo");
+    assert!(r2.is_err(), "foo should be undefined after rollback: {r2:?}");
+}
+
+#[test]
 fn cond_else_must_be_terminal() {
     // Before: returned 'wrong because reverse iteration filled tail with
     // 'right then overwrote with else. After: rejected at compile time.
