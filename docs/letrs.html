@@ -765,9 +765,10 @@
           The split between the language and the host is the design decision
           that makes this scale. The lisp returns a ctx — pure data, no side
           effects, replayable. The host decides what that ctx <em>means</em>
-          this turn. Spells are testable in isolation. The world rolls back
-          for free. Precognition (&quot;show me where this would go&quot;) is a
-          tentative call and a render.
+          this turn. Spells are testable in isolation; the pipeline is pure
+          right up to the <code>world-apply!</code> resolver, where the host
+          commits. True rollback <em>after</em> a commit needs a world
+          snapshot — that&rsquo;s an open ticket, not built today.
         </p>
 
         <table class="compare">
