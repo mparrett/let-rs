@@ -44,6 +44,14 @@ fn stray_number_errors() {
 }
 
 #[test]
+fn oversized_number_errors_not_panics() {
+    // Pre-fix the unwrap() in lex panicked. A 20-digit string is past
+    // i64::MAX; we want a clean Err, not a thread panic.
+    let r = tape_to_sexpr("ᛊ 99999999999999999999");
+    assert!(matches!(r, Err(e) if e.contains("out of i64 range")));
+}
+
+#[test]
 fn whitespace_between_runes_is_optional() {
     // No whitespace between runes: each char still lexes individually.
     assert_eq!(tape_to_sexpr("ᚠᛁᚱ").unwrap(), "(list fire ice bolt)");

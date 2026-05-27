@@ -50,7 +50,10 @@ fn lex(tape: &str) -> Result<Vec<Tok>, String> {
                 s.push(c);
                 chars.next();
             }
-            out.push(Tok::Num(s.parse().unwrap()));
+            let n: i64 = s
+                .parse()
+                .map_err(|_| format!("rune number out of i64 range: {s}"))?;
+            out.push(Tok::Num(n));
             continue;
         }
         if let Some(&(_, name)) = PLAIN.iter().find(|(k, _)| *k == c) {
