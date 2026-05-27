@@ -20,7 +20,7 @@ fn bench_cast_spell(c: &mut Criterion) {
     c.bench_function("cast_spell_canonical", |b| {
         b.iter_batched(
             || {
-                let mut vm = Vm::with_world(World::new(8, 5));
+                let mut vm = Vm::with_world(World::new(8, 5).expect("8×5 fits"));
                 spells::install(&mut vm);
                 vm
             },

@@ -6,7 +6,8 @@ type WorldPrimFn = fn(&[Val], &mut World) -> R;
 
 fn coord(v: &Val, name: &str) -> Result<u32, String> {
     match v {
-        Val::Num(n) if *n >= 0 => Ok(*n as u32),
+        Val::Num(n) => u32::try_from(*n)
+            .map_err(|_| format!("{name}: coord out of u32 range, got {n}")),
         _ => Err(format!("{name}: expected non-negative integer, got {v}")),
     }
 }
@@ -63,13 +64,26 @@ fn world_apply(args: &[Val], w: &mut World) -> R {
         None => return Err("world-apply!: ctx has no 'element".into()),
     };
 
+    // Clamp the paint region to the grid intersection. Pre-fix a tape
+    // like `ᚠ ᛊ 1000000000` drove ~4e18 iterations on a 7×5 grid; now
+    // we only walk the actual rectangle that lands inside the world.
+    // Saturating arithmetic on i64 lets `area = i64::MAX` survive without
+    // overflowing the bounds computation.
     let mut painted = 0i64;
-    for dy in -area..=area {
-        for dx in -area..=area {
-            let x = tx + dx;
-            let y = ty + dy;
-            if x >= 0 && y >= 0 && w.set_tile(x as u32, y as u32, tile) {
-                painted += 1;
+    if w.width > 0 && w.height > 0 {
+        let w_max = (w.width - 1) as i64;
+        let h_max = (w.height - 1) as i64;
+        let x_lo = tx.saturating_sub(area).max(0);
+        let x_hi = tx.saturating_add(area).min(w_max);
+        let y_lo = ty.saturating_sub(area).max(0);
+        let y_hi = ty.saturating_add(area).min(h_max);
+        if x_lo <= x_hi && y_lo <= y_hi {
+            for y in y_lo..=y_hi {
+                for x in x_lo..=x_hi {
+                    if w.set_tile(x as u32, y as u32, tile) {
+                        painted += 1;
+                    }
+                }
             }
         }
     }

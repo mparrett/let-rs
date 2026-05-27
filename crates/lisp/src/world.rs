@@ -47,17 +47,32 @@ pub struct World {
 }
 
 impl World {
-    pub fn new(width: u32, height: u32) -> Self {
-        World {
+    /// Construct a grid of `width × height` floor tiles. Errors if the
+    /// product exceeds `usize::MAX` — the previous `u32 * u32 as usize`
+    /// wrapped silently, leaving a small tile vec with width/height
+    /// stored as the unwrapped values (so subsequent `tile_at` indexed
+    /// past the allocation).
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        // Vec's capacity ceiling for a non-ZST is `isize::MAX` bytes —
+        // anything past that aborts inside Vec, so we check against the
+        // tighter bound here rather than `usize::MAX`.
+        let total = (width as u64)
+            .checked_mul(height as u64)
+            .filter(|&n| n <= isize::MAX as u64)
+            .ok_or_else(|| {
+                format!("World::new: {width}×{height} exceeds addressable cells")
+            })?;
+        Ok(World {
             width,
             height,
-            tiles: vec![Tile::Floor; (width * height) as usize],
+            tiles: vec![Tile::Floor; total as usize],
             log: Vec::new(),
-        }
+        })
     }
 
     pub fn empty() -> Self {
-        Self::new(0, 0)
+        // 0×0 is always representable.
+        Self::new(0, 0).expect("0×0 is in range")
     }
 
     fn idx(&self, x: u32, y: u32) -> Option<usize> {

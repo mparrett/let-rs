@@ -33,12 +33,13 @@ pub struct WasmVm {
 #[wasm_bindgen(js_class = "Vm")]
 impl WasmVm {
     #[wasm_bindgen(constructor)]
-    pub fn new(width: u32, height: u32) -> WasmVm {
+    pub fn new(width: u32, height: u32) -> Result<WasmVm, JsValue> {
         console_error_panic_hook::set_once();
-        let mut inner = LispVm::with_world(World::new(width, height));
+        let world = World::new(width, height).map_err(|e| JsValue::from_str(&e))?;
+        let mut inner = LispVm::with_world(world);
         spells::install(&mut inner);
         genes::install(&mut inner);
-        WasmVm { inner, width, height }
+        Ok(WasmVm { inner, width, height })
     }
 
     /// Evaluate arbitrary lisp source. On error, the returned `Result::Err`
@@ -88,7 +89,9 @@ impl WasmVm {
     /// Does *not* reset the interpreter env (the preludes were installed
     /// at construction and stay valid).
     pub fn reset_world(&mut self) {
-        *self.inner.world.borrow_mut() = World::new(self.width, self.height);
+        // Dims were validated at construction, so this can't fail.
+        *self.inner.world.borrow_mut() =
+            World::new(self.width, self.height).expect("dims validated at construction");
     }
 
     /// Translate two codon tapes into parent genomes, breed them via

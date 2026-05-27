@@ -44,7 +44,7 @@ fn print_log(vm: &Vm) {
 }
 
 fn main() {
-    let mut vm = Vm::with_world(World::new(7, 5));
+    let mut vm = Vm::with_world(World::new(7, 5).expect("7×5 fits"));
 
     println!("== initial (7×5) ==");
     print_world(&vm);
