@@ -1,5 +1,8 @@
 # issue 1 — execution step budget (and/or worker)
 
+**Status:** resolved 2026-05-27 by commit `78291ec` (step budget only;
+worker option deferred). Archived from `project_incoming/`.
+
 **Source:** codex review 2026-05-26, finding #1c. Priority: P1 deferred from
 the correctness batch (handled #1a/b but not #1c).
 
