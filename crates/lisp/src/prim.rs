@@ -347,8 +347,10 @@ const BUILTINS: &[(&str, Arity, PrimFn)] = &[
     ("ceiling",     Arity::Exact(1), ceiling),
 ];
 
-pub fn initial_env() -> Env {
-    BUILTINS.iter().fold(Env::empty(), |env, &(name, arity, f)| {
-        env.extend(name.into(), Val::Prim { name, arity, f })
-    })
+pub fn initial_env(globals: &crate::env::Globals) -> Env {
+    BUILTINS
+        .iter()
+        .fold(Env::with_globals(globals), |env, &(name, arity, f)| {
+            env.extend(name.into(), Val::Prim { name, arity, f })
+        })
 }

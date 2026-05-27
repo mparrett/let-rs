@@ -37,7 +37,7 @@ pub mod val;
 pub mod world;
 pub mod world_prim;
 
-pub use env::Env;
+pub use env::{Env, Globals};
 pub use expr::{Expr, Sym};
 pub use parse::Datum;
 pub use step::{Step, run, run_bounded};
@@ -55,6 +55,14 @@ struct Macro {
 
 pub struct Vm {
     env: Env,
+    /// Top-level bindings (every `(define …)` ever evaluated in this
+    /// Vm). Held by `Vm` as the sole strong reference; closures that
+    /// reach back to it via `env.globals` use a `Weak`, so dropping
+    /// this Vm collapses every closure stored here without leaks.
+    /// Exposed publicly (mirroring `world`) so hosts can introspect or
+    /// reset top-level state without going through `eval_str`. See
+    /// ADR-015 / issue_2.
+    pub globals: Globals,
     pub world: Rc<RefCell<World>>,
     macros: Rc<RefCell<HashMap<String, Macro>>>,
     /// Per-`eval_str` CEK step budget. `u64::MAX` (the default) is
@@ -72,12 +80,14 @@ impl Vm {
 
     pub fn with_world(world: World) -> Self {
         let world = Rc::new(RefCell::new(world));
-        let mut env = prim::initial_env();
+        let globals: Globals = Rc::new(RefCell::new(HashMap::new()));
+        let mut env = prim::initial_env(&globals);
         for &(name, arity, f) in world_prim::WORLD_PRIMS {
             env = env.extend(name.into(), Val::WorldPrim { name, arity, f });
         }
         Vm {
             env,
+            globals,
             world,
             macros: Rc::new(RefCell::new(HashMap::new())),
             step_budget: u64::MAX,
@@ -122,33 +132,34 @@ impl Vm {
     }
 
     /// Evaluate a sequence of top-level forms. Each form is one of:
-    /// `(defmacro …)` (registers a macro), `(define name body)` (extends
-    /// the Vm env in place), or any expression (compiled + run normally).
-    /// Returns the value of the last expression — or `#t` if every form
-    /// was a `defmacro`/`define` (i.e. nothing produced a value).
+    /// `(defmacro …)` (registers a macro), `(define name body)` (writes
+    /// to the Vm's globals table), or any expression (compiled + run
+    /// normally). Returns the value of the last expression — or `#t`
+    /// if every form was a `defmacro`/`define` (i.e. nothing produced
+    /// a value).
     ///
     /// All `(define name body)` forms in a single call have placeholder
     /// cells pre-allocated *before* any body runs, so defines in the
-    /// same batch may freely refer to each other (mutual recursion). A
-    /// closure's body sees all sibling defines via the captured env.
-    ///
-    /// Mutual recursion *across* separate `eval_str` calls is not
-    /// supported — closures capture the env at evaluation time, and a
-    /// later `define` only extends the *current* env tail, not the
-    /// already-captured one. If a REPL user needs this, wrap the
-    /// mutually-recursive group in a single source string or a
-    /// `letrec`.
+    /// same batch may freely refer to each other (mutual recursion).
+    /// And because top-level defines now live in a shared globals
+    /// table that every Env points back to, mutual recursion across
+    /// separate `eval_str` calls also works — a closure looked up via
+    /// globals sees the table's *current* contents, not a snapshot of
+    /// its own capture time. See ADR-015.
     pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
-        // Atomic semantics: if any form in the batch fails, restore env
-        // and macros to their pre-call state. Pre-fix, a failed define
-        // left its placeholder cell in env shadowing the previous
-        // binding (e.g. `(define + (/ 1 0))` masking the builtin `+`
-        // with `#f`), which then took every subsequent REPL line down.
-        let saved_env = self.env.clone();
+        // Atomic semantics: if any form in the batch fails, restore
+        // globals and macros to their pre-call state. Pre-fix, a
+        // failed define left a placeholder cell visible in env (e.g.
+        // `(define + (/ 1 0))` masking the builtin `+` with `#f`),
+        // which then took every subsequent REPL line down.
+        //
+        // Snapshotting the HashMap clones it but Rc-bumps each cell,
+        // so cost is O(globals.len()) and unchanged-cells are shared.
+        let saved_globals = self.globals.borrow().clone();
         let saved_macros = self.macros.borrow().clone();
         let result = self.eval_str_inner(src);
         if result.is_err() {
-            self.env = saved_env;
+            *self.globals.borrow_mut() = saved_globals;
             *self.macros.borrow_mut() = saved_macros;
         }
         result
@@ -157,16 +168,18 @@ impl Vm {
     fn eval_str_inner(&mut self, src: &str) -> Result<Val, String> {
         let forms = parse::read_many(src)?;
 
-        // Pre-pass: allocate placeholder cells for every top-level
-        // (define name body) in this batch. Map keyed by name; if
-        // the same name is defined twice in this batch, the second
-        // pre-allocation shadows the first in the env (env still
-        // gains both frames; lookups hit the latest).
+        // Pre-pass: allocate placeholder cells in `globals` for every
+        // top-level `(define name body)` in this batch. Bodies that
+        // reference any sibling-define's name (or their own) resolve
+        // through `Env::lookup`'s globals fallback to these cells.
+        // Same name defined twice in one batch: the second
+        // pre-allocation overwrites the first cell; both bodies then
+        // write to the second cell. The first cell becomes garbage.
         let mut define_cells: HashMap<String, Rc<RefCell<Val>>> = HashMap::new();
         for datum in &forms {
             if let Some(name) = extract_define_name(datum)? {
-                let (next_env, cell) = self.env.extend_placeholder(name.clone());
-                self.env = next_env;
+                let cell = Rc::new(RefCell::new(Val::Bool(false)));
+                self.globals.borrow_mut().insert(name.clone(), cell.clone());
                 define_cells.insert(name.to_string(), cell);
             }
         }

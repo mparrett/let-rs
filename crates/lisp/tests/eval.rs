@@ -572,18 +572,15 @@ fn three_way_mutual_recursion() {
 }
 
 #[test]
-fn mutual_recursion_does_not_cross_eval_str_boundaries() {
-    // Closures capture env at evaluation time. A later define only
-    // extends the *current* env tail; an earlier closure's captured
-    // env doesn't see it. Document the limitation with a test.
+fn mutual_recursion_works_across_eval_str_calls() {
+    // Top-level defines live in a Vm-owned globals table (ADR-015);
+    // every closure looks names up through a shared back-edge to that
+    // table, not via a snapshot of its capture-time env. So a forward
+    // reference resolved at call time finds the later definition.
     let mut vm = Vm::new();
     vm.eval_str("(define foo (lambda () (bar)))").unwrap();
     vm.eval_str("(define bar (lambda () 42))").unwrap();
-    let r = vm.eval_str("(foo)");
-    assert!(
-        r.is_err(),
-        "foo's closure should not see bar defined after the fact: {r:?}"
-    );
+    assert_eq!(format!("{}", vm.eval_str("(foo)").unwrap()), "42");
 }
 
 #[test]
@@ -591,4 +588,32 @@ fn define_only_valid_at_top_level() {
     let mut vm = Vm::new();
     let r = vm.eval_str("(let ((x 1)) (define y 2))");
     assert!(r.is_err(), "nested define should error: {r:?}");
+}
+
+#[test]
+fn dropping_vm_releases_top_level_closures() {
+    // issue_2: pre-fix, every top-level `define` of a lambda formed an
+    // Rc cycle (env-frame slot → closure → captured env → frame →
+    // slot), so installing a prelude permanently anchored its
+    // closures. The globals-table redesign (ADR-015) replaces the
+    // back-edge with a `Weak`. After the Vm is dropped, no strong ref
+    // path keeps a prelude cell alive — `Weak::upgrade` returns None.
+    use std::rc::Rc;
+    let mut vm = lisp::Vm::new();
+    lisp::spells::install(&mut vm);
+    // Grab a weak handle to one of the installed closure cells.
+    let weak = {
+        let table = vm.globals.borrow();
+        let cell = table.get("fire").expect("spells prelude defines fire");
+        Rc::downgrade(cell)
+    };
+    assert!(
+        weak.upgrade().is_some(),
+        "sanity: cell is live while Vm is alive"
+    );
+    drop(vm);
+    assert!(
+        weak.upgrade().is_none(),
+        "dropping the Vm should release every prelude closure cell"
+    );
 }
