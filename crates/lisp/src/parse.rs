@@ -319,8 +319,21 @@ fn split_bindings(rest: &[Datum], form: &str) -> Result<(Vec<Sym>, Vec<Expr>, Ex
 }
 
 fn compile_cond(rest: &[Datum]) -> Result<Expr, String> {
+    // `else` is only legal as the final clause; rejecting mid-list else
+    // here avoids the surprising "(cond (else 'wrong) (#t 'right))"
+    // returning 'wrong.
+    for (i, clause) in rest.iter().enumerate() {
+        if let Datum::List(items) = clause
+            && items.len() == 2
+            && let Datum::Sym(s) = &items[0]
+            && &**s == "else"
+            && i + 1 != rest.len()
+        {
+            return Err("cond: else must be the final clause".into());
+        }
+    }
+
     let mut tail: Expr = Expr::Bool(false);
-    let mut saw_else = false;
     for clause in rest.iter().rev() {
         let items = match clause {
             Datum::List(items) if items.len() == 2 => items,
@@ -330,10 +343,6 @@ fn compile_cond(rest: &[Datum]) -> Result<Expr, String> {
         if let Datum::Sym(s) = &items[0]
             && &**s == "else"
         {
-            if saw_else {
-                return Err("cond: multiple else clauses".into());
-            }
-            saw_else = true;
             tail = expr;
             continue;
         }
@@ -347,36 +356,76 @@ fn compile_quasiquote_form(rest: &[Datum]) -> Result<Expr, String> {
     if rest.len() != 1 {
         return Err("quasiquote: expected (quasiquote datum)".into());
     }
-    compile_qq(&rest[0])
+    compile_qq(&rest[0], 1)
+}
+
+/// Wrap an inner expression in `(list 'TAG INNER)` — builds a literal
+/// `(TAG INNER)` cons at runtime. Used by `compile_qq` for nested
+/// quasiquote / unquote / unquote-splicing forms where the head symbol
+/// must be preserved verbatim rather than fired.
+fn qq_wrap_form(tag: &'static str, inner: Expr) -> Expr {
+    Expr::App(vec![
+        Rc::new(Expr::Var("list".into())),
+        Rc::new(Expr::Quote(Rc::new(Val::Sym(tag.into())))),
+        Rc::new(inner),
+    ])
 }
 
 /// Compile `(quasiquote DATUM)` to an Expr that constructs the value DATUM at
 /// runtime, with `(unquote x)` becoming the eval of x and `(unquote-splicing xs)`
 /// splicing xs (a list) into the surrounding list.
-fn compile_qq(d: &Datum) -> Result<Expr, String> {
+///
+/// `depth` tracks quasiquote nesting (top-level call uses depth=1). Each
+/// nested `(quasiquote …)` bumps depth; each `(unquote …)` / `(unquote-
+/// splicing …)` reduces it. Escapes only fire when depth reaches 1, so
+/// `` `(a `(b ,c)) `` keeps `,c` literal inside the inner quasiquote.
+fn compile_qq(d: &Datum, depth: usize) -> Result<Expr, String> {
     match d {
         Datum::Num(_) | Datum::Ratio(_, _) | Datum::Bool(_) | Datum::Sym(_) => {
             Ok(Expr::Quote(Rc::new(datum_to_val(d))))
         }
         Datum::List(items) => {
-            // (unquote x) at the top of the list = evaluate x normally
+            // Head-symbol forms (quasiquote / unquote / unquote-splicing).
+            // unquote at depth==1 fires; deeper depths keep it literal at
+            // depth-1. quasiquote bumps depth and stays literal.
             if items.len() == 2
                 && let Datum::Sym(s) = &items[0]
             {
-                if &**s == "unquote" {
-                    return compile(&items[1]);
-                }
-                if &**s == "unquote-splicing" {
-                    return Err("unquote-splicing at top of quasiquoted form".into());
+                match s.as_ref() {
+                    "unquote" => {
+                        return if depth == 1 {
+                            compile(&items[1])
+                        } else {
+                            Ok(qq_wrap_form("unquote", compile_qq(&items[1], depth - 1)?))
+                        };
+                    }
+                    "unquote-splicing" => {
+                        return if depth == 1 {
+                            Err("unquote-splicing at top of quasiquoted form".into())
+                        } else {
+                            Ok(qq_wrap_form(
+                                "unquote-splicing",
+                                compile_qq(&items[1], depth - 1)?,
+                            ))
+                        };
+                    }
+                    "quasiquote" => {
+                        return Ok(qq_wrap_form(
+                            "quasiquote",
+                            compile_qq(&items[1], depth + 1)?,
+                        ));
+                    }
+                    _ => {}
                 }
             }
 
-            // Otherwise: build a list. If any element is a splice, use append; else use list.
-            let any_splice = items.iter().any(is_splice);
+            // Splices only fire at depth 1. Deeper-nested unquote-splicing
+            // is just a literal cons.
+            let any_splice = depth == 1 && items.iter().any(is_splice);
             if !any_splice {
                 let mut app = vec![Rc::new(Expr::Var("list".into()))];
                 for item in items {
-                    app.push(Rc::new(compile_qq(item)?));
+                    app.push(Rc::new(compile_qq(item, depth)?));
                 }
                 return Ok(Expr::App(app));
             }
@@ -395,7 +444,7 @@ fn compile_qq(d: &Datum) -> Result<Expr, String> {
                     flush(&mut bucket, &mut parts);
                     parts.push(Rc::new(compile(inner)?));
                 } else {
-                    bucket.push(Rc::new(compile_qq(item)?));
+                    bucket.push(Rc::new(compile_qq(item, depth)?));
                 }
             }
             flush(&mut bucket, &mut parts);

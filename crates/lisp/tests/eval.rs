@@ -239,6 +239,15 @@ fn cond_form() {
 }
 
 #[test]
+fn cond_else_must_be_terminal() {
+    // Before: returned 'wrong because reverse iteration filled tail with
+    // 'right then overwrote with else. After: rejected at compile time.
+    let mut vm = Vm::new();
+    let r = vm.eval_str("(cond (else 'wrong) (#t 'right))");
+    assert!(r.is_err(), "non-terminal else should reject: {r:?}");
+}
+
+#[test]
 fn letrec_self_recursion() {
     // factorial without Y
     let src = r#"
@@ -312,6 +321,31 @@ fn quasiquote_splice() {
     assert_eq!(eval("(let ((xs '(2 3))) `(1 ,@xs 4))"), "(1 2 3 4)");
     assert_eq!(eval("(let ((xs '(a b c))) `(begin ,@xs done))"), "(begin a b c done)");
     assert_eq!(eval("(let ((xs '())) `(x ,@xs y))"), "(x y)");
+}
+
+#[test]
+fn quasiquote_nested_depth_preserved() {
+    // Inner ,x must NOT fire — it's nested under a second quasiquote.
+    // Before the depth-tracking fix the inner unquote leaked through and
+    // produced (outer (quasiquote (inner 7))).
+    let result = eval("(let ((x 7)) `(outer `(inner ,x)))");
+    assert!(
+        result.contains("inner") && result.contains('x'),
+        "nested quasiquote dropped its inner shape: {result}"
+    );
+    assert!(
+        !result.contains('7'),
+        "inner unquote fired prematurely: {result}"
+    );
+}
+
+#[test]
+fn macro_expanding_to_ratio_works() {
+    // Before: val_to_datum errored on Val::Ratio with "can't convert 1/2
+    // back to a datum" when a macro body produced a literal rational.
+    let mut vm = Vm::new();
+    vm.eval_str("(defmacro half () `1/2)").unwrap();
+    assert_eq!(format!("{}", vm.eval_str("(half)").unwrap()), "1/2");
 }
 
 #[test]

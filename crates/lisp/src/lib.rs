@@ -387,6 +387,7 @@ fn extract_define_name(d: &Datum) -> Result<Option<Sym>, String> {
 fn val_to_datum(v: &Val) -> Result<Datum, String> {
     match v {
         Val::Num(n) => Ok(Datum::Num(*n)),
+        Val::Ratio(n, d) => Ok(Datum::Ratio(*n, *d)),
         Val::Bool(b) => Ok(Datum::Bool(*b)),
         Val::Sym(s) => Ok(Datum::Sym(s.clone())),
         Val::Nil => Ok(Datum::List(vec![])),
