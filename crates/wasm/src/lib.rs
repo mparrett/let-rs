@@ -1,16 +1,18 @@
 //! JS-facing bridge: wraps `lisp::Vm` for the browser via wasm-bindgen.
 //!
-//! Three surfaces:
+//! Surfaces:
 //!
 //! - **`eval(src)`** — arbitrary lisp evaluation. Returns the formatted Val
 //!   on success; throws (rejected `Result` → JS exception) on error.
 //! - **`cast(tape, x, y)`** — rune-tape translation + spell prelude + the
-//!   `world-apply!` resolver in one call. Reuses both `runes::tape_to_sexpr`
-//!   and `lisp::spells::PRELUDE_BINDINGS` so the CLI and the bridge stay
+//!   `world-apply!` resolver in one call. Reuses `runes::tape_to_sexpr`
+//!   and `lisp::spells::install` so the CLI and the bridge stay
 //!   bit-identical (ADR-010).
-//! - **`cast_genome(tape)`** — codon-tape translation + genome prelude +
+//! - **`cast_genome(tape, seed)`** — codon-tape translation + genome prelude +
 //!   the `express!` resolver. Returns a rendered creature card. Prelude,
 //!   prim, and renderer all come from `lisp::genes` (ADR-011).
+//! - **`cast_breed(tape_a, tape_b, seed)`** — two parent strands → breed
+//!   via `breed!` → resolve via `express!`. Same shape as `cast_genome`.
 //!
 //! Plus read-only `grid()` / `log()` accessors and a `reset_world()` that
 //! replaces the world tiles in place while preserving dimensions.

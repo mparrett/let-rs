@@ -28,7 +28,7 @@ Slices that have landed:
 - genes demo: codon-tape → diploid genome → phenotype creature card,
   parallel to spells but with genetics vocabulary (see ADR-011)
 
-58 tests pass across the workspace; `lisp` core stays zero-deps.
+90 tests pass across the workspace; `lisp` core stays zero-deps.
 
 ## Architecture (read this first)
 
@@ -120,7 +120,7 @@ Web shell at `web/` — three pages, one bundle:
 ## Build / test
 
 ```bash
-just              # default: cargo test --workspace (40 tests)
+just              # default: cargo test --workspace (90 tests)
 just test         # same — explicit
 just repl
 just spells       # CLI rune-tape demo

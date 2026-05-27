@@ -42,12 +42,12 @@ letrs/
 ├── crates/
 │   ├── lisp/                  the engine — zero deps
 │   │   ├── src/{expr,val,env,k,step,prim,world,world_prim,parse,lib}.rs
-│   │   ├── tests/eval.rs      26 tests
+│   │   ├── tests/eval.rs      52 tests (+ express.rs 19, world.rs 4)
 │   │   ├── examples/{repl,spells,world}.rs
 │   │   └── Cargo.toml         dev-deps: runes (for examples/spells only)
 │   ├── runes/                 rune-tape lexer + resolver — zero deps
 │   │   ├── src/lib.rs         PLAIN / PARAM tables, tape_to_sexpr
-│   │   ├── tests/lex.rs       8 tests
+│   │   ├── tests/lex.rs       9 tests
 │   │   └── Cargo.toml
 │   └── wasm/                  JS-facing bridge — wasm-bindgen cdylib
 │       ├── src/lib.rs         WasmVm wrapper, prelude const
@@ -62,15 +62,14 @@ letrs/
     └── project_notes/         this directory
 ```
 
-## Stats as of 2026-05-25 (after WASM bridge)
+## Stats as of 2026-05-26 (after codex-review correctness pass)
 
-- Rust LOC: ~2,222 across the workspace
-- Lisp core: 26 tests (`crates/lisp/tests/eval.rs`)
-- Runes: 8 tests (`crates/runes/tests/lex.rs`)
-- **Total: 34 tests passing**
-- Dependencies in `lisp`: 0; in `runes`: 0; in `wasm`: 2 (wasm-bindgen, console_error_panic_hook)
-- Commits: 5 to date (initial; world; macros; HTML page + memory; WASM bridge pending this commit)
-- WASM artifact size: ~104 KB after `wasm-opt -Oz` (down from ~135 KB raw); ~42 KB gzipped on the wire
+- Lisp core: 52 + 19 + 4 = 75 tests (`tests/eval.rs`, `tests/express.rs`, `tests/world.rs`)
+- Runes: 9 tests (`crates/runes/tests/lex.rs`)
+- Codons: 6 tests
+- **Total: 90 tests passing**
+- Dependencies in `lisp`: 0; in `runes`: 0; in `codons`: 0; in `wasm`: 2 (wasm-bindgen, console_error_panic_hook)
+- WASM artifact size: ~104 KB after `wasm-opt -Oz`; ~42 KB gzipped on the wire
 
 ## URLs / ports
 
