@@ -318,6 +318,40 @@ fn letrec_mutual_recursion() {
 }
 
 #[test]
+fn step_budget_catches_nonterminating_eval() {
+    // (f) self-recursive in tail position — loops forever in CEK steps.
+    // Default Vm budget is unlimited; we cap it explicitly here.
+    let mut vm = Vm::new();
+    vm.set_step_budget(10_000);
+    let r = vm.eval_str("(letrec ((f (lambda () (f)))) (f))");
+    assert!(
+        matches!(&r, Err(e) if e.contains("step budget")),
+        "expected step-budget error, got {r:?}"
+    );
+}
+
+#[test]
+fn step_budget_default_unlimited_preserves_existing_tests() {
+    // Sanity: the 100k tail-call test below must still pass without
+    // setting any budget — default is u64::MAX.
+    let mut vm = Vm::new();
+    let src = "(letrec ((loop (lambda (n) (if (= n 0) 0 (loop (- n 1)))))) (loop 1000))";
+    assert_eq!(format!("{}", vm.eval_str(src).unwrap()), "0");
+}
+
+#[test]
+fn step_budget_resets_per_eval_str_call() {
+    // After a budget-exhausted call, the next call gets a fresh budget.
+    let mut vm = Vm::new();
+    vm.set_step_budget(5_000);
+    let r = vm.eval_str("(letrec ((f (lambda () (f)))) (f))");
+    assert!(r.is_err());
+    // Subsequent simple eval succeeds — budget didn't carry over and env
+    // was rolled back (the failed letrec didn't pollute self.env either).
+    assert_eq!(format!("{}", vm.eval_str("(+ 1 2)").unwrap()), "3");
+}
+
+#[test]
 fn tail_calls_dont_grow_the_stack() {
     let src = r#"
         (letrec ((loop (lambda (n)

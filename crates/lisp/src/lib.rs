@@ -40,7 +40,7 @@ pub mod world_prim;
 pub use env::Env;
 pub use expr::{Expr, Sym};
 pub use parse::Datum;
-pub use step::{Step, run};
+pub use step::{Step, run, run_bounded};
 pub use val::Val;
 pub use world::{Tile, World};
 
@@ -57,6 +57,12 @@ pub struct Vm {
     env: Env,
     pub world: Rc<RefCell<World>>,
     macros: Rc<RefCell<HashMap<String, Macro>>>,
+    /// Per-`eval_str` CEK step budget. `u64::MAX` (the default) is
+    /// effectively unbounded — preserves day-one behavior. Hosts that
+    /// can't otherwise interrupt evaluation (the WASM bridge, the REPL)
+    /// should lower this via `set_step_budget` so a nonterminating
+    /// expression surfaces as an error instead of a hung page.
+    step_budget: u64,
 }
 
 impl Vm {
@@ -74,7 +80,15 @@ impl Vm {
             env,
             world,
             macros: Rc::new(RefCell::new(HashMap::new())),
+            step_budget: u64::MAX,
         }
+    }
+
+    /// Cap each `eval_str` invocation at `n` CEK steps. Calls that
+    /// exceed the budget return `Err("execution exceeded step budget")`.
+    /// Set to `u64::MAX` to disable.
+    pub fn set_step_budget(&mut self, n: u64) {
+        self.step_budget = n;
     }
 
     /// Install a host primitive into the VM's initial env. Mirrors how
@@ -167,7 +181,7 @@ impl Vm {
             }
             let expanded = self.expand_all(datum)?;
             let expr = parse::compile(&expanded)?;
-            last = run(expr, self.env.clone(), self.world.clone())?;
+            last = run_bounded(expr, self.env.clone(), self.world.clone(), self.step_budget)?;
         }
         Ok(last)
     }
@@ -191,7 +205,12 @@ impl Vm {
         };
         let body_datum = self.expand_all(items[2].clone())?;
         let body_expr = parse::compile(&body_datum)?;
-        let val = run(body_expr, self.env.clone(), self.world.clone())?;
+        let val = run_bounded(
+            body_expr,
+            self.env.clone(),
+            self.world.clone(),
+            self.step_budget,
+        )?;
         cells
             .get(name.as_ref())
             .expect("pre-pass should have allocated a cell for this define")
@@ -368,7 +387,12 @@ impl Vm {
         for a in args {
             app.push(Rc::new(Expr::Quote(Rc::new(a))));
         }
-        run(Expr::App(app), self.env.clone(), self.world.clone())
+        run_bounded(
+            Expr::App(app),
+            self.env.clone(),
+            self.world.clone(),
+            self.step_budget,
+        )
     }
 }
 

@@ -41,7 +41,18 @@ impl WasmVm {
         let mut inner = LispVm::with_world(world);
         spells::install(&mut inner);
         genes::install(&mut inner);
+        // Default budget for browser hosts: 10M CEK steps. Tail-call test
+        // currently uses ~1M; spells/genes runs are well under 100k. The
+        // browser eval runs on the main thread, so an unbounded loop
+        // hangs the page — this is the backstop.
+        inner.set_step_budget(10_000_000);
         Ok(WasmVm { inner, width, height })
+    }
+
+    /// Override the CEK step budget for subsequent evaluations.
+    /// `u64::MAX` disables the gate.
+    pub fn set_step_budget(&mut self, n: u64) {
+        self.inner.set_step_budget(n);
     }
 
     /// Evaluate arbitrary lisp source. On error, the returned `Result::Err`

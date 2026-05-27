@@ -214,11 +214,29 @@ fn apply(evaled: Vec<Val>, k: Rc<K>, world: &Rc<RefCell<World>>) -> Result<Step,
 }
 
 pub fn run(expr: Expr, env: Env, world: Rc<RefCell<World>>) -> Result<Val, String> {
+    run_bounded(expr, env, world, u64::MAX)
+}
+
+/// Like `run`, but errors after `budget` CEK steps. `u64::MAX` is
+/// effectively unbounded. The budget guards against nonterminating
+/// expressions in hosted environments (REPL, WASM bridge) where the
+/// caller can't otherwise interrupt evaluation.
+pub fn run_bounded(
+    expr: Expr,
+    env: Env,
+    world: Rc<RefCell<World>>,
+    budget: u64,
+) -> Result<Val, String> {
     let mut s = State {
         mode: Mode::Eval(Rc::new(expr), env),
         k: Rc::new(K::Halt),
     };
+    let mut steps_left = budget;
     loop {
+        if steps_left == 0 {
+            return Err("execution exceeded step budget".into());
+        }
+        steps_left -= 1;
         match step(s, &world)? {
             Step::Continue(next) => s = next,
             Step::Done(v) => return Ok(v),
