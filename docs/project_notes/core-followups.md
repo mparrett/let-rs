@@ -382,9 +382,22 @@ resolved 2026-05-25 → 2026-05-26.** Engine work surfaced since:
   Subsumes item #5 if pursued.
 - ~~**Mutual recursion across top-level defines** (ADR-014 deferred).~~
   **Resolved 2026-05-26.** Pre-pass added to `eval_str`; mutual rec
-  works within a single source string. Cross-call rec is still a
-  sharp edge (closures capture env at eval time) — documented and
-  pinned by a test.
+  works within a single source string. Cross-call mutual recursion
+  *also* works as of ADR-015 — top-level defines now live in a
+  shared `Vm`-owned globals table that every Env points back to, so
+  closures resolve forward references at call time against the
+  table's current contents.
+- **`letrec` `Rc` cycle (issue #2 carryover).** ADR-015 broke the
+  top-level-`define` cycle by moving those bindings into a
+  `Vm`-owned globals table with a `Weak` back-edge. `letrec`-bound
+  closures still form the same shape (closure captures env
+  containing its own placeholder cell). Negligible at REPL scale
+  but a slow leak in any long-lived REPL session that uses
+  `letrec` heavily. Fix is shape-similar but trickier because the
+  surrounding lexical scope is the legitimate owner of the cell;
+  a `Weak` back-edge needs a defined behavior if the closure is
+  called after its enclosing scope is gone. Defer until a real
+  workload shows this matters.
 - ~~**Numerator/denominator/floor/ceiling accessors** for rationals.~~
   **Resolved 2026-05-26.** All four shipped as pure prims with
   integer pass-through (numerator of N is N, denominator of N is 1,

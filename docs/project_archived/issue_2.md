@@ -1,5 +1,13 @@
 # issue 2 — Rc cycles in top-level defines and letrec
 
+**Status:** top-level half resolved 2026-05-26 by ADR-015 —
+top-level defines now live in a `Vm`-owned `Globals` HashMap;
+closures see it via a `Weak` back-edge in `Env`, so the cycle is
+broken. Verified by `dropping_vm_releases_top_level_closures` in
+`crates/lisp/tests/eval.rs`. The `letrec` half is still open and
+noted as deferred in ADR-015 + `core-followups.md`. Archived from
+`project_incoming/`.
+
 **Source:** codex review 2026-05-26, finding #4. Priority: P2 — slow
 leak, not a correctness bug.
 

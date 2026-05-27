@@ -777,7 +777,10 @@ dominant cost. The `core-followups.md` plan's #1 item.
   variable: foo") + the doc on `eval_str` saying "wrap in letrec for
   mutual recursion." (Update 2026-05-26: pre-pass scan added in the
   same session; mutual rec now works freely within a single
-  `eval_str` call. Cross-call rec is still a sharp edge, by design.)
+  `eval_str` call. Cross-call rec was still a sharp edge, by design.
+  Update 2026-05-26 #2: superseded by ADR-015 — cross-call mutual
+  recursion now works too, as a side effect of routing top-level
+  bindings through a Vm-owned globals table.)
 - **−** `genes::seeded` is now a third place (after `PRELUDE_DEFINES`
   and the `install` registration) where the seed-related prelude
   lives. Mitigated by the function being the *only* place those four
@@ -789,12 +792,10 @@ dominant cost. The `core-followups.md` plan's #1 item.
   **Resolved 2026-05-26.** `eval_str` now does a pre-pass that
   allocates placeholder cells for every top-level `define` in a
   single source string before any body runs, so siblings in the
-  same batch can refer to each other freely. Mutual recursion
-  *across* separate `eval_str` calls still doesn't work — closures
-  capture env at evaluation time, and a later define only extends
-  the current env tail. That limitation is documented on `eval_str`
-  and pinned by a test
-  (`mutual_recursion_does_not_cross_eval_str_boundaries`).
+  same batch can refer to each other freely. (Update: ADR-015
+  also fixed mutual rec across separate `eval_str` calls — the
+  shared globals table means a closure looking up a forward
+  reference at call time finds whatever's in the table *then*.)
 - **`.scm` file loading.** Now trivial — `vm.eval_str(read_to_string("foo.scm"))`
   already works. A `Vm::load(path)` helper would just be sugar.
 - **Macro-aware `define`.** Today `(define name body)` runs `body`
@@ -803,3 +804,117 @@ dominant cost. The `core-followups.md` plan's #1 item.
   isn't an expression that produces a value. If a future DSL needs
   macros generated from data, this is the seam to look at.
 
+
+
+## ADR-015: Top-level defines in a Vm-owned globals table (2026-05-26)
+
+**Context**: ADR-014 routed top-level `define` through
+`Env::extend_placeholder`, putting each binding in a fresh env frame
+on `self.env`. This worked but built a permanent `Rc` cycle per
+prelude closure: env-frame slot → `Val::Clo` → captured env →
+that same frame chain → slot. Closures captured the env *containing
+their own cell*. Spells and genes preludes installed ~30 + ~14 such
+cycles per `Vm::new()` + `install(vm)`. Costless at REPL scale,
+visibly noisy under Criterion (every iter built+leaked a fresh Vm
+worth of closures), and a slow leak in long-lived web sessions that
+re-installed the prelude without dropping the Vm. The fix had to
+break the cycle without losing the property that a closure can refer
+to its own name (`(define f (lambda () (f)))`) or to a sibling
+define (mutual recursion).
+
+**Decision**: Split top-level bindings off the env frame chain into a
+`Vm`-owned `Rc<RefCell<HashMap<Sym, Rc<RefCell<Val>>>>>` (aliased as
+`Globals`). `Env` keeps its frame chain (still used for `let`,
+`letrec`, closure params) and gains a `globals: Weak<…>` back-edge
+to the same table. `Env::lookup` walks frames first, then upgrades
+the `Weak` and checks the table on miss. `Vm::with_world`
+constructs `globals` first and threads `Rc::downgrade` into
+`prim::initial_env(&globals)` so every Env in this Vm shares the
+same `Weak`. `eval_str`'s pre-pass and `try_register_define` insert
+placeholder cells into `globals` instead of extending `self.env`.
+Rollback on error snapshots `globals.borrow().clone()` and restores
+on `Err` (same semantics as the prior env-snapshot path; codex #3
+fix is preserved).
+
+The cycle is broken: globals → cell (strong) → `Val::Clo` (strong) →
+`Env` (strong) → frames (strong, points up to prim base) and
+`globals` (Weak, no cycle). Dropping the Vm drops the strong globals
+ref; the table drops, every cell drops, every closure drops, every
+closure's captured env drops — clean shutdown.
+
+**Alternatives considered**:
+- **`Weak` for the closure → env back-edge directly** (the issue
+  filing's option 1). Minimal structural change, but the semantics
+  question is real: a `Weak::upgrade` failure at lookup time means
+  the closure outlived its env. For `letrec`-style local bindings
+  that's a bug (the surrounding lexical scope is gone); for
+  top-level defines it's "the Vm is gone." Conflating the two would
+  make every lookup ambiguous about *which* it is. Globals split
+  resolves this cleanly — the top-level case is the only one that
+  uses Weak; lexical scopes stay strong.
+- **Cycle collector.** Overkill for current scale, complicates the
+  zero-deps story (ADR-002), and the cycles are all the same shape
+  so an algorithmic fix beats a runtime one.
+- **Stay on `Env`-extension and snapshot/replay defines per
+  install.** Would only delay the leak by one Vm lifetime; the cycle
+  is intrinsic to the storage shape, not to the install pattern.
+- **Move prims into globals too** (so prim lookup is `O(1)` hash).
+  Tempting — `BUILTINS` is ~40 entries, walked on every variable
+  miss. Rejected for now: prims don't hold envs (no cycle through
+  them), so they aren't part of the issue, and moving them would
+  change shadowing semantics (`(define + 5)` would overwrite the
+  builtin instead of lexically shadowing it). Worth revisiting as a
+  pure perf change if benches show the prim chain dominates.
+- **`letrec` cycles too.** Same shape (closure captures env
+  containing its own cell). Punted per the issue's recommendation —
+  the top-level case is the dominant source by 10×, and `letrec`'s
+  semantic constraint ("the surrounding lexical scope is what holds
+  this cell alive") makes the fix design-noisier. Filed as a
+  follow-up if measurement warrants.
+
+**Consequences**:
+- **+** No `Rc` cycle through top-level defines. Confirmed by
+  `dropping_vm_releases_top_level_closures` in `tests/eval.rs`:
+  install spells, take a `Weak` to one of the prelude cells, drop
+  the Vm, `Weak::upgrade()` returns `None`.
+- **+** Mutual recursion across separate `eval_str` calls now
+  works, as a side effect of the shared globals table — a closure
+  resolves forward references at call time against the table's
+  current contents, not a snapshot of its capture-time env. ADR-014
+  documented this as a known limitation (with a pinned test); the
+  limitation is gone, the test flipped to assert success.
+- **+** `vm.globals` is exposed publicly (mirroring `vm.world`).
+  Hosts can introspect defined names, reset state without dropping
+  the Vm (`globals.borrow_mut().clear()` after re-running the
+  prelude), or — eventually — implement `(forget 'foo)` cheaply.
+- **−** Lookup now does an extra `Weak::upgrade` + HashMap probe
+  per miss on the frame chain. Cheap (Weak::upgrade is a
+  branch + Rc bump; HashMap probe is O(1)) but not free.
+- **−** Rollback now clones the globals HashMap on every
+  `eval_str` entry rather than Rc-bumping a single env handle.
+  O(globals.len()) instead of O(1); cells inside are still
+  Rc-shared so the values themselves don't copy. Negligible at
+  current sizes; revisit if a host calls `eval_str` in a hot loop
+  with a large globals table.
+- **−** Slight API surface growth: `Globals` is a new public type
+  alias, `Vm::globals` is a new public field. Both feel earned —
+  they map a real concept (top-level binding table) instead of
+  being incidental.
+- **−** Prims still walk the env frame chain on lookup miss
+  (because they live in the chain, not in globals). ~40 frames in
+  practice. Not a regression — same as before — but the asymmetry
+  ("prims in frames, defines in globals") will look odd until
+  someone moves prims too. Documented in alternatives above.
+
+**Deferred**:
+- **Same cycle in `letrec`.** Closures captured during letrec init
+  hold the env containing their own placeholder cell. Issue: the
+  cell *needs* to outlive the closure (the closure's whole point
+  is to reference its own name). Fix probably requires a `Weak`
+  back-edge specifically for letrec-allocated cells, with a panic
+  path if the cell is collected before the closure is called.
+  Tracked in `core-followups.md`.
+- **Move prims to globals.** Would unify lookup (everything via
+  hash, no frame walk for the common case) but changes
+  `(define + 5)` semantics from shadowing to overwrite. Reasonable;
+  needs a separate ADR for the semantics call.
