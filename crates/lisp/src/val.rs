@@ -137,7 +137,7 @@ impl Val {
     }
 }
 
-fn gcd_i128(mut a: u128, mut b: u128) -> u128 {
+pub(crate) fn gcd_i128(mut a: u128, mut b: u128) -> u128 {
     while b != 0 {
         let r = a % b;
         a = b;

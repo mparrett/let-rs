@@ -1,5 +1,5 @@
 use crate::env::Env;
-use crate::val::{Arity, Val};
+use crate::val::{Arity, Val, gcd_i128};
 
 type R = Result<Val, String>;
 type PrimFn = fn(&[Val]) -> R;
@@ -7,11 +7,14 @@ type PrimFn = fn(&[Val]) -> R;
 // ---- numeric tower helpers ----
 //
 // Internal representation during arithmetic is `(i128, i128)` for
-// (numerator, denominator). Integers promote to `(n, 1)`. All ops go
-// through `Val::make_ratio` for normalization on the way out, which
-// also collapses ratios that simplify to integers back to `Val::Num`.
+// (numerator, denominator). Integers promote to `(n, 1)`. Each binary
+// op pre-reduces by gcd and uses checked arithmetic so overflow on
+// representable inputs surfaces as a clean Err instead of an i128 wrap.
+// `Val::make_ratio` still gates the final i64/u64 narrowing.
 
-fn as_ratio(v: &Val, name: &str) -> Result<(i128, i128), String> {
+type Ratio = (i128, i128);
+
+fn as_ratio(v: &Val, name: &str) -> Result<Ratio, String> {
     match v {
         Val::Num(n) => Ok((*n as i128, 1)),
         Val::Ratio(n, d) => Ok((*n as i128, *d as i128)),
@@ -19,18 +22,92 @@ fn as_ratio(v: &Val, name: &str) -> Result<(i128, i128), String> {
     }
 }
 
-fn ratio_args(args: &[Val], name: &str) -> Result<Vec<(i128, i128)>, String> {
+fn ratio_args(args: &[Val], name: &str) -> Result<Vec<Ratio>, String> {
     args.iter().map(|v| as_ratio(v, name)).collect()
+}
+
+fn gcd(a: i128, b: i128) -> i128 {
+    gcd_i128(a.unsigned_abs(), b.unsigned_abs()) as i128
+}
+
+/// Reduce `(n, d)` to lowest terms with `d > 0`. Identity on (0, 0);
+/// callers that can produce zero denominators must check first.
+fn reduce((n, d): Ratio) -> Ratio {
+    if d == 0 {
+        return (n, d);
+    }
+    let g = gcd(n, d);
+    if d < 0 { (-n / g, -d / g) } else { (n / g, d / g) }
+}
+
+fn overflow(op: &str) -> String {
+    format!("{op}: numeric overflow")
+}
+
+/// `a/x + b/y` with denominator pre-gcd reduction. Cross-multiplying
+/// unreduced (the previous approach) overflowed on representable inputs
+/// like `(+ 1/N 1/N)` where `N` is near `i64::MAX` — `N*N` exceeds i128
+/// range. Reducing first keeps the magnitudes bounded.
+fn ratio_add(a: Ratio, b: Ratio, op: &str) -> Result<Ratio, String> {
+    let (an, ad) = a;
+    let (bn, bd) = b;
+    let g = gcd(ad, bd);
+    let ad_g = ad / g;
+    let bd_g = bd / g;
+    let term1 = an.checked_mul(bd_g).ok_or_else(|| overflow(op))?;
+    let term2 = bn.checked_mul(ad_g).ok_or_else(|| overflow(op))?;
+    let n = term1.checked_add(term2).ok_or_else(|| overflow(op))?;
+    let d = ad.checked_mul(bd_g).ok_or_else(|| overflow(op))?;
+    Ok(reduce((n, d)))
+}
+
+fn ratio_sub(a: Ratio, b: Ratio, op: &str) -> Result<Ratio, String> {
+    let (an, ad) = a;
+    let (bn, bd) = b;
+    let g = gcd(ad, bd);
+    let ad_g = ad / g;
+    let bd_g = bd / g;
+    let term1 = an.checked_mul(bd_g).ok_or_else(|| overflow(op))?;
+    let term2 = bn.checked_mul(ad_g).ok_or_else(|| overflow(op))?;
+    let n = term1.checked_sub(term2).ok_or_else(|| overflow(op))?;
+    let d = ad.checked_mul(bd_g).ok_or_else(|| overflow(op))?;
+    Ok(reduce((n, d)))
+}
+
+/// `a/x * b/y` with cross-pair gcd reduction (cancel a-vs-y and b-vs-x
+/// before multiplying so the products stay bounded).
+fn ratio_mul(a: Ratio, b: Ratio, op: &str) -> Result<Ratio, String> {
+    let (an, ad) = a;
+    let (bn, bd) = b;
+    let g1 = gcd(an, bd);
+    let g2 = gcd(bn, ad);
+    let n = (an / g1.max(1))
+        .checked_mul(bn / g2.max(1))
+        .ok_or_else(|| overflow(op))?;
+    let d = (ad / g2.max(1))
+        .checked_mul(bd / g1.max(1))
+        .ok_or_else(|| overflow(op))?;
+    Ok(reduce((n, d)))
+}
+
+/// `a/x / b/y = a/x * y/b`. Errors on zero `b`.
+fn ratio_div(a: Ratio, b: Ratio, op: &str) -> Result<Ratio, String> {
+    let (bn, bd) = b;
+    if bn == 0 {
+        return Err(format!("{op}: division by zero"));
+    }
+    ratio_mul(a, (bd, bn), op)
 }
 
 // ---- arithmetic (variadic) ----
 
 fn add(args: &[Val]) -> R {
     let xs = ratio_args(args, "+")?;
-    let (n, d) = xs.into_iter().fold((0i128, 1i128), |(an, ad), (bn, bd)| {
-        (an * bd + bn * ad, ad * bd)
-    });
-    Val::make_ratio(n, d)
+    let mut acc: Ratio = (0, 1);
+    for r in xs {
+        acc = ratio_add(acc, r, "+")?;
+    }
+    Val::make_ratio(acc.0, acc.1)
 }
 
 fn sub(args: &[Val]) -> R {
@@ -39,20 +116,22 @@ fn sub(args: &[Val]) -> R {
         [] => Err("-: needs at least one argument".into()),
         [(n, d)] => Val::make_ratio(-n, *d),
         [first, rest @ ..] => {
-            let (n, d) = rest.iter().fold(*first, |(an, ad), (bn, bd)| {
-                (an * bd - bn * ad, ad * bd)
-            });
-            Val::make_ratio(n, d)
+            let mut acc = *first;
+            for r in rest {
+                acc = ratio_sub(acc, *r, "-")?;
+            }
+            Val::make_ratio(acc.0, acc.1)
         }
     }
 }
 
 fn mul(args: &[Val]) -> R {
     let xs = ratio_args(args, "*")?;
-    let (n, d) = xs
-        .into_iter()
-        .fold((1i128, 1i128), |(an, ad), (bn, bd)| (an * bn, ad * bd));
-    Val::make_ratio(n, d)
+    let mut acc: Ratio = (1, 1);
+    for r in xs {
+        acc = ratio_mul(acc, r, "*")?;
+    }
+    Val::make_ratio(acc.0, acc.1)
 }
 
 fn div(args: &[Val]) -> R {
@@ -61,12 +140,8 @@ fn div(args: &[Val]) -> R {
         [] | [_] => Err("/: needs at least two arguments".into()),
         [first, rest @ ..] => {
             let mut acc = *first;
-            for &(bn, bd) in rest {
-                if bn == 0 {
-                    return Err("/: division by zero".into());
-                }
-                // Divide by (bn/bd) = multiply by (bd/bn).
-                acc = (acc.0 * bd, acc.1 * bn);
+            for r in rest {
+                acc = ratio_div(acc, *r, "/")?;
             }
             Val::make_ratio(acc.0, acc.1)
         }

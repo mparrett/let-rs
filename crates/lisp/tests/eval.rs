@@ -59,6 +59,30 @@ fn rational_arithmetic() {
 }
 
 #[test]
+fn rational_add_with_huge_common_denominator() {
+    // Pre-fix: cross-multiplied unreduced and overflowed i128 when both
+    // denominators were near u64::MAX. The fix pre-gcd-reduces so common
+    // denominators cancel cleanly.
+    let n = u64::MAX; // = 18446744073709551615
+    let src = format!("(+ 1/{n} 1/{n})");
+    let expected = format!("2/{n}");
+    assert_eq!(eval(&src), expected);
+}
+
+#[test]
+fn rational_overflow_errors_cleanly() {
+    // Three i64::MAX factors overflow even our i128 accumulator. We
+    // want a clean Err — debug-mode `unwrap_or` panic in the previous
+    // implementation is exactly what the codex review flagged.
+    let mut vm = Vm::new();
+    let r = vm.eval_str("(* 9223372036854775807 9223372036854775807 9223372036854775807)");
+    assert!(
+        matches!(&r, Err(e) if e.contains("numeric overflow")),
+        "expected overflow error, got {r:?}"
+    );
+}
+
+#[test]
 fn division_of_integers_produces_a_ratio() {
     // Breaking change from integer-div semantics: `/` is now exact.
     assert_eq!(eval("(/ 1 4)"), "1/4");
