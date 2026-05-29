@@ -377,14 +377,14 @@ resolved 2026-05-25 → 2026-05-26.** Engine work surfaced since:
 
 - ~~**Host-agnostic Vm.** Drop `Val::WorldPrim`, switch to
   closure-capable prims, move `World` into its own crate.~~
-  **Engine half resolved 2026-05-29 (ADR-017).** `Val::WorldPrim`
-  collapsed into a single closure-capable `Val::Prim` with
-  `Rc<dyn Fn>`. `Vm.world` dropped; `step.rs` no longer threads a
-  world reference. `Vm::register_prim` is generic over `Fn +
-  'static`; hosts capture state in closures. `world_prim::install(vm,
-  world)` is the new wiring entry point. `crates/world/` extraction
-  is the next commit (ADR-018) — the files still live in `lisp/src/`
-  but nothing in the engine references them.
+  **Fully resolved 2026-05-29 (ADR-017 + ADR-018).** ADR-017
+  collapsed `Val::WorldPrim` into a single closure-capable
+  `Val::Prim` carrying `Rc<dyn Fn>`; dropped `Vm.world`; made
+  `register_prim` generic over `Fn + 'static`. ADR-018 moved
+  `world.rs` + `world_prim.rs` into `crates/world/` as a sibling
+  micro-crate. `lisp` ships zero host types; hosts wire `World` in
+  via `world::world_prim::install(vm, world.clone())` or the
+  one-line `spells::install_with_world(vm, world)` convenience.
 - ~~**Mutual recursion across top-level defines** (ADR-014 deferred).~~
   **Resolved 2026-05-26.** Pre-pass added to `eval_str`; mutual rec
   works within a single source string. Cross-call mutual recursion

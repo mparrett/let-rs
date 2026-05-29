@@ -5,13 +5,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lisp::{Vm, World};
+use lisp::Vm;
+use world::World;
 
 fn vm_with_world(w: u32, h: u32) -> Vm {
     let world = Rc::new(RefCell::new(World::new(w, h).expect("dims fit")));
     let mut vm = Vm::new();
-    lisp::world_prim::install(&mut vm, world);
-    spells::install(&mut vm); // gives us assoc-set, fire, etc.
+    spells::install_with_world(&mut vm, world);
     vm
 }
 

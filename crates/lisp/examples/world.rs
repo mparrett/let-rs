@@ -8,7 +8,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lisp::{Vm, World};
+use lisp::Vm;
+use world::World;
 
 const PRELUDE: &str = r#"
 (letrec ((assoc-set (lambda (k v ctx) (cons (cons k v) ctx)))
@@ -49,7 +50,7 @@ fn print_log(world: &Rc<RefCell<World>>) {
 fn main() {
     let world = Rc::new(RefCell::new(World::new(7, 5).expect("7×5 fits")));
     let mut vm = Vm::new();
-    lisp::world_prim::install(&mut vm, world.clone());
+    world::world_prim::install(&mut vm, world.clone());
 
     println!("== initial (7×5) ==");
     print_world(&world);

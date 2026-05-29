@@ -1114,3 +1114,86 @@ thin handle" — a non-atomic refcount bump per prim lookup.
   same sequence — `world.rs` + `world_prim.rs` move out of the lisp
   crate now that nothing engine-side references them.
 
+## ADR-018: `world` extracted to its own sibling crate (2026-05-29)
+
+**Context**: ADR-017 dropped the engine's awareness of `World` but
+the type still lived inside `crates/lisp/src/`. With `Val::WorldPrim`
+gone and host wiring done via closure-capable `register_prim`, there's
+no engine-side reason for the lisp crate to carry a tile grid + event
+log + 5 host primitives. `docs/project_notes/host-state.md` called the
+split out explicitly: bullet 2 of "What the endgame could look like"
+was "add a `crates/world/` micro-crate as a reusable building block,
+sibling to `runes/` and `codons/`." Step 3 of the 2026-05-29 audit
+refactor sequence does that.
+
+**Decision**: Move `world.rs` and `world_prim.rs` from
+`crates/lisp/src/` into a new `crates/world/` sibling crate. The new
+crate depends only on `lisp` (for `Vm`, `Val`, `Arity`) and exposes:
+- `pub struct World`, `pub enum Tile` — verbatim port.
+- `pub mod world_prim` — the 5 prims plus the
+  `install(vm: &mut Vm, world: Rc<RefCell<World>>)` helper introduced
+  in ADR-017 as the public wiring entry point.
+
+`crates/spells/` adds an `install_with_world(vm, world)` one-liner
+that calls `spells::install(vm)` plus
+`world::world_prim::install(vm, world)` — both consumers
+(`examples/spells.rs`, the WASM bridge, the world-touching tests in
+`tests/world.rs`, and the spell bench) want exactly that pair, so the
+helper saves the duplication. The lisp crate stops re-exporting
+`Tile` / `World`; consumers import from `world` directly.
+
+**Alternatives considered**:
+- **Leave `world.rs` in `lisp` as an opt-in module with a feature
+  flag**. Rejected: cargo features for a "what crate is the file in"
+  problem; the project's promotion mechanism is sibling crates (ADR-010,
+  ADR-011, ADR-016).
+- **Fold `world` into `crates/spells/` instead of a separate crate**.
+  Rejected: `World` is reusable host state (a roguelike, a Conway
+  demo, anything grid-shaped) that has nothing to do with the spell
+  vocabulary. Coupling it to spells would force the next host to either
+  depend on spells or duplicate the file.
+- **Tie the extraction to a generic `Grid<T>` rev** before moving
+  (`host-state.md` mentions this as the "complementary, not competing"
+  follow-up). Rejected: that's a separate design decision (what does
+  the trait surface look like?) and a separate refactor. ADR-018 only
+  re-locates today's concrete `World`; a future ADR can rev to
+  `Grid<T>` once a second grid-shaped host appears.
+- **No `install_with_world` helper on `crates/spells/`**. Leave each
+  consumer to call `spells::install` + `world::world_prim::install`
+  themselves. Rejected: every consumer wanted exactly the same pair;
+  one helper is cleaner than two-line duplication scattered across
+  three call sites. Accepting that `spells` depends on `world` as a
+  result is a deliberate trade — see Consequences.
+
+**Consequences**:
+- **+** `lisp` ships zero host types. Reading the lisp crate root, a
+  new contributor sees "engine + parser + numeric tower" with no
+  demo-shaped vocabulary or host types leaking in. Closes the
+  audit's #1 layering smell.
+- **+** Symmetry restored across the demo-adjacent crates: `runes`
+  and `codons` are translation tables; `spells` and `genes` are
+  vocabulary packs; `world` is the host-state building block. Each
+  is independent and opt-in.
+- **+** Closes both bullets of `host-state.md` §What the endgame
+  could look like: ADR-017 made the engine host-agnostic; ADR-018
+  ships the grid as an opt-in building block.
+- **+** All 97 tests pass; clippy clean. No behavior change — this
+  step is mechanical relocation on top of ADR-017's substantive
+  refactor.
+- **−** `crates/spells/` now depends on `world` (for the
+  `install_with_world` helper) — a deliberate coupling of one
+  vocabulary pack to one host-state shape. Consumers wanting just the
+  spell prelude with a non-`World` host call `spells::install(vm)`
+  alone; the helper is opt-in.
+- **−** Three new path-dependency edits across the workspace (`lisp`
+  dev-deps, `wasm` deps, `bench` deps, `spells` deps). Stable build
+  cost; negligible.
+
+**Deferred**:
+- **Generalize `World` to `Grid<T> + EventLog`** as
+  `host-state.md` proposed. Out of scope until a second grid-shaped
+  host appears (the project's "promote on second consumer" rule).
+- **`docs/letrs.html` narrative** mentions `world.rs` and
+  `Val::WorldPrim`. Will need a refresh; tracked separately so this
+  refactor sequence stays scoped.
+

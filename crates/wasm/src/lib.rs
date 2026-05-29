@@ -26,7 +26,8 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 
-use lisp::{Vm as LispVm, World};
+use lisp::Vm as LispVm;
+use world::World;
 
 #[wasm_bindgen(js_name = "Vm")]
 pub struct WasmVm {
@@ -34,7 +35,7 @@ pub struct WasmVm {
     /// Host-owned world handle. The lisp engine no longer carries a
     /// `World` field (ADR-017); the bridge owns this Rc and shares a
     /// clone with the world prims via closure capture in
-    /// `lisp::world_prim::install`.
+    /// `world::world_prim::install`.
     world: Rc<RefCell<World>>,
     width: u32,
     height: u32,
@@ -48,8 +49,7 @@ impl WasmVm {
         let world =
             Rc::new(RefCell::new(World::new(width, height).map_err(|e| JsValue::from_str(&e))?));
         let mut inner = LispVm::new();
-        lisp::world_prim::install(&mut inner, world.clone());
-        spells::install(&mut inner);
+        spells::install_with_world(&mut inner, world.clone());
         genes::install(&mut inner);
         // Default budget for browser hosts: 10M CEK steps. Tail-call test
         // currently uses ~1M; spells/genes runs are well under 100k. The

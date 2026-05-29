@@ -32,15 +32,12 @@ pub mod parse;
 pub mod prim;
 pub mod step;
 pub mod val;
-pub mod world;
-pub mod world_prim;
 
 pub use env::{Env, Globals};
 pub use expr::{Expr, Sym};
 pub use parse::Datum;
 pub use step::{Step, run, run_bounded};
 pub use val::Val;
-pub use world::{Tile, World};
 
 // Re-export so hosts wiring up state-capturing prims can write
 // `lisp::PrimFn` (an `Rc<dyn Fn(&[Val]) -> Result<Val, String>>`) without
@@ -78,8 +75,8 @@ impl Vm {
     /// primitives register them via [`Vm::register_prim`] with closures
     /// that capture whatever handle they own. ADR-017 removed the
     /// engine's awareness of a privileged `World` type; hosts wanting a
-    /// tile grid call `lisp::world_prim::install(&mut vm, world)` on
-    /// top.
+    /// tile grid call `world::world_prim::install(&mut vm, world)` on
+    /// top (ADR-018).
     pub fn new() -> Self {
         let globals: Globals = Rc::new(RefCell::new(HashMap::new()));
         let env = prim::initial_env(&globals);

@@ -1,4 +1,13 @@
+//! Minimal tile grid + event log used by the spell demo. A reusable
+//! host-state building block — the lisp engine has no awareness it
+//! exists (ADR-017, ADR-018). Hosts wire it in by calling
+//! `world::world_prim::install(&mut vm, world.clone())`.
+//!
+//! Depends only on `lisp` (`Vm`, `Val`, `Arity`); zero other deps.
+
 use std::fmt;
+
+pub mod world_prim;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tile {

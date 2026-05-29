@@ -51,13 +51,10 @@ file before anything else; the rest of the engine is decoration.
   Each fn-ptr is wrapped in an `Rc::new` at `initial_env` time so the
   one prim variant carries them uniformly with state-capturing host
   closures.
-- `world.rs` — minimal grid + log. Imported by hosts that want a tile
-  grid (the spell demo); the engine itself doesn't reference it
-  (ADR-017; ADR-018 moves it to its own crate).
-- `world_prim.rs` — `world-tile`, `world-set-tile!`, `world-log!`,
-  `world-size`, `world-apply!`. Public entry point is `install(vm,
-  world: Rc<RefCell<World>>)`, which registers each as a closure
-  capturing the host's world handle. Not auto-installed by `Vm::new`.
+
+(`world.rs` and `world_prim.rs` lived in this crate until ADR-018
+extracted them to `crates/world/`. The engine no longer ships any
+host types.)
 - `parse.rs` — tokenize, `read` (→ Datum), `read_many` (→ Vec<Datum>),
   `compile` (→ Expr), special forms, quasiquote compilation
 - `lib.rs` — `Vm`, top-level `define` / `defmacro` registration,
@@ -90,13 +87,19 @@ Sibling crates:
 - `crates/codons/` — ASCII RNA codon tape (`AUG CGA …`) → `(list …)` sexpr.
   Zero deps; sole source of truth for the codon table. Mirrors the
   `runes/` shape; ADR-011.
+- `crates/world/` — `World` (tile grid + event log) and the 5 world
+  prims (`world-tile`, `world-set-tile!`, `world-log!`, `world-size`,
+  `world-apply!`). Hosts wire it in via `world::world_prim::install(&mut
+  vm, world.clone())`. Sibling to runes/codons; engine has no awareness.
+  See ADR-017, ADR-018.
 - `crates/spells/` — rune prelude as `PRELUDE_DEFINES` (sequence of
   top-level `(define …)` forms) + `install(vm)` that installs them
-  into the Vm env once. Depends only on `lisp` (for `Vm`). Consumers
-  (`examples/spells.rs`, WASM bridge) call `spells::install` at
-  startup; each cast then evaluates just the body. Coord seeding still
-  happens at the call site via `assoc-set`. See ADR-010, ADR-014,
-  ADR-016.
+  into the Vm env once, plus `install_with_world(vm, world)` that does
+  both halves at once. Depends on `lisp` and `world`. Consumers
+  (`examples/spells.rs`, WASM bridge) call `spells::install_with_world`
+  at startup; each cast then evaluates just the body. Coord seeding
+  still happens at the call site via `assoc-set`. See ADR-010, ADR-014,
+  ADR-016, ADR-018.
 - `crates/genes/` — genome vocabulary: `PRELUDE_DEFINES`
   (seed-independent half) + `install(vm)` (registers prims + installs
   defines) + `seeded(seed, body)` (per-cast wrapper that re-binds the
@@ -149,8 +152,9 @@ just bench        # criterion benches under crates/bench/ (core + demos)
 ```
 
 Rust 1.93+, edition 2024. The core `lisp` crate stays zero-deps —
-keep it that way. `runes` and `codons` are zero-deps too. `spells` and
-`genes` depend only on `lisp`. `wasm` may take deps
+keep it that way. `runes` and `codons` are zero-deps too. `world`,
+`spells`, and `genes` depend only on `lisp` (and `spells` also depends
+on `world` for the `install_with_world` helper). `wasm` may take deps
 (`wasm-bindgen`, `console_error_panic_hook`); this is allowed by
 ADR-002's "lisp stays platform-independent" caveat.
 

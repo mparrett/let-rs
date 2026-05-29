@@ -21,3 +21,4 @@ runes  = { path = "../runes" }
 codons = { path = "../codons" }
 spells = { path = "../spells" }
 genes  = { path = "../genes" }
+world  = { path = "../world" }

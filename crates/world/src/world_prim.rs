@@ -1,9 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::Vm;
-use crate::val::{Arity, Val};
-use crate::world::{Tile, World};
+use lisp::Vm;
+use lisp::val::{Arity, Val};
+
+use crate::{Tile, World};
 
 type R = Result<Val, String>;
 type WorldPrimFn = fn(&[Val], &mut World) -> R;

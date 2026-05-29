@@ -135,3 +135,17 @@ patterns.
 - Future direction: drop `WorldPrim`, let hosts register
   closure-captured prims; optionally ship `Grid<T> + EventLog` as a
   sibling building block.
+
+## Resolution (2026-05-29)
+
+Both bullets in §What the endgame could look like are now closed:
+
+- **ADR-017** dropped `Val::WorldPrim`. `Val::Prim` is the single host-prim
+  variant; it carries an `Rc<dyn Fn(&[Val]) -> Result<Val, String>>` that
+  may capture any host handle. The engine has no privileged host type.
+- **ADR-018** moved `world.rs` + `world_prim.rs` into `crates/world/` as
+  a sibling micro-crate. The grid is still concrete `World` (not yet
+  `Grid<T>`), but it's an opt-in building block now — `lisp` ships zero
+  host types. The "generalize to `Grid<T>`" follow-up is deferred until a
+  second grid-shaped host appears (still "promote on second consumer").
+

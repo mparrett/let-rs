@@ -8,8 +8,9 @@ use std::rc::Rc;
 
 use codons::tape_to_sexpr as codon_tape_to_sexpr;
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use lisp::{Vm, World};
+use lisp::Vm;
 use runes::tape_to_sexpr as rune_tape_to_sexpr;
+use world::World;
 
 // ─── spells ────────────────────────────────────────────────────
 
@@ -25,8 +26,7 @@ fn bench_cast_spell(c: &mut Criterion) {
             || {
                 let world = Rc::new(RefCell::new(World::new(8, 5).expect("8×5 fits")));
                 let mut vm = Vm::new();
-                lisp::world_prim::install(&mut vm, world);
-                spells::install(&mut vm);
+                spells::install_with_world(&mut vm, world);
                 vm
             },
             |mut vm: Vm| black_box(vm.eval_str(black_box(&body)).unwrap()),

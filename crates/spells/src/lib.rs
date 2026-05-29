@@ -11,7 +11,11 @@
 //! 'ty … (thread (start) …)))`. Keeping coord data out of the prelude
 //! means there's exactly one prelude string to keep in sync.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use lisp::Vm;
+use world::World;
 
 /// The spell prelude as a sequence of top-level `(define …)` forms.
 /// Install once with `spells::install(vm)` and every subsequent
@@ -35,4 +39,13 @@ pub const PRELUDE_DEFINES: &str = r#"
 pub fn install(vm: &mut Vm) {
     vm.eval_str(PRELUDE_DEFINES)
         .expect("spells prelude failed to install");
+}
+
+/// Convenience: install the spell prelude AND the world prims that
+/// resolve a finished ctx against `world` (`world-apply!` and friends).
+/// Both `examples/spells.rs` and the WASM bridge want exactly this
+/// wiring; one helper saves the two-line duplication.
+pub fn install_with_world(vm: &mut Vm, world: Rc<RefCell<World>>) {
+    install(vm);
+    world::world_prim::install(vm, world);
 }
