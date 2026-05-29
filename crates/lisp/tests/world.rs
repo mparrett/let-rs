@@ -2,7 +2,7 @@
 //! flagged `world-apply!` as effectively unbounded and `coord` as silently
 //! wrapping `i64 → u32`; these tests pin both behaviors.
 
-use lisp::{Vm, World, spells};
+use lisp::{Vm, World};
 
 fn vm_with_world(w: u32, h: u32) -> Vm {
     let mut vm = Vm::with_world(World::new(w, h).expect("dims fit"));

@@ -28,7 +28,7 @@ Slices that have landed:
 - genes demo: codon-tape → diploid genome → phenotype creature card,
   parallel to spells but with genetics vocabulary (see ADR-011)
 
-90 tests pass across the workspace; `lisp` core stays zero-deps.
+94 tests pass across the workspace; `lisp` core stays zero-deps.
 
 ## Architecture (read this first)
 
@@ -45,25 +45,15 @@ file before anything else; the rest of the engine is decoration.
 - `prim.rs` — pure built-ins (arithmetic, list ops, predicates, eq?)
 - `world.rs` — minimal grid + log used by the spell demo
 - `world_prim.rs` — `Val::WorldPrim` primitives that take `&mut World`
-- `spells.rs` — the rune prelude as `PRELUDE_DEFINES` (sequence of
-  top-level `(define …)` forms) + `install(vm)` that installs them
-  into the Vm env once. Consumers (`examples/spells.rs`, WASM bridge)
-  call `spells::install` at startup; each cast then evaluates just
-  the body. Coord seeding still happens at the call site via
-  `assoc-set`. See ADR-010, ADR-014.
-- `genes.rs` — genome vocabulary: `PRELUDE_DEFINES` (seed-independent
-  half) + `install(vm)` (registers prims + installs defines) +
-  `seeded(seed, body)` (per-cast wrapper that re-binds the four
-  mutate variants over the caller's seed so ADR-012's lexical-seed
-  pattern still holds). Plus the `express!` resolver and the
-  creature-card renderer. Shared by `examples/genes.rs` and the WASM
-  bridge. See ADR-011, ADR-014.
 - `parse.rs` — tokenize, `read` (→ Datum), `read_many` (→ Vec<Datum>),
   `compile` (→ Expr), special forms, quasiquote compilation
 - `lib.rs` — `Vm`, top-level `define` / `defmacro` registration,
   macro expansion, datum⇄val conversion. `eval_str` accepts a
   sequence of top-level forms; returns the last expression's value
   (ADR-014).
+
+The spell + gene DSL packs live in sibling crates (`crates/spells/`,
+`crates/genes/`) as of ADR-016 — see "Sibling crates" below.
 
 Examples in `crates/lisp/examples/`:
 
@@ -72,7 +62,7 @@ Examples in `crates/lisp/examples/`:
 - `world.rs` — spell ctx applied to a 7×5 grid via `world-apply!`
 - `genes.rs` — codon tape → diploid genome → `express!` resolver → ASCII
   creature card. Driver code only — the prelude, prim, and renderer all
-  live in `lisp::genes` (shared with the WASM bridge). The `MUT` codon
+  live in `crates/genes/` (shared with the WASM bridge). The `MUT` codon
   family (`MUT` 25%, `M01`/`M10`/`M50`) triggers seeded mutation; the
   example wraps each cast in `(let ((seed N)) …)` so the prelude's
   `mutate` closures see it via lexical scope. A `breeding(…)` helper
@@ -85,15 +75,28 @@ Sibling crates:
   source of truth for the rune table; consumed by both `examples/spells` and
   the WASM bridge. See ADR-010.
 - `crates/codons/` — ASCII RNA codon tape (`AUG CGA …`) → `(list …)` sexpr.
-  Zero deps; sole source of truth for the codon table. Consumed by both
-  `examples/genes` and the WASM bridge. The genome prelude + resolver +
-  renderer live in `lisp::genes` (one source of truth, no prelude
-  duplication). Mirrors the `runes/` shape; ADR-011.
+  Zero deps; sole source of truth for the codon table. Mirrors the
+  `runes/` shape; ADR-011.
+- `crates/spells/` — rune prelude as `PRELUDE_DEFINES` (sequence of
+  top-level `(define …)` forms) + `install(vm)` that installs them
+  into the Vm env once. Depends only on `lisp` (for `Vm`). Consumers
+  (`examples/spells.rs`, WASM bridge) call `spells::install` at
+  startup; each cast then evaluates just the body. Coord seeding still
+  happens at the call site via `assoc-set`. See ADR-010, ADR-014,
+  ADR-016.
+- `crates/genes/` — genome vocabulary: `PRELUDE_DEFINES`
+  (seed-independent half) + `install(vm)` (registers prims + installs
+  defines) + `seeded(seed, body)` (per-cast wrapper that re-binds the
+  four mutate variants over the caller's seed so ADR-012's
+  lexical-seed pattern still holds). Plus the `express!` resolver and
+  the creature-card renderer. Depends only on `lisp` (`Vm`, `Val`,
+  `Arity`). Shared by `examples/genes.rs` and the WASM bridge. See
+  ADR-011, ADR-014, ADR-016.
 - `crates/wasm/` — JS-facing bridge (`wasm-bindgen` `cdylib`). Wraps
   `lisp::Vm` + `World`, embeds the spell prelude as a const string, exposes
   `new(width, height)`, `eval(src)`, `cast(tape, x, y)`, `grid()`, `log()`,
   `reset_world()`, and `cast_genome(tape)` (returns a rendered creature
-  card; consumes `lisp::genes` so there's a single source of truth across
+  card; consumes `genes` so there's a single source of truth across
   CLI + WASM). ~120 LOC. Pinned to `wasm-bindgen =0.2.114` to match the
   installed CLI (ADR-009).
 
@@ -133,7 +136,8 @@ just bench        # criterion benches under crates/bench/ (core + demos)
 ```
 
 Rust 1.93+, edition 2024. The core `lisp` crate stays zero-deps —
-keep it that way. `runes` and `codons` are zero-deps too. `wasm` may take deps
+keep it that way. `runes` and `codons` are zero-deps too. `spells` and
+`genes` depend only on `lisp`. `wasm` may take deps
 (`wasm-bindgen`, `console_error_panic_hook`); this is allowed by
 ADR-002's "lisp stays platform-independent" caveat.
 
@@ -167,13 +171,13 @@ ships a larger bundle.
 - Adding a new rune: edit `crates/runes/src/lib.rs` — both the CLI demo
   and the WASM bridge see it automatically. If the new rune needs a
   matching primitive, also extend the spell prelude in
-  `crates/lisp/src/spells.rs` (`PRELUDE_DEFINES`) — both consumers
+  `crates/spells/src/lib.rs` (`PRELUDE_DEFINES`) — both consumers
   import from there, so one edit is enough.
 - Adding a new codon: edit `crates/codons/src/lib.rs`. If the codon
   introduces a new trait, also extend the genome prelude
   (`PRELUDE_DEFINES`) and the `TRAITS` classification table in
-  `crates/lisp/src/genes.rs` — both the CLI demo and the WASM bridge
-  see it automatically through `lisp::genes`. Categorical allele
+  `crates/genes/src/lib.rs` — both the CLI demo and the WASM bridge
+  see it automatically through the `genes` crate. Categorical allele
   payloads need to be quoted in the codon fragment (`(color 'green
   dom)`) so the evaluator treats them as symbols rather than variable
   lookups. For a new categorical trait, add its option pool to

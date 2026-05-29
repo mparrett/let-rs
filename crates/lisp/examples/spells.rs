@@ -1,10 +1,10 @@
 //! End-to-end spell DSL demo: rune tape → sexpr → CEK eval → final ctx.
 //!
 //! The rune translation lives in `crates/runes/`; the spell prelude lives
-//! in `lisp::spells` (shared with the WASM bridge — ADR-010). This
-//! example only owns the per-cast wrapper.
+//! in `crates/spells/` (shared with the WASM bridge — ADR-010, ADR-016).
+//! This example only owns the per-cast wrapper.
 
-use lisp::{Vm, spells};
+use lisp::Vm;
 use runes::tape_to_sexpr;
 
 fn cast(vm: &mut Vm, tape: &str) {

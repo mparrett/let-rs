@@ -5,7 +5,7 @@
 
 use codons::tape_to_sexpr as codon_tape_to_sexpr;
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use lisp::{Vm, World, genes, spells};
+use lisp::{Vm, World};
 use runes::tape_to_sexpr as rune_tape_to_sexpr;
 
 // ─── spells ────────────────────────────────────────────────────

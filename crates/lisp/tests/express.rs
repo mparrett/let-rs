@@ -3,7 +3,7 @@
 //! against known codon strands so future refactors can't silently drift.
 
 use codons::tape_to_sexpr;
-use lisp::{Vm, genes};
+use lisp::Vm;
 
 /// Cast a strand and return the phenotype Val as its Display string. The
 /// shape is an alist `((trait . value) ...)` printed in lisp form. Tests

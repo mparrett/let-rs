@@ -3,14 +3,15 @@
 //! Pulled out of `examples/spells.rs` and `crates/wasm/src/lib.rs` once
 //! both consumers were keeping nearly-identical copies in sync (ADR-010's
 //! "two prelude copies will eventually consolidate" clause firing —
-//! mirrors the genes refactor in ADR-011).
+//! mirrors the genes refactor in ADR-011). Subsequently extracted from
+//! the `lisp` crate into its own sibling crate (ADR-016).
 //!
 //! The `start` closure is intentionally zero-arg. Coord seeding for the
 //! WASM bridge happens at the call site via `(assoc-set 'tx … (assoc-set
 //! 'ty … (thread (start) …)))`. Keeping coord data out of the prelude
 //! means there's exactly one prelude string to keep in sync.
 
-use crate::Vm;
+use lisp::Vm;
 
 /// The spell prelude as a sequence of top-level `(define …)` forms.
 /// Install once with `spells::install(vm)` and every subsequent

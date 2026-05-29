@@ -12,6 +12,8 @@ workspace = true
 lisp   = { path = "../lisp" }
 runes  = { path = "../runes" }
 codons = { path = "../codons" }
+spells = { path = "../spells" }
+genes  = { path = "../genes" }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }

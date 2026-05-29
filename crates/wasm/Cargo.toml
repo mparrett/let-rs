@@ -19,3 +19,5 @@ console_error_panic_hook = "0.1"
 lisp   = { path = "../lisp" }
 runes  = { path = "../runes" }
 codons = { path = "../codons" }
+spells = { path = "../spells" }
+genes  = { path = "../genes" }

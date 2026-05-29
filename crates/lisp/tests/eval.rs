@@ -600,7 +600,7 @@ fn dropping_vm_releases_top_level_closures() {
     // path keeps a prelude cell alive — `Weak::upgrade` returns None.
     use std::rc::Rc;
     let mut vm = lisp::Vm::new();
-    lisp::spells::install(&mut vm);
+    spells::install(&mut vm);
     // Grab a weak handle to one of the installed closure cells.
     let weak = {
         let table = vm.globals.borrow();

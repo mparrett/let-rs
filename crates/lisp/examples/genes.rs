@@ -1,11 +1,12 @@
 //! End-to-end genes DSL demo: codon tape → sexpr → CEK eval → phenotype.
 //!
 //! The vocabulary, the resolver, and the renderer all live in
-//! `lisp::genes` so the WASM bridge can share them (ADR-011). This
-//! example just drives a handful of sequences against a fresh VM.
+//! `crates/genes/` so the WASM bridge can share them (ADR-011,
+//! ADR-016). This example just drives a handful of sequences against a
+//! fresh VM.
 
 use codons::tape_to_sexpr;
-use lisp::{Vm, genes};
+use lisp::Vm;
 
 fn sequence(vm: &mut Vm, label: &str, seed: i64, tape: &str) {
     println!("── {label}  (seed={seed}) ──");

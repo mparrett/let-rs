@@ -3,16 +3,17 @@
 //!
 //! Pulled out of `examples/genes.rs` once the WASM bridge became a second
 //! consumer (ADR-011's "promote when a second consumer appears" clause).
-//! Lives next to `world.rs` / `world_prim.rs` — same pattern: a demo's
-//! shared host concept goes in the lisp crate so every consumer sees the
-//! same source of truth.
+//! Subsequently extracted from the `lisp` crate into its own sibling
+//! crate alongside `spells` (ADR-016) — the engine carries no
+//! demo-specific vocabulary.
 //!
-//! Zero external deps. The CEK engine itself is untouched.
+//! Depends only on `lisp` (`Vm`, `Val`, `Arity`). The CEK engine itself
+//! is untouched.
 
 use std::collections::HashSet;
 
-use crate::Vm;
-use crate::val::{Arity, Val};
+use lisp::Vm;
+use lisp::val::{Arity, Val};
 
 /// Seed-independent half of the genome prelude — installed once via
 /// `install(vm)`. `dom` / `rec` bind to `#t` / `#f` so the codon

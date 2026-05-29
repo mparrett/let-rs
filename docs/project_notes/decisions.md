@@ -918,3 +918,75 @@ closure's captured env drops — clean shutdown.
   hash, no frame walk for the common case) but changes
   `(define + 5)` semantics from shadowing to overwrite. Reasonable;
   needs a separate ADR for the semantics call.
+
+## ADR-016: Spell + gene packs in their own sibling crates (2026-05-29)
+
+**Context**: `lisp::spells` (38 lines) and `lisp::genes` (458 lines)
+were parked inside the engine crate when there was nowhere else for
+them. Neither touches `World` / `world_prim`; both depend only on
+`Vm`, `Val`, and `Arity`. Leaving them in `lisp` muddied the crate
+boundary — the engine was "the language" plus "two specific DSL
+packs," and every consumer of the language got the packs for free
+whether wanted or not. ADR-010 set the "promote on second consumer"
+rule (`crates/runes/`); ADR-011 invoked it for the codon table. Both
+DSL packs already have three consumers each (CLI example + WASM
+bridge + bench), so the same promotion was overdue. The audit on
+2026-05-29 (top-three refactor sequence) made it explicit: this is
+step 1 of getting the lisp crate back to "engine only."
+
+**Decision**: Move `crates/lisp/src/spells.rs` and
+`crates/lisp/src/genes.rs` verbatim into new `crates/spells/` and
+`crates/genes/` sibling crates parallel to `crates/runes/` and
+`crates/codons/`. Each declares `lisp = { path = "../lisp" }` and
+nothing else. Public API is unchanged: same `install(vm)`,
+`PRELUDE_DEFINES`, plus `seeded(seed, body)` / `render_creature(v)`
+for genes. Internal `use crate::Vm` → `use lisp::Vm`. Consumers
+(`examples/{spells,genes}.rs`, `crates/wasm`, `crates/bench`, the
+lisp crate's own dev-dep tests) import `spells::install` /
+`genes::install` instead of `lisp::spells::install` /
+`lisp::genes::install`. The `lisp` crate's `[dev-dependencies]` gain
+the two paths so its own examples and tests still compile (mirrors
+the existing `runes`/`codons` dev-dep pattern).
+
+**Alternatives considered**:
+- **Keep them in `lisp` until a third pack appears.** Rejected: the
+  "promote on second consumer" rule has already fired twice; there's
+  nothing engine-specific about either module; the cost is zero.
+- **Single `crates/dsl/` umbrella crate** holding both packs.
+  Rejected: spells and genes share no code and have no reason to
+  ship together. A host wanting only spells shouldn't compile the
+  genome prelude (or its 459 LOC of resolver / renderer).
+- **Re-export from `lisp` for back-compat** (`pub use spells as
+  _spells`). Rejected: only ~7 callsites across the workspace. Fix
+  once, drop the proxy.
+- **Move spells but leave genes in `lisp`** (since genes is bigger /
+  more "infrastructure-shaped"). Rejected: the genes prelude +
+  resolver + renderer are exactly as demo-specific as the spell
+  prelude. Asymmetric extraction would muddy the layering rule the
+  refactor sets up.
+
+**Consequences**:
+- **+** `lisp` is "engine + parser + numeric tower" again. The
+  crate's public surface stops growing with each new demo. After
+  ADR-017 + ADR-018 land, the engine ships *zero* host-specific
+  vocabulary.
+- **+** Each pack documents its dep surface explicitly. Reading
+  `crates/spells/Cargo.toml` shows exactly what the spell DSL needs
+  from the language (just `lisp`); same for genes.
+- **+** Sets up Step 2 / Step 3 (ADR-017 / ADR-018). Once the engine
+  is host-agnostic and `world` lives in its own crate, the spell
+  pack becomes the natural place to wire `world` + `spells` together
+  via a thin `install_with_world(vm, world)` helper.
+- **+** All 94 tests stay green by re-import only. No behavior
+  change; this is a code-move ADR.
+- **−** Two more workspace members (`crates/spells/`,
+  `crates/genes/`). Stable build cost; negligible.
+- **−** `lisp`'s `[dev-dependencies]` grows by two paths so its own
+  examples + tests still compile. Acceptable — `runes` and `codons`
+  already sit there for the same reason.
+
+**Deferred**:
+- ADR-017 (host-agnostic Vm) and ADR-018 (`crates/world/`
+  extraction) are the next two steps of the same sequence. See the
+  approved plan at `~/.claude/plans/nice-audit-can-you-elegant-duckling.md`.
+

@@ -12,6 +12,8 @@ workspace = true
 [dev-dependencies]
 runes  = { path = "../runes" }
 codons = { path = "../codons" }
+spells = { path = "../spells" }
+genes  = { path = "../genes" }
 
 [[example]]
 name = "repl"
