@@ -375,11 +375,16 @@ gene work. Listed for context so we don't duplicate them:
 ~~If the next session does ~one of these:~~ **All five items
 resolved 2026-05-25 → 2026-05-26.** Engine work surfaced since:
 
-- **Host-agnostic Vm.** Drop `Val::WorldPrim`, switch to
-  closure-capable prims, move `World` into its own crate. ~150 LOC
-  of mechanical refactor, no behavior change. See `host-state.md`
-  for the rationale and `crates/world/` micro-crate companion idea.
-  Subsumes item #5 if pursued.
+- ~~**Host-agnostic Vm.** Drop `Val::WorldPrim`, switch to
+  closure-capable prims, move `World` into its own crate.~~
+  **Engine half resolved 2026-05-29 (ADR-017).** `Val::WorldPrim`
+  collapsed into a single closure-capable `Val::Prim` with
+  `Rc<dyn Fn>`. `Vm.world` dropped; `step.rs` no longer threads a
+  world reference. `Vm::register_prim` is generic over `Fn +
+  'static`; hosts capture state in closures. `world_prim::install(vm,
+  world)` is the new wiring entry point. `crates/world/` extraction
+  is the next commit (ADR-018) — the files still live in `lisp/src/`
+  but nothing in the engine references them.
 - ~~**Mutual recursion across top-level defines** (ADR-014 deferred).~~
   **Resolved 2026-05-26.** Pre-pass added to `eval_str`; mutual rec
   works within a single source string. Cross-call mutual recursion

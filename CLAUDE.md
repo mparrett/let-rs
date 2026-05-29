@@ -28,7 +28,7 @@ Slices that have landed:
 - genes demo: codon-tape → diploid genome → phenotype creature card,
   parallel to spells but with genetics vocabulary (see ADR-011)
 
-94 tests pass across the workspace; `lisp` core stays zero-deps.
+97 tests pass across the workspace; `lisp` core stays zero-deps.
 
 ## Architecture (read this first)
 
@@ -36,15 +36,28 @@ The five CEK transition rules live in `crates/lisp/src/step.rs` — read that
 file before anything else; the rest of the engine is decoration.
 
 - `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec`
-- `val.rs` — runtime values: `Num | Bool | Sym | Nil | Cons | Clo | Prim | WorldPrim`,
-  plus `Arity` and `Display`
+- `val.rs` — runtime values: `Num | Ratio | Bool | Sym | Nil | Cons | Clo | Prim`,
+  plus `Arity` and `Display`. `Val::Prim` holds an
+  `Rc<dyn Fn(&[Val]) -> Result<Val, String>>` so host prims can
+  capture state at registration time without the engine knowing what
+  they capture (ADR-017).
 - `env.rs` — Rc-linked immutable frames; each slot is an `Rc<RefCell<Val>>` to
   support letrec placeholder bindings
 - `k.rs` — continuation variants: `Halt | App | If | Letrec`
-- `step.rs` — `step(State, &world) -> Step` and the driver `run` loop
-- `prim.rs` — pure built-ins (arithmetic, list ops, predicates, eq?)
-- `world.rs` — minimal grid + log used by the spell demo
-- `world_prim.rs` — `Val::WorldPrim` primitives that take `&mut World`
+- `step.rs` — `step(State) -> Step` and the driver `run` loop. The
+  engine no longer threads a `&World` through CEK state; that
+  responsibility moved to host-owned prim closures (ADR-017).
+- `prim.rs` — pure built-ins (arithmetic, list ops, predicates, eq?).
+  Each fn-ptr is wrapped in an `Rc::new` at `initial_env` time so the
+  one prim variant carries them uniformly with state-capturing host
+  closures.
+- `world.rs` — minimal grid + log. Imported by hosts that want a tile
+  grid (the spell demo); the engine itself doesn't reference it
+  (ADR-017; ADR-018 moves it to its own crate).
+- `world_prim.rs` — `world-tile`, `world-set-tile!`, `world-log!`,
+  `world-size`, `world-apply!`. Public entry point is `install(vm,
+  world: Rc<RefCell<World>>)`, which registers each as a closure
+  capturing the host's world handle. Not auto-installed by `Vm::new`.
 - `parse.rs` — tokenize, `read` (→ Datum), `read_many` (→ Vec<Datum>),
   `compile` (→ Expr), special forms, quasiquote compilation
 - `lib.rs` — `Vm`, top-level `define` / `defmacro` registration,
@@ -162,9 +175,11 @@ ships a larger bundle.
 
 - Special forms (`lambda`, `if`, `quote`, `letrec`, `let`, `let*`, `cond`,
   `quasiquote`) live in `parse.rs`. Everything else can be a macro.
-- World-aware primitives use `Val::WorldPrim`; pure ones use `Val::Prim`.
-  Don't promote a pure prim to WorldPrim without reason — the split is what
-  keeps the language testable in isolation from the host.
+- Host prims are registered via `vm.register_prim(name, arity, |args|
+  …)`. The callback is wrapped in `Rc<dyn Fn>` so it can capture host
+  state (`Rc<RefCell<World>>`, an `Rc<RefCell<Counter>>`, whatever).
+  Pure prims are just closures that don't capture anything. ADR-017
+  removed the `Val::WorldPrim` distinction; the engine is host-agnostic.
 - The spell DSL is a *vocabulary*, not a feature of the language. Spell
   primitives are user-level closures over ctx. Adding behavior means adding
   a primitive (closure), not a new engine rule.

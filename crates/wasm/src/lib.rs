@@ -21,6 +21,9 @@
 //! `wasm-bindgen --target web` and `python3 -m http.server` are the
 //! entire toolchain (ADR-009).
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use wasm_bindgen::prelude::*;
 
 use lisp::{Vm as LispVm, World};
@@ -28,6 +31,11 @@ use lisp::{Vm as LispVm, World};
 #[wasm_bindgen(js_name = "Vm")]
 pub struct WasmVm {
     inner: LispVm,
+    /// Host-owned world handle. The lisp engine no longer carries a
+    /// `World` field (ADR-017); the bridge owns this Rc and shares a
+    /// clone with the world prims via closure capture in
+    /// `lisp::world_prim::install`.
+    world: Rc<RefCell<World>>,
     width: u32,
     height: u32,
 }
@@ -37,8 +45,10 @@ impl WasmVm {
     #[wasm_bindgen(constructor)]
     pub fn new(width: u32, height: u32) -> Result<WasmVm, JsValue> {
         console_error_panic_hook::set_once();
-        let world = World::new(width, height).map_err(|e| JsValue::from_str(&e))?;
-        let mut inner = LispVm::with_world(world);
+        let world =
+            Rc::new(RefCell::new(World::new(width, height).map_err(|e| JsValue::from_str(&e))?));
+        let mut inner = LispVm::new();
+        lisp::world_prim::install(&mut inner, world.clone());
         spells::install(&mut inner);
         genes::install(&mut inner);
         // Default budget for browser hosts: 10M CEK steps. Tail-call test
@@ -46,7 +56,7 @@ impl WasmVm {
         // browser eval runs on the main thread, so an unbounded loop
         // hangs the page — this is the backstop.
         inner.set_step_budget(10_000_000);
-        Ok(WasmVm { inner, width, height })
+        Ok(WasmVm { inner, world, width, height })
     }
 
     /// Override the CEK step budget for subsequent evaluations.
@@ -84,18 +94,18 @@ impl WasmVm {
             .map_err(|e| JsValue::from_str(&e))?;
         // safety: see ADR-005 — no callback primitives, so a JS handler cannot
         // re-enter Vm during this borrow.
-        let log = &self.inner.world.borrow().log;
+        let log = &self.world.borrow().log;
         Ok(log.last().cloned().unwrap_or_default())
     }
 
     /// Newline-joined ASCII render of the world grid.
     pub fn grid(&self) -> String {
-        format!("{}", self.inner.world.borrow())
+        format!("{}", self.world.borrow())
     }
 
     /// All log entries, newline-joined.
     pub fn log(&self) -> String {
-        self.inner.world.borrow().log.join("\n")
+        self.world.borrow().log.join("\n")
     }
 
     /// Replace the world with a fresh empty one of the same dimensions.
@@ -103,7 +113,7 @@ impl WasmVm {
     /// at construction and stay valid).
     pub fn reset_world(&mut self) {
         // Dims were validated at construction, so this can't fail.
-        *self.inner.world.borrow_mut() =
+        *self.world.borrow_mut() =
             World::new(self.width, self.height).expect("dims validated at construction");
     }
 

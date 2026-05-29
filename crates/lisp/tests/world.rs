@@ -2,10 +2,15 @@
 //! flagged `world-apply!` as effectively unbounded and `coord` as silently
 //! wrapping `i64 → u32`; these tests pin both behaviors.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use lisp::{Vm, World};
 
 fn vm_with_world(w: u32, h: u32) -> Vm {
-    let mut vm = Vm::with_world(World::new(w, h).expect("dims fit"));
+    let world = Rc::new(RefCell::new(World::new(w, h).expect("dims fit")));
+    let mut vm = Vm::new();
+    lisp::world_prim::install(&mut vm, world);
     spells::install(&mut vm); // gives us assoc-set, fire, etc.
     vm
 }

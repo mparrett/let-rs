@@ -1,11 +1,9 @@
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::env::Env;
 use crate::expr::Expr;
 use crate::k::K;
 use crate::val::Val;
-use crate::world::World;
 
 pub enum Mode {
     Eval(Rc<Expr>, Env),
@@ -22,10 +20,10 @@ pub enum Step {
     Done(Val),
 }
 
-pub fn step(s: State, world: &Rc<RefCell<World>>) -> Result<Step, String> {
+pub fn step(s: State) -> Result<Step, String> {
     match s.mode {
         Mode::Eval(c, env) => eval_expr(c, env, s.k),
-        Mode::Apply(v) => apply_k(v, s.k, world),
+        Mode::Apply(v) => apply_k(v, s.k),
     }
 }
 
@@ -108,7 +106,7 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
     }
 }
 
-fn apply_k(v: Val, k: Rc<K>, world: &Rc<RefCell<World>>) -> Result<Step, String> {
+fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
     match &*k {
         K::Halt => Ok(Step::Done(v)),
 
@@ -116,7 +114,7 @@ fn apply_k(v: Val, k: Rc<K>, world: &Rc<RefCell<World>>) -> Result<Step, String>
             let mut evaled = evaled.clone();
             evaled.push(v);
             if remaining.is_empty() {
-                apply(evaled, outer.clone(), world)
+                apply(evaled, outer.clone())
             } else {
                 let mut remaining = remaining.clone();
                 let next = remaining.remove(0);
@@ -166,7 +164,7 @@ fn apply_k(v: Val, k: Rc<K>, world: &Rc<RefCell<World>>) -> Result<Step, String>
     }
 }
 
-fn apply(evaled: Vec<Val>, k: Rc<K>, world: &Rc<RefCell<World>>) -> Result<Step, String> {
+fn apply(evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
     let mut it = evaled.into_iter();
     let f = it.next().expect("apply with no fn");
     let args: Vec<Val> = it.collect();
@@ -195,38 +193,19 @@ fn apply(evaled: Vec<Val>, k: Rc<K>, world: &Rc<RefCell<World>>) -> Result<Step,
             let v = f(&args)?;
             Ok(Step::Continue(State { mode: Mode::Apply(v), k }))
         }
-        Val::WorldPrim { name, arity, f } => {
-            if !arity.accepts(args.len()) {
-                return Err(format!(
-                    "{name}: arity {}, got {}",
-                    arity.describe(),
-                    args.len()
-                ));
-            }
-            let v = {
-                let mut w = world.borrow_mut();
-                f(&args, &mut w)?
-            };
-            Ok(Step::Continue(State { mode: Mode::Apply(v), k }))
-        }
         other => Err(format!("not callable: {other}")),
     }
 }
 
-pub fn run(expr: Expr, env: Env, world: Rc<RefCell<World>>) -> Result<Val, String> {
-    run_bounded(expr, env, world, u64::MAX)
+pub fn run(expr: Expr, env: Env) -> Result<Val, String> {
+    run_bounded(expr, env, u64::MAX)
 }
 
 /// Like `run`, but errors after `budget` CEK steps. `u64::MAX` is
 /// effectively unbounded. The budget guards against nonterminating
 /// expressions in hosted environments (REPL, WASM bridge) where the
 /// caller can't otherwise interrupt evaluation.
-pub fn run_bounded(
-    expr: Expr,
-    env: Env,
-    world: Rc<RefCell<World>>,
-    budget: u64,
-) -> Result<Val, String> {
+pub fn run_bounded(expr: Expr, env: Env, budget: u64) -> Result<Val, String> {
     let mut s = State {
         mode: Mode::Eval(Rc::new(expr), env),
         k: Rc::new(K::Halt),
@@ -237,7 +216,7 @@ pub fn run_bounded(
             return Err("execution exceeded step budget".into());
         }
         steps_left -= 1;
-        match step(s, &world)? {
+        match step(s)? {
             Step::Continue(next) => s = next,
             Step::Done(v) => return Ok(v),
         }

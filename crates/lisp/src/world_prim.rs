@@ -1,3 +1,7 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::Vm;
 use crate::val::{Arity, Val};
 use crate::world::{Tile, World};
 
@@ -127,3 +131,17 @@ pub const WORLD_PRIMS: &[(&str, Arity, WorldPrimFn)] = &[
     ("world-size",      Arity::Exact(0),   world_size),
     ("world-apply!",    Arity::Exact(1),   world_apply),
 ];
+
+/// Register every entry in [`WORLD_PRIMS`] as a state-capturing closure
+/// over `world`. Hosts that want tile-grid prims call this once at Vm
+/// construction; the lisp crate no longer auto-installs anything host-
+/// specific (ADR-017).
+pub fn install(vm: &mut Vm, world: Rc<RefCell<World>>) {
+    for &(name, arity, f) in WORLD_PRIMS {
+        let world = world.clone();
+        vm.register_prim(name, arity, move |args| {
+            let mut w = world.borrow_mut();
+            f(args, &mut w)
+        });
+    }
+}

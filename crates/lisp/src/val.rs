@@ -3,7 +3,13 @@ use std::rc::Rc;
 
 use crate::env::Env;
 use crate::expr::{Expr, Sym};
-use crate::world::World;
+
+/// Boxed function pointer for host primitives. Closures can capture
+/// host state (an `Rc<RefCell<World>>`, an `Rc<RefCell<i64>>` counter,
+/// whatever) at registration time; the engine has no awareness of what
+/// they capture. Replaces ADR-005's two-variant `Prim` / `WorldPrim`
+/// split (ADR-017).
+pub type PrimFn = Rc<dyn Fn(&[Val]) -> Result<Val, String>>;
 
 #[derive(Clone)]
 pub enum Val {
@@ -22,17 +28,12 @@ pub enum Val {
         body: Rc<Expr>,
         env: Env,
     },
+    /// Host primitive: a closure of `&[Val] -> Result<Val, String>` plus
+    /// a name and arity. Closures may capture host state (see `PrimFn`).
     Prim {
         name: &'static str,
         arity: Arity,
-        f: fn(&[Val]) -> Result<Val, String>,
-    },
-    /// Like `Prim`, but its `f` receives mutable access to the host world.
-    /// Used for primitives that read or modify game state.
-    WorldPrim {
-        name: &'static str,
-        arity: Arity,
-        f: fn(&[Val], &mut World) -> Result<Val, String>,
+        f: PrimFn,
     },
 }
 
@@ -162,9 +163,6 @@ impl fmt::Display for Val {
             }
             Val::Clo { params, .. } => write!(f, "#<closure/{}>", params.len()),
             Val::Prim { name, arity, .. } => write!(f, "#<prim {name}/{}>", arity.describe()),
-            Val::WorldPrim { name, arity, .. } => {
-                write!(f, "#<world-prim {name}/{}>", arity.describe())
-            }
         }
     }
 }

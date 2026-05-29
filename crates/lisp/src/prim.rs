@@ -1,8 +1,14 @@
+use std::rc::Rc;
+
 use crate::env::Env;
 use crate::val::{Arity, Val, gcd_i128};
 
 type R = Result<Val, String>;
-type PrimFn = fn(&[Val]) -> R;
+/// Internal fn-ptr type for the `BUILTINS` table. Each entry is wrapped
+/// once in an `Rc<dyn Fn>` at `initial_env` time (~40 allocations per
+/// Vm), so the per-call lookup cost is a refcount bump rather than a
+/// fn-ptr copy. See ADR-017.
+type BuiltinFn = fn(&[Val]) -> R;
 
 // ---- numeric tower helpers ----
 //
@@ -318,7 +324,7 @@ fn assoc_get(args: &[Val]) -> R {
     Ok(Val::Nil)
 }
 
-const BUILTINS: &[(&str, Arity, PrimFn)] = &[
+const BUILTINS: &[(&str, Arity, BuiltinFn)] = &[
     ("+",       Arity::AtLeast(0), add),
     ("-",       Arity::AtLeast(1), sub),
     ("*",       Arity::AtLeast(0), mul),
@@ -351,6 +357,6 @@ pub fn initial_env(globals: &crate::env::Globals) -> Env {
     BUILTINS
         .iter()
         .fold(Env::with_globals(globals), |env, &(name, arity, f)| {
-            env.extend(name.into(), Val::Prim { name, arity, f })
+            env.extend(name.into(), Val::Prim { name, arity, f: Rc::new(f) })
         })
 }

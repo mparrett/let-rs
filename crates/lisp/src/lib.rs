@@ -42,6 +42,11 @@ pub use step::{Step, run, run_bounded};
 pub use val::Val;
 pub use world::{Tile, World};
 
+// Re-export so hosts wiring up state-capturing prims can write
+// `lisp::PrimFn` (an `Rc<dyn Fn(&[Val]) -> Result<Val, String>>`) without
+// reaching into `lisp::val` for the alias.
+pub use val::PrimFn;
+
 #[derive(Clone)]
 struct Macro {
     closure: Val,
@@ -56,12 +61,9 @@ pub struct Vm {
     /// Top-level bindings (every `(define …)` ever evaluated in this
     /// Vm). Held by `Vm` as the sole strong reference; closures that
     /// reach back to it via `env.globals` use a `Weak`, so dropping
-    /// this Vm collapses every closure stored here without leaks.
-    /// Exposed publicly (mirroring `world`) so hosts can introspect or
-    /// reset top-level state without going through `eval_str`. See
-    /// ADR-015 / issue_2.
+    /// this Vm collapses every closure stored here without leaks. See
+    /// ADR-015.
     pub globals: Globals,
-    pub world: Rc<RefCell<World>>,
     macros: Rc<RefCell<HashMap<String, Macro>>>,
     /// Per-`eval_str` CEK step budget. `u64::MAX` (the default) is
     /// effectively unbounded — preserves day-one behavior. Hosts that
@@ -72,21 +74,18 @@ pub struct Vm {
 }
 
 impl Vm {
+    /// Construct a Vm with no host state. Hosts that need state-aware
+    /// primitives register them via [`Vm::register_prim`] with closures
+    /// that capture whatever handle they own. ADR-017 removed the
+    /// engine's awareness of a privileged `World` type; hosts wanting a
+    /// tile grid call `lisp::world_prim::install(&mut vm, world)` on
+    /// top.
     pub fn new() -> Self {
-        Self::with_world(World::empty())
-    }
-
-    pub fn with_world(world: World) -> Self {
-        let world = Rc::new(RefCell::new(world));
         let globals: Globals = Rc::new(RefCell::new(HashMap::new()));
-        let mut env = prim::initial_env(&globals);
-        for &(name, arity, f) in world_prim::WORLD_PRIMS {
-            env = env.extend(name.into(), Val::WorldPrim { name, arity, f });
-        }
+        let env = prim::initial_env(&globals);
         Vm {
             env,
             globals,
-            world,
             macros: Rc::new(RefCell::new(HashMap::new())),
             step_budget: u64::MAX,
         }
@@ -99,34 +98,18 @@ impl Vm {
         self.step_budget = n;
     }
 
-    /// Install a host primitive into the VM's initial env. Mirrors how
-    /// `world_prim::WORLD_PRIMS` is installed in `with_world`, but for
-    /// pure (non-world-touching) prims so demo binaries can extend the
-    /// vocabulary without going through `eval_str`.
-    pub fn register_prim(
-        &mut self,
-        name: &'static str,
-        arity: val::Arity,
-        f: fn(&[Val]) -> Result<Val, String>,
-    ) {
+    /// Install a host primitive into the VM's initial env. The callback
+    /// is wrapped in an `Rc<dyn Fn>` so it can capture host state —
+    /// e.g., `move |args| { /* read/write &mut world.borrow_mut() */ }`.
+    /// Replaces the ADR-005 split between pure `register_prim` and
+    /// world-aware `register_world_prim`; both shapes collapse here.
+    pub fn register_prim<F>(&mut self, name: &'static str, arity: val::Arity, f: F)
+    where
+        F: Fn(&[Val]) -> Result<Val, String> + 'static,
+    {
         self.env = self
             .env
-            .extend(name.into(), Val::Prim { name, arity, f });
-    }
-
-    /// Sibling of `register_prim` for world-aware primitives. Same shape
-    /// as the entries `with_world` already installs from
-    /// `world_prim::WORLD_PRIMS`, exposed so demos can add their own
-    /// world-touching vocabulary without editing the lisp crate.
-    pub fn register_world_prim(
-        &mut self,
-        name: &'static str,
-        arity: val::Arity,
-        f: fn(&[Val], &mut World) -> Result<Val, String>,
-    ) {
-        self.env = self
-            .env
-            .extend(name.into(), Val::WorldPrim { name, arity, f });
+            .extend(name.into(), Val::Prim { name, arity, f: Rc::new(f) });
     }
 
     /// Evaluate a sequence of top-level forms. Each form is one of:
@@ -192,7 +175,7 @@ impl Vm {
             }
             let expanded = self.expand_all(datum)?;
             let expr = parse::compile(&expanded)?;
-            last = run_bounded(expr, self.env.clone(), self.world.clone(), self.step_budget)?;
+            last = run_bounded(expr, self.env.clone(), self.step_budget)?;
         }
         Ok(last)
     }
@@ -216,12 +199,7 @@ impl Vm {
         };
         let body_datum = self.expand_all(items[2].clone())?;
         let body_expr = parse::compile(&body_datum)?;
-        let val = run_bounded(
-            body_expr,
-            self.env.clone(),
-            self.world.clone(),
-            self.step_budget,
-        )?;
+        let val = run_bounded(body_expr, self.env.clone(), self.step_budget)?;
         cells
             .get(name.as_ref())
             .expect("pre-pass should have allocated a cell for this define")
@@ -398,12 +376,7 @@ impl Vm {
         for a in args {
             app.push(Rc::new(Expr::Quote(Rc::new(a))));
         }
-        run_bounded(
-            Expr::App(app),
-            self.env.clone(),
-            self.world.clone(),
-            self.step_budget,
-        )
+        run_bounded(Expr::App(app), self.env.clone(), self.step_budget)
     }
 }
 

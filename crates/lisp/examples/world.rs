@@ -5,6 +5,9 @@
 //! prelude from `spells.rs` minus the rune translation (we hand-write tokens
 //! here to focus on the world half).
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use lisp::{Vm, World};
 
 const PRELUDE: &str = r#"
@@ -27,13 +30,13 @@ fn cast(vm: &mut Vm, x: i64, y: i64, tokens: &str) {
     }
 }
 
-fn print_world(vm: &Vm) {
-    let w = vm.world.borrow();
+fn print_world(world: &Rc<RefCell<World>>) {
+    let w = world.borrow();
     print!("{w}");
 }
 
-fn print_log(vm: &Vm) {
-    let w = vm.world.borrow();
+fn print_log(world: &Rc<RefCell<World>>) {
+    let w = world.borrow();
     if w.log.is_empty() {
         return;
     }
@@ -44,23 +47,25 @@ fn print_log(vm: &Vm) {
 }
 
 fn main() {
-    let mut vm = Vm::with_world(World::new(7, 5).expect("7×5 fits"));
+    let world = Rc::new(RefCell::new(World::new(7, 5).expect("7×5 fits")));
+    let mut vm = Vm::new();
+    lisp::world_prim::install(&mut vm, world.clone());
 
     println!("== initial (7×5) ==");
-    print_world(&vm);
+    print_world(&world);
 
     println!("\n== cast fire at (1,1) ==");
     cast(&mut vm, 1, 1, "fire");
-    print_world(&vm);
+    print_world(&world);
 
     println!("\n== cast 'fire (area 1)' at (4,2) ==");
     cast(&mut vm, 4, 2, "fire (area 1)");
-    print_world(&vm);
+    print_world(&world);
 
     println!("\n== cast 'ice (area 2)' at (3,2) ==");
     cast(&mut vm, 3, 2, "ice (area 2)");
-    print_world(&vm);
+    print_world(&world);
 
     println!();
-    print_log(&vm);
+    print_log(&world);
 }

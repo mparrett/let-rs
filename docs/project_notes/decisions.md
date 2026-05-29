@@ -990,3 +990,127 @@ the existing `runes`/`codons` dev-dep pattern).
   extraction) are the next two steps of the same sequence. See the
   approved plan at `~/.claude/plans/nice-audit-can-you-elegant-duckling.md`.
 
+## ADR-017: Host-agnostic Vm — closure-capable prims, no engine-owned `World` (2026-05-29)
+
+**Context**: ADR-005 split prims into pure (`Val::Prim`,
+`fn(&[Val]) -> R`) and host-state (`Val::WorldPrim`, `fn(&[Val],
+&mut World) -> R`) so the engine could carry a `Vm.world:
+Rc<RefCell<World>>` field and dispatch state-aware primitives without
+losing testability. ADR-011 (the genes demo) made the limit visible:
+genes wants zero host state, yet `Vm::new()` always carried a 0×0
+`World::empty()` to satisfy the type. A roguelike / config DSL /
+music sequencer would each want a different typed host state and
+would have to ignore, force-fit, or fork the lisp crate (see
+`docs/project_notes/host-state.md`). Two prim flavors, one fixed
+host type baked in — the engine had de facto coupled to the spell
+demo's needs. The 2026-05-29 audit (top-three refactor sequence)
+made this Step 2.
+
+**Decision**: Drop the engine's awareness of the host type entirely.
+Three coupled changes:
+
+1. **Collapse `Val::WorldPrim` into `Val::Prim`** as a single
+   closure-capable variant. The field becomes
+   `f: Rc<dyn Fn(&[Val]) -> Result<Val, String>>`. Same call shape as
+   before; the closure may capture any host handle (or none). The
+   `unsafe_code = "forbid"` workspace lint is preserved (`Rc<dyn Fn>`
+   is safe). Zero new deps preserves ADR-002.
+
+2. **Drop `Vm.world` and `Vm::with_world`.** The engine no longer
+   knows `World` exists at all. `step`, `apply_k`, `apply`, `run`,
+   `run_bounded` lose their `world: &Rc<RefCell<World>>` thread; the
+   apply path dispatches on one prim variant that doesn't need it.
+
+3. **`Vm::register_prim` becomes generic**: `F: Fn(&[Val]) ->
+   Result<Val, String> + 'static`. Hosts that need state register a
+   closure that captures their handle. `Vm::register_world_prim` is
+   removed (had no external callers anyway).
+
+`world.rs` + `world_prim.rs` stay inside the lisp crate for this
+commit but `world_prim` gains a `pub fn install(vm: &mut Vm, world:
+Rc<RefCell<World>>)` helper that wraps each of the 5 world prims in a
+closure capturing `world.clone()`, then calls
+`vm.register_prim(name, arity, |args| { f(args, &mut world.borrow_mut()) })`.
+The spell-CLI example, the world-test file, and the WASM bridge all
+go through this helper. ADR-018 (next commit) moves these files to
+their own crate.
+
+The `prim::initial_env` table wraps each builtin's fn-ptr in
+`Rc::new` at Vm construction (~40 allocations per `Vm::new`), so the
+single `Val::Prim` variant carries pure and state-capturing prims
+uniformly. Per-call cost rises from "copy fn ptr" to "Rc::clone of a
+thin handle" — a non-atomic refcount bump per prim lookup.
+
+**Alternatives considered**:
+- **Keep two variants — pure `Prim` (fn-ptr) plus new `Closure`
+  (`Rc<dyn Fn>`)**. Rejected: once the engine has no privileged host
+  type, both variants would carry identical signatures and identical
+  dispatch logic in `apply`. The split would preserve a distinction
+  nothing else respects.
+- **`Box<dyn Fn>` instead of `Rc`**. Rejected: `Val` is already
+  cheaply cloneable (everything else is `Rc` or `Copy`); a `Box`-typed
+  closure would force `Val: Clone` for a prim into a non-trivial
+  path, and any place a prim cell ends up Rc'd twice (the
+  `eval_str` rollback snapshot bumps each globals cell) would not
+  share storage.
+- **Trait object via a `Primitive` trait** (`Box<dyn Primitive>`
+  where `Primitive::call(&self, args: &[Val]) -> R`). Rejected: more
+  ceremony for the same capability; the `Fn` closure path is what
+  every Rust developer reaches for first.
+- **Keep `Vm.world` as `Box<dyn Any>` for type-erased host state**.
+  Rejected: pushes the type recovery into every host prim and makes
+  the registration API uglier than capturing the handle in a closure.
+- **Stay on fn-pointers; introduce a `HostHandle` thread-local** for
+  prims to reach into. Rejected: hidden global state, breaks
+  composition with multiple Vms or nested evaluation.
+
+**Consequences**:
+- **+** Engine is host-agnostic. The same `lisp` crate can host the
+  spell DSL, the genes DSL, a roguelike, a config interpreter — all
+  via `register_prim(name, arity, |args| { /* capture whatever */ })`.
+  Three new tests in `tests/host_prim.rs` lock the promise:
+  closure-prim mutates captured state; closure-prim reads + returns
+  captured state; dropping the Vm releases captured cells.
+- **+** `Val::WorldPrim` and its dispatch arm are gone. `step.rs`
+  drops one match arm and three function-parameter threadings.
+  ~20 LOC of engine simplification.
+- **+** `Vm::new()` no longer auto-installs world prims. A host that
+  wants them calls `lisp::world_prim::install(&mut vm,
+  world.clone())` after constructing the Vm. The WASM bridge already
+  does this; the world-CLI example and `tests/world.rs` updated.
+- **+** Sets up ADR-018 (next commit): `world.rs` + `world_prim.rs`
+  can move out of `lisp` because they no longer have privileged
+  status. The lisp crate will stop shipping a tile grid.
+- **+** Closures unlock per-host state shapes the old API couldn't
+  express (multiple host handles, non-`World` typed state, host state
+  that holds a `RefCell` of something the engine couldn't name).
+- **−** `Val::Prim` lookup is now `Rc::clone` instead of fn-ptr
+  copy. ~40 builtin allocations at `Vm::new` time; per-call cost is a
+  non-atomic refcount bump. Bench delta (microsecond medians, `cargo
+  bench -p bench --bench demos`):
+    - `cast_spell_canonical`: 22.8 → 26.3 µs (+15%; many prim calls
+      per cast, plus the captured `world.borrow_mut()` on every
+      `world-apply!` adds overhead the old direct-`&mut World` path
+      didn't have)
+    - `cast_genome_balanced`: 73.0 → 75.8 µs (+4%)
+    - `cast_genome_with_mut`: 81.3 → 83.3 µs (+2.5%)
+    - `breed_diploid`: 260.7 → 249.2 µs (−4%, noise band)
+- **−** `register_world_prim` removed — its only role was a
+  fn-pointer with a `&mut World` arg, now covered by `register_prim(name,
+  arity, move |args| { let mut w = world.borrow_mut(); f(args, &mut w) })`.
+  No external callers; safe to delete.
+- **−** WASM bridge takes a small structural change: `WasmVm` holds
+  its own `world: Rc<RefCell<World>>` field rather than reaching
+  through `vm.inner.world`. Same allocation pattern, different
+  ownership location.
+- **−** `Vm::new()`'s default semantics changed silently: today
+  `(world-tile 0 0)` against a fresh `Vm::new()` returns "unbound
+  variable: world-tile" instead of "world has zero dimensions." Safe
+  in-repo (all world-touching tests use `world_prim::install`
+  explicitly); flagged here for any downstream consumer.
+
+**Deferred**:
+- ADR-018 (`crates/world/` extraction) is the next commit in the
+  same sequence — `world.rs` + `world_prim.rs` move out of the lisp
+  crate now that nothing engine-side references them.
+

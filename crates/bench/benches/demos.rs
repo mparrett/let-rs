@@ -3,6 +3,9 @@
 //! per bench setup (via `iter_batched`), not per iteration. That way
 //! a regression points at the cast hot path rather than installation.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use codons::tape_to_sexpr as codon_tape_to_sexpr;
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use lisp::{Vm, World};
@@ -20,11 +23,13 @@ fn bench_cast_spell(c: &mut Criterion) {
     c.bench_function("cast_spell_canonical", |b| {
         b.iter_batched(
             || {
-                let mut vm = Vm::with_world(World::new(8, 5).expect("8×5 fits"));
+                let world = Rc::new(RefCell::new(World::new(8, 5).expect("8×5 fits")));
+                let mut vm = Vm::new();
+                lisp::world_prim::install(&mut vm, world);
                 spells::install(&mut vm);
                 vm
             },
-            |mut vm| black_box(vm.eval_str(black_box(&body)).unwrap()),
+            |mut vm: Vm| black_box(vm.eval_str(black_box(&body)).unwrap()),
             BatchSize::SmallInput,
         )
     });
