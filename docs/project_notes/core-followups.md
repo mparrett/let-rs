@@ -350,6 +350,63 @@ shouldn't accidentally break them.
 
 ---
 
+## High-impact (engine-level) — open
+
+### CESK upgrade — time-travel / undo via a reified Store
+
+**Problem.** Today's CEK machine has no Store register: bindings
+live in `Rc<RefCell<Val>>` slots inside `Env` frames (ADR-004), and
+host state (`World`, `Turtle`) lives behind `Rc<RefCell<…>>` handles
+captured by prim closures (ADR-017). There's no engine-visible
+"world at time T" — once `world-apply!` paints a tile or `forward!`
+stamps a turtle cell, the previous state is gone.
+
+This surfaced concretely while wiring a per-cell dissipation
+flourish for the Spell Lab (the visual "spell shrinks back to its
+center" effect after a cast). The animation is pure frontend
+illusion — the underlying `World` mutation is real and lost the
+moment it lands. The user joked about "backward time travel to
+undo/unwind the spell." That's a CESK-shaped wish.
+
+**What it would take.** Promote CEK → CESK (Felleisen): add a
+**Store** register that maps refs to values, replace
+`Rc<RefCell<Val>>` slots with `Ref(n)` indices, route every mutation
+through the Store. Then a snapshot is `store.clone()` and undo is
+`vm.store = snapshot`. Host state could stay outside the Store (in
+which case undo only covers lisp bindings), or be promoted into the
+Store too — making `World` / `Turtle` introspectable persistent
+values addressable by the engine.
+
+**Demos this would unlock.**
+- Spells: real undo button on the world grid; a "replay" slider
+  that scrubs through cast history.
+- Curves: per-iteration scrubber that doesn't have to re-eval
+  `(grow … N)` from scratch — instead jumps between cached
+  store snapshots at each `iters` value.
+- Genes: undo a `mutate!` / `breed!` step; A/B-compare two
+  alternate offspring without re-rolling the seed.
+
+**Cost.** Substantial. Every mutating prim threads through the
+Store. Closure capture changes shape (`Env` no longer owns the
+cell; it owns a `Ref` into the Store). Touches `step.rs`, `env.rs`,
+`val.rs`, every host-state prim. The "snapshot is cheap" property
+needs either persistent data structures (im, rpds) or copy-on-write
+tricks, both of which break ADR-002's zero-deps rule unless we
+hand-roll something light. A naive `HashMap` clone per snapshot is
+fine at small scale (REPL, demos) — only becomes a problem if a
+host snapshots in a hot loop.
+
+**Decision posture.** Defer until a concrete UX needs it. The
+dissipation flourish doesn't (illusion is enough); the
+curves-scrubber would be cool but isn't asked yet; the spells/genes
+undo button is the obvious next pull. When a host actually wants
+it, this is a meaty ADR (CEK → CESK is the natural project narrative
+arc — like ADR-001 → eventual ADR-N). Until then, hosts that need
+their own undo can snapshot at their own layer (clone the `World`
+struct before each cast).
+
+---
+
 ## Out of scope here (already on the docs/letrs.html coda)
 
 These are real but pre-existing follow-ups, not surfaced by the

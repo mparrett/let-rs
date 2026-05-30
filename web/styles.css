@@ -223,6 +223,10 @@ input[type="text"] { letter-spacing: 0.05em; font-size: 16px; }
   white-space: pre;
   overflow-x: auto;
 }
+/* Per-cell opacity transition so the dissipation animation in
+   spells.js (ring shrink after a cast) actually fades — without
+   this, setting span.style.opacity snaps instantly. */
+.grid span { transition: opacity 220ms ease; }
 
 .legend {
   display: flex; flex-wrap: wrap; gap: 14px;
