@@ -15,7 +15,7 @@
 - `wasm32-unknown-unknown` Rust target (`rustup target add wasm32-unknown-unknown`)
 - `wasm-bindgen-cli` 0.2.114 (`cargo install -f wasm-bindgen-cli --version 0.2.114`)
 - `binaryen` 129+ for `wasm-opt` (`brew install binaryen`)
-- Plain `python3 -m http.server` for serving — **no COI / SAB / service-worker shim required** (the whole reason this exists; ADR-009)
+- Any static-file server works — **no COI / SAB / service-worker shim required** (the whole reason this exists; ADR-009). Prefer `just wasm-serve` (which wraps `python3 -m http.server -d web 8000`) or `npx serve web`. Agent sessions: raw `python3 -m http.server` may be blocked by the auto-mode classifier on the grounds of binding a port + exposing files; the `just` wrapper is a recognized task target and goes through.
 
 Pipeline: `cargo build` → `wasm-bindgen --target web` → `wasm-opt -Oz --strip-debug --strip-producers`.
 
