@@ -59,9 +59,14 @@ $('#clear-tape').addEventListener('click', () => { tapeEl.value = ''; });
 // spell back to its center — outermost Chebyshev ring around the
 // cast (cx, cy) flips to floor first, then the next ring in, and
 // so on down to the center cell. Each ring fades together (with a
-// small per-cell jitter so it doesn't snap in lockstep). Once the
-// last ring has flipped, sync the underlying World so a follow-up
-// cast starts from a clean slate.
+// small per-cell jitter so it doesn't snap in lockstep).
+//
+// This is purely visual cleanup; the underlying World was already
+// reset at the start of the cast (see the cast button handler), so
+// the animation doesn't need to call `vm.reset_world` at the end.
+// That decoupling means a cast interrupting an in-flight animation
+// always lands on a clean grid, even if the previous animation
+// never completed.
 //
 // `castToken` is the abort handle: every cast bumps it, every
 // scheduled timer checks it. A new cast mid-dissipation cancels the
@@ -102,12 +107,6 @@ const dissipate = (cx, cy) => {
         }, FADE_MS);
       }, delay);
     });
-    setTimeout(() => {
-      if (myToken !== castToken) return;
-      vm.reset_world();
-      // No refresh() — the DOM already shows all floor; refreshing
-      // would rebuild every span and snap a momentary unstyled blink.
-    }, maxRing * RING_STEP + RING_JITTER + FADE_MS * 2 + 80);
   }, HOLD_MS);
 };
 
@@ -121,6 +120,13 @@ $('#cast-btn').addEventListener('click', () => {
     logEl.textContent = '⚠ x and y must be integers\n' + vm.log();
     return;
   }
+  // Reset the world *before* the cast so every cast lands on a fresh
+  // grid — guarantees the user sees just this spell's effect rather
+  // than it layered on top of whatever the previous cast painted (or
+  // the page-load seed). Pre-fix, the only `vm.reset_world` call sat
+  // at the end of the dissipation chain and got dropped any time the
+  // user cast again within ~1.5 s, so effects piled up indefinitely.
+  vm.reset_world();
   try {
     vm.cast(tape, x, y);
   } catch (e) {
