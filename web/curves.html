@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>letrs · curve lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+  <main class="frame">
+
+    <header class="mast">
+      <div class="strip">
+        <span><a class="back" href="./index.html">← letrs</a></span>
+        <span class="here curve">curve lab</span>
+        <span>strokes → L-system → ASCII canvas</span>
+      </div>
+      <h1>Curve <span class="sigil curve">Lab</span></h1>
+      <p class="sub">Turtle glyphs compile to s-expressions; pure-lisp <code>grow</code> rewrites the tape under your rules; a side-effecting <code>draw!</code> walks the result through an 8-direction turtle and stamps a sparse ASCII canvas.</p>
+    </header>
+
+    <div class="cols">
+
+      <section class="panel" id="curve-lab">
+        <h2>Curve Lab</h2>
+
+        <div class="palette" id="stroke-palette" aria-label="stroke buttons">
+          <span class="stroke-group" title="movement">
+            <button type="button" class="stroke move" data-stroke="F" title="forward (draw)">F</button>
+            <button type="button" class="stroke move" data-stroke="G" title="forward (no draw)">G</button>
+          </span>
+          <span class="palette-sep"></span>
+          <span class="stroke-group" title="rotation (45° per tick)">
+            <button type="button" class="stroke turn" data-stroke="+" title="turn left 45°">+</button>
+            <button type="button" class="stroke turn" data-stroke="-" title="turn right 45°">−</button>
+          </span>
+          <span class="palette-sep"></span>
+          <span class="stroke-group" title="branching">
+            <button type="button" class="stroke branch" data-stroke="[" title="push state">[</button>
+            <button type="button" class="stroke branch" data-stroke="]" title="pop state">]</button>
+          </span>
+          <span class="palette-sep"></span>
+          <button type="button" class="stroke ctl" id="clear-axiom" title="clear axiom">⌫</button>
+        </div>
+
+        <label class="field">
+          <span>axiom</span>
+          <input type="text" id="axiom" value="F+F+F+F+F+F+F+F" autocomplete="off" spellcheck="false">
+        </label>
+
+        <label class="field">
+          <span>rules — one per line, <code>lhs = rhs</code> (empty for axiom-only)</span>
+          <textarea id="rules" rows="3" spellcheck="false" autocomplete="off" placeholder="F = F+F-F"></textarea>
+        </label>
+
+        <div class="row">
+          <div class="stepper field" role="group" aria-label="iterations">
+            <span>iters</span>
+            <div class="stepper-body">
+              <button type="button" class="stepper-btn" id="iters-down" aria-label="decrement iterations">−</button>
+              <input type="number" id="iters" value="0" min="0" max="6" inputmode="numeric">
+              <button type="button" class="stepper-btn" id="iters-up" aria-label="increment iterations">+</button>
+            </div>
+          </div>
+          <button type="button" class="action primary" id="draw-btn">draw</button>
+          <button type="button" class="action subdued" id="clear-canvas">clear</button>
+          <span class="hint">⌘/Ctrl + ↵ in any field</span>
+        </div>
+
+        <pre class="canvas" id="canvas"></pre>
+
+        <details class="cheatsheet curves">
+          <summary>quick L-systems</summary>
+          <ul>
+            <li><code class="curve-example" data-axiom="F+F+F+F+F+F+F+F" data-rules="" data-iters="0">octagon</code> — axiom only, 8 unit edges at 45°</li>
+            <li><code class="curve-example" data-axiom="F" data-rules="F = +F--F+" data-iters="3">Lévy C curve</code> — F → +F--F+ at 45° (3 iterations)</li>
+            <li><code class="curve-example" data-axiom="F" data-rules="F = FF[+F]F[-F]F" data-iters="2">fractal plant</code> — branching tree (2 iterations)</li>
+            <li><code class="curve-example" data-axiom="F" data-rules="F = F[+F][-F]F" data-iters="3">binary tree</code> — symmetric Y at every step (3 iterations)</li>
+            <li><code class="curve-example" data-axiom="F" data-rules="F = F+F-F-F+F" data-iters="2">Koch zig-zag</code> — single line, F → F+F-F-F+F at 45° (try 2→3 to gnarl)</li>
+            <li><code class="curve-example" data-axiom="F--F--F--F" data-rules="F = F-F+F+FF-F-F+F" data-iters="1">Koch square</code> — closed island, doubled ticks for 90° corners (default 1; 2 gets busy)</li>
+            <li><code class="curve-example" data-axiom="F+F+F+F+F+F+F+F" data-rules="F = F+F-F" data-iters="1">bumpy octagon</code> — closed octagon whose edges grow bumps each iteration (try 1→2)</li>
+            <li><code class="curve-example" data-axiom="X" data-rules="X = +Y-F-Y+; Y = -X+F+X-" data-iters="5">Sierpiński arrowhead</code> — X/Y are non-terminals (drive rewrite only); F draws (try iters 4→6)</li>
+          </ul>
+        </details>
+      </section>
+
+      <section class="panel" id="repl">
+        <h2>REPL</h2>
+
+        <textarea id="repl-input" rows="5" spellcheck="false" autocomplete="off">((lambda (n) (* n n)) 7)</textarea>
+
+        <div class="row">
+          <button type="button" class="action primary" id="eval-btn">eval</button>
+          <button type="button" class="action subdued" id="clear-out">clear output</button>
+          <span class="hint">⌘/Ctrl + ↵ to evaluate</span>
+        </div>
+
+        <pre class="out" id="out"></pre>
+
+        <details class="cheatsheet repl">
+          <summary>quick examples</summary>
+          <ul>
+            <li><code>(+ 1 2 3 4 5)</code> — variadic arithmetic</li>
+            <li><code>'(a (b c) d)</code> — quoted nested list</li>
+            <li><code>(grow '(F) '((F F + F)) 2)</code> — pure-lisp L-system rewrite</li>
+            <li><code>(draw! '(F + F + F + F)) (render!)</code> — direct turtle ops</li>
+            <li><code>`(1 ,(+ 1 1) ,@'(3 4))</code> — quasiquote with splice</li>
+          </ul>
+        </details>
+      </section>
+
+    </div>
+
+    <footer class="colophon">
+      <span><a class="back" href="./genes.html">← gene lab</a></span>
+      <span id="coi-chip">checking COI…</span>
+      <span>letrs · curve lab</span>
+    </footer>
+
+  </main>
+
+  <script type="module" src="./curves.js"></script>
+</body>
+</html>

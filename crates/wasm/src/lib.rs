@@ -13,6 +13,11 @@
 //!   prim, and renderer all come from `genes` (ADR-011, ADR-016).
 //! - **`cast_breed(tape_a, tape_b, seed)`** — two parent strands → breed
 //!   via `breed!` → resolve via `express!`. Same shape as `cast_genome`.
+//! - **`cast_curve(axiom, rules_sexpr, iters)`** — stroke-tape translation +
+//!   pure-lisp `grow` rewrite + side-effecting `draw!` + `render!`. Returns
+//!   the rendered ASCII canvas. Rules arrive pre-built as a lisp form
+//!   (the page module's job — see `web/curves.js`) so the bridge stays a
+//!   thin wrapper. See ADR-019.
 //!
 //! Plus read-only `grid()` / `log()` accessors and a `reset_world()` that
 //! replaces the world tiles in place while preserving dimensions.
@@ -26,6 +31,7 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 
+use curves::Turtle;
 use lisp::Vm as LispVm;
 use world::World;
 
@@ -37,6 +43,11 @@ pub struct WasmVm {
     /// clone with the world prims via closure capture in
     /// `world::world_prim::install`.
     world: Rc<RefCell<World>>,
+    /// Host-owned turtle handle for the curves DSL. Same pattern as
+    /// `world`: the bridge owns the Rc, `curves::install` captures a
+    /// clone in the `draw!`/`render!`/`reset!` prims. See ADR-019.
+    #[allow(dead_code)] // held to keep the prim closures alive
+    turtle: Rc<RefCell<Turtle>>,
     width: u32,
     height: u32,
 }
@@ -48,15 +59,17 @@ impl WasmVm {
         console_error_panic_hook::set_once();
         let world =
             Rc::new(RefCell::new(World::new(width, height).map_err(|e| JsValue::from_str(&e))?));
+        let turtle = Rc::new(RefCell::new(Turtle::new()));
         let mut inner = LispVm::new();
         spells::install_with_world(&mut inner, world.clone());
         genes::install(&mut inner);
+        curves::install(&mut inner, turtle.clone());
         // Default budget for browser hosts: 10M CEK steps. Tail-call test
         // currently uses ~1M; spells/genes runs are well under 100k. The
         // browser eval runs on the main thread, so an unbounded loop
         // hangs the page — this is the backstop.
         inner.set_step_budget(10_000_000);
-        Ok(WasmVm { inner, world, width, height })
+        Ok(WasmVm { inner, world, turtle, width, height })
     }
 
     /// Override the CEK step budget for subsequent evaluations.
@@ -159,5 +172,35 @@ impl WasmVm {
             .eval_str(&src)
             .map_err(|e| JsValue::from_str(&e))?;
         Ok(genes::render_creature(&phenotype))
+    }
+
+    /// Translate a stroke axiom, optionally rewrite it `iters` times under
+    /// `rules_sexpr`, dispatch the result through `draw!`, and return the
+    /// rendered ASCII canvas via `render!`. `rules_sexpr` is a *lisp*
+    /// rules list as a string (e.g. `"((F F + F - F))"`); the page module
+    /// builds it from the per-line `lhs = rhs` UI input so the bridge
+    /// stays domain-neutral. Empty string is shorthand for `()` (no
+    /// rewrite — useful for axiom-only casts like the octagon).
+    pub fn cast_curve(
+        &mut self,
+        axiom: &str,
+        rules_sexpr: &str,
+        iters: i32,
+    ) -> Result<String, JsValue> {
+        let axiom_list = strokes::tape_to_sexpr(axiom)
+            .map_err(|e| JsValue::from_str(&format!("stroke: {e}")))?;
+        let rules = if rules_sexpr.trim().is_empty() { "()" } else { rules_sexpr };
+        // Each cast resets the turtle so successive casts don't pile on
+        // the same canvas. `let ((_ …))` is the project's standing
+        // workaround for the missing `begin` (see ADR-019).
+        let src = format!(
+            "(let ((_ (reset!))) \
+               (let ((_ (draw! (grow {axiom_list} '{rules} {iters})))) \
+                 (render!)))"
+        );
+        self.inner
+            .eval_str(&src)
+            .map(|v| format!("{v}"))
+            .map_err(|e| JsValue::from_str(&e))
     }
 }

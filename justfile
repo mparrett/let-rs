@@ -18,6 +18,9 @@ world:
 genes:
     cargo run -q -p lisp --example genes
 
+curves:
+    cargo run -q -p lisp --example curves
+
 check:
     cargo check --all-targets
 

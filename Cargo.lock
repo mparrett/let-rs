@@ -167,6 +167,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
+name = "curves"
+version = "0.1.0"
+dependencies = [
+ "lisp",
+ "strokes",
+]
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -233,9 +241,11 @@ name = "lisp"
 version = "0.1.0"
 dependencies = [
  "codons",
+ "curves",
  "genes",
  "runes",
  "spells",
+ "strokes",
  "world",
 ]
 
@@ -384,6 +394,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "strokes"
+version = "0.1.0"
+
+[[package]]
 name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -426,10 +440,12 @@ version = "0.1.0"
 dependencies = [
  "codons",
  "console_error_panic_hook",
+ "curves",
  "genes",
  "lisp",
  "runes",
  "spells",
+ "strokes",
  "wasm-bindgen",
  "world",
 ]

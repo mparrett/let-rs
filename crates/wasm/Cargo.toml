@@ -16,9 +16,11 @@ crate-type = ["cdylib", "rlib"]
 # this line.
 wasm-bindgen             = "=0.2.114"
 console_error_panic_hook = "0.1"
-lisp   = { path = "../lisp" }
-runes  = { path = "../runes" }
-codons = { path = "../codons" }
-spells = { path = "../spells" }
-genes  = { path = "../genes" }
-world  = { path = "../world" }
+lisp    = { path = "../lisp" }
+runes   = { path = "../runes" }
+codons  = { path = "../codons" }
+strokes = { path = "../strokes" }
+spells  = { path = "../spells" }
+genes   = { path = "../genes" }
+curves  = { path = "../curves" }
+world   = { path = "../world" }

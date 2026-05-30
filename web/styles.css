@@ -67,6 +67,7 @@ body::after {
 }
 .mast .strip .here { color: var(--indigo); }
 .mast .strip .here.gene { color: var(--honey); }
+.mast .strip .here.curve { color: var(--copper); }
 .mast .strip .back, .colophon .back {
   color: var(--ink-dust);
   text-decoration: none;
@@ -86,6 +87,7 @@ body::after {
 }
 .mast h1 .sigil { font-style: italic; color: var(--indigo); }
 .mast h1 .sigil.gene { color: var(--honey); }
+.mast h1 .sigil.curve { color: var(--copper); }
 .mast .sub {
   font-family: var(--display); font-style: italic; font-weight: 400;
   font-size: clamp(15px, 1.5vw, 18px);
@@ -411,6 +413,142 @@ textarea {
 .cheatsheet.genes code:hover  { background: rgba(224,179,74,0.18); color: var(--ink); }
 .cheatsheet.genes code:active { background: rgba(224,179,74,0.30); }
 
+/* ─── Curve Lab ──────────────────────────────────────────── */
+#curve-lab { border-left-color: var(--copper); }
+
+/* Stroke palette: three groups (movement / rotation / branching),
+   each toned to its role. Same .palette grid as runes/codons so
+   the buttons line up consistently across all three labs. */
+.stroke-group {
+  display: inline-flex; flex-wrap: wrap; gap: 4px;
+  align-items: center;
+}
+.stroke {
+  font-family: var(--mono);
+  font-size: 1.3em;
+  min-width: 38px; height: 38px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--copper);
+  border: 1px solid rgba(217,119,87,0.32);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 80ms, color 80ms, border-color 80ms;
+}
+.stroke:hover { background: rgba(217,119,87,0.12); color: var(--ink); }
+/* rotation: indigo — visually distinct from the movement copper */
+.stroke.turn   { color: var(--indigo); border-color: rgba(139,143,255,0.30); }
+.stroke.turn:hover   { background: rgba(139,143,255,0.10); }
+/* branching: sage — push/pop reads as "structural" alongside the prim
+   colors and avoids clashing with the dimmer ctl style */
+.stroke.branch { color: var(--sage); border-color: rgba(127,197,154,0.30); }
+.stroke.branch:hover { background: rgba(127,197,154,0.10); }
+.stroke.ctl { color: var(--ink-dim); border-color: var(--rule); font-size: 1.1em; }
+.stroke.ctl:hover { background: rgba(255,255,255,0.04); color: var(--ink); }
+
+/* Canvas: monospace pre, line-height tight enough that diagonal
+   `╱` / `╲` glyphs visually connect at corners (the default ~1.55
+   from .log leaves them as a broken stipple). Slightly larger glyph
+   size than the spell grid; same horizontal-scroll fallback for
+   deep iterations. */
+.canvas {
+  font-family: var(--mono);
+  font-size: 16px;
+  line-height: 1.0;
+  letter-spacing: 0;
+  color: var(--copper);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--copper);
+  padding: 16px 18px;
+  margin: 14px 0;
+  white-space: pre;
+  overflow: auto;
+  min-height: 6em;
+  /* Cap the canvas display area so a too-many-iters cast scrolls
+     inside the panel instead of pushing the cheatsheet off-screen.
+     Picked to land just under a typical laptop viewport's panel
+     height; deep fractals get a scrollbar. */
+  max-height: 60vh;
+}
+.canvas:empty::before {
+  content: "— empty —";
+  color: var(--ink-dust);
+  font-style: italic;
+}
+
+/* textarea inside Curve Lab (rules input) — keep mono, no fixed font
+   shrinkage. The page-wide textarea rule already covers most of this. */
+#rules { min-height: 60px; }
+
+/* Iteration stepper: −  N  + horizontal cluster. The center input
+   keeps the native number widget so keyboard / mousewheel still work,
+   but the explicit buttons give a one-click bump-and-redraw flow
+   (the bump handler in curves.js calls draw() after each click). */
+.stepper { width: auto; }
+.stepper-body {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.stepper-body:focus-within {
+  border-color: var(--copper);
+  box-shadow: 0 0 0 2px rgba(217,119,87,0.14);
+}
+.stepper-btn {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1;
+  width: 30px;
+  background: transparent;
+  color: var(--copper);
+  border: 0;
+  cursor: pointer;
+  transition: background 80ms, color 80ms;
+  user-select: none;
+}
+.stepper-btn:hover { background: rgba(217,119,87,0.14); color: var(--ink); }
+.stepper-btn:active { background: rgba(217,119,87,0.24); }
+/* Strip the input's own borders/padding so it reads as one continuous
+   chip with the buttons; also nuke the native spinner since our +/−
+   buttons replace it. */
+.stepper-body input[type="number"] {
+  width: 48px;
+  text-align: center;
+  border: 0;
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+  border-radius: 0;
+  padding: 8px 4px;
+  background: transparent;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+.stepper-body input[type="number"]:focus { box-shadow: none; }
+.stepper-body input[type="number"]::-webkit-inner-spin-button,
+.stepper-body input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.stepper-body input[type="number"] { -moz-appearance: textfield; }
+
+/* Curve cheatsheet variant — copper, parallel to spells/plum + genes/honey. */
+.cheatsheet.curves {
+  border-left-color: var(--copper);
+  background: rgba(217,119,87,0.05);
+}
+.cheatsheet.curves summary { color: var(--copper); }
+.cheatsheet.curves code {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--copper);
+}
+.cheatsheet.curves code:hover  { background: rgba(217,119,87,0.18); color: var(--ink); }
+.cheatsheet.curves code:active { background: rgba(217,119,87,0.30); }
+
 /* ─── Colophon ──────────────────────────────────────────── */
 .colophon {
   margin-top: 6vh;
@@ -469,3 +607,4 @@ textarea {
 
 .lab-card.spells { border-left-color: var(--plum); }
 .lab-card.genes  { border-left-color: var(--honey); }
+.lab-card.curves { border-left-color: var(--copper); }

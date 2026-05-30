@@ -10,11 +10,13 @@ workspace = true
 # Dev-only: example binaries consume DSL crates. The lisp crate itself
 # stays zero-deps — ADR-002 still holds.
 [dev-dependencies]
-runes  = { path = "../runes" }
-codons = { path = "../codons" }
-spells = { path = "../spells" }
-genes  = { path = "../genes" }
-world  = { path = "../world" }
+runes   = { path = "../runes" }
+codons  = { path = "../codons" }
+strokes = { path = "../strokes" }
+spells  = { path = "../spells" }
+genes   = { path = "../genes" }
+curves  = { path = "../curves" }
+world   = { path = "../world" }
 
 [[example]]
 name = "repl"
@@ -31,3 +33,7 @@ path = "examples/world.rs"
 [[example]]
 name = "genes"
 path = "examples/genes.rs"
+
+[[example]]
+name = "curves"
+path = "examples/curves.rs"

@@ -1197,3 +1197,130 @@ helper saves the duplication. The lisp crate stops re-exporting
   `Val::WorldPrim`. Will need a refresh; tracked separately so this
   refactor sequence stays scoped.
 
+## ADR-019: Curves demo — L-systems via symbol tape + turtle host state (2026-05-29)
+
+**Context**: Runes/spells and codons/genes followed the same shape —
+a tiny tape alphabet in its own zero-dep crate, paired with a
+vocabulary pack that installs prims + a prelude on top of `lisp`. The
+project memory already calls this the "rule of three": two siblings
+exist; a third would either confirm the pattern or expose where it
+bends. ADR-018 closed the host-state refactor by extracting `world`,
+which left the demo-adjacent crates fully orthogonal — a clean
+moment to add a third sibling pair before anything else moves.
+
+L-systems (Lindenmayer, 1968) fit the existing shape almost
+suspiciously well: a small alphabet of turtle glyphs (`F + - [ ]`),
+production rules that rewrite the tape in place, and a visual ASCII
+payoff (curves, fractals, branching plants). They also flex something
+neither earlier demo does: the rewrite step grows the *tape itself*
+before it's interpreted, which exercises pure-lisp recursion in a way
+spell pipelines and genome resolvers don't.
+
+**Decision**: Add two sibling crates following the established
+split:
+
+- `crates/strokes/` — turtle-glyph tape alphabet. Six glyphs:
+  `F` (forward draw), `G` (forward no-draw), `+` (turn left 45°),
+  `-` (turn right 45°), `[` (push state), `]` (pop state). Each
+  glyph emits a *quoted symbol* into the output list, so
+  `tape_to_sexpr("F+F")` → `"(list 'F '+ 'F)"`. Zero-dep, sole
+  source of truth for the glyph table (parallel to `runes` and
+  `codons`).
+- `crates/curves/` — L-system DSL pack. Owns the turtle state
+  (`Turtle`, an `Rc<RefCell<Turtle>>` captured by prims at install
+  time, mirroring ADR-017's `World` pattern), the side-effecting
+  turtle prims (`draw!`, `render!`, `reset!`), and a small prelude
+  with the pure-lisp rewrite engine (`expand`, `grow`). Depends only
+  on `lisp`.
+
+Tape representation as a list of *symbols* (not function calls) is
+the key shape decision — it's what makes pure-lisp rewrite natural.
+`grow` walks a symbol list, looks each symbol up in a rules alist
+(`((F . (F + F)) …)`), and splices the replacement in via `append`.
+A final `draw!` host prim dispatches each symbol to the matching
+turtle action.
+
+8-direction turtle (45° per `±`). Heading is a `u8` in `0..8`;
+`forward!` stamps a heading-dependent glyph (`─ ╱ │ ╲`) into a
+sparse `HashMap<(i32, i32), char>` so the canvas auto-sizes from
+the actual bbox of visited cells at render time.
+
+**Alternatives considered**:
+- **4-direction turtle (90° per `±`)**. Simpler — every Hilbert /
+  dragon / Sierpiński example from the L-system literature works
+  unchanged. Rejected for v1: 4-dir ASCII is all `─` and `│`, which
+  looks like Pac-Man. 8-dir loses some canonical examples (Hilbert
+  needs `++`/`--` instead of `+`/`-`) but the diagonal glyphs are
+  visibly richer, which is the whole point of an ASCII demo. A
+  later ADR can revisit if a 4-dir-only example becomes important.
+- **Tape as a list of function calls** (matching spells / genes).
+  E.g. `(list (forward) (turn-left) (forward))`. Rejected: the
+  L-system rewrite step needs to splice symbol sequences in
+  arbitrary order, which is trivial on a symbol list but awkward
+  on a list of resolved function values (you'd compare closures, or
+  re-introduce symbolic indirection). The symbol-list shape is the
+  natural form for L-system production rules; making the curves
+  pack the odd one out is the right local choice.
+- **6-dir hex turtle** for Koch / Sierpiński triangle. Rejected:
+  ASCII renders hex grids poorly; we'd need wider unicode
+  half-block trickery, and the engine doesn't have float math for
+  the cell-mapping anyway. Out of scope.
+- **Engine-side `begin` for sequencing**. The cleanest
+  user-facing API would be `(begin (reset!) (draw! …) (render!))`,
+  but our lisp doesn't have `begin` and adding it is an engine
+  change. Rejected: stick with the existing `let` chain idiom
+  (each prim returns a value, sequencing via nested `let`s) or
+  do the three calls as separate top-level forms in the example /
+  REPL. Adding `begin` is a separate decision; this ADR shouldn't
+  drag the engine.
+- **Bake an `install_with_turtle(vm)` that owns the turtle
+  internally** (no host-supplied `Rc<RefCell<Turtle>>`). Rejected:
+  symmetric with `world::world_prim::install(vm, world)` is more
+  valuable than the one-line save; consumers that want to peek at
+  turtle state from Rust (the WASM bridge if it ever gets a Curve
+  Lab page) need a handle.
+
+**Consequences**:
+- **+** Confirms the rule-of-three: the
+  `<alphabet-crate> + <vocabulary-crate>` split survives a third
+  pass without bending. Pattern is now established, not just
+  observed twice.
+- **+** First demo whose tape is rewritten before being interpreted
+  — exercises pure-lisp `letrec`/`cons`/`append` recursion in a
+  visible way (the test suite gains "grow N iterations produces
+  expected sequence" cases that double as recursion smoke tests).
+- **+** First demo with side-effecting prims that don't thread
+  ctx — turtle ops mutate `Rc<RefCell<Turtle>>` directly. Validates
+  that ADR-017's prim shape handles "imperative" hosts as cleanly
+  as the ctx-folding spell pipeline.
+- **+** Canvas auto-sizing means no `(canvas! w h)` ceremony.
+  Single `(render!)` call → string keyed off whatever the turtle
+  actually visited.
+- **−** 8-dir means the canonical Hilbert / dragon curves render
+  oddly without `++`/`--` doubling. Documented in the example with
+  curves chosen for 45° fit (Lévy C, fractal plant); a contributor
+  who reaches for Hilbert will need to know.
+- **−** Tape-as-symbol-list breaks symmetry with the other two DSL
+  packs (spells/genes both produce function-value lists). The
+  divergence is justified by the rewrite step but is worth flagging
+  for future DSL designs — not every domain wants the same shape.
+- **−** `+` and `-` are also arithmetic primitives in the engine.
+  Quoting (`'+`) avoids the collision at the tape level; no engine
+  change needed. Worth noting in the example's intro so a reader
+  doesn't think we shadow them.
+
+**Deferred**:
+- **WASM bridge page for the Curve Lab.** The natural shape is a
+  per-iteration slider — drag from 1→5 and watch the curve
+  unfold. Out of scope for v1 (CLI demo lands first; promote to
+  WASM when the existing two pages need a sibling).
+- **`docs/letrs.html` narrative refresh** to add curves alongside
+  spells/genes (the ADR-018 deferral covered the host-state edits;
+  this is an additive pass).
+- **`begin` as an engine special form.** Tracked as a follow-up if
+  any later DSL pack also wants imperative sequencing; not worth a
+  one-off engine change for this demo.
+- **Generalize the turtle to a configurable angle / N-direction
+  table.** Out of scope until a second turtle-shaped host appears,
+  same "promote on second consumer" rule.
+

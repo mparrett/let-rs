@@ -27,8 +27,10 @@ Slices that have landed:
   `wasm-bindgen`, no COI / SAB required (see ADR-009)
 - genes demo: codon-tape → diploid genome → phenotype creature card,
   parallel to spells but with genetics vocabulary (see ADR-011)
+- curves demo: stroke-tape → L-system rewrite → 8-direction turtle →
+  ASCII canvas, third sibling completing the rule of three (see ADR-019)
 
-97 tests pass across the workspace; `lisp` core stays zero-deps.
+114 tests pass across the workspace; `lisp` core stays zero-deps.
 
 ## Architecture (read this first)
 
@@ -62,8 +64,9 @@ host types.)
   sequence of top-level forms; returns the last expression's value
   (ADR-014).
 
-The spell + gene DSL packs live in sibling crates (`crates/spells/`,
-`crates/genes/`) as of ADR-016 — see "Sibling crates" below.
+The spell, gene, and curve DSL packs live in sibling crates
+(`crates/spells/`, `crates/genes/`, `crates/curves/`) as of ADR-016
+and ADR-019 — see "Sibling crates" below.
 
 Examples in `crates/lisp/examples/`:
 
@@ -78,6 +81,11 @@ Examples in `crates/lisp/examples/`:
   `mutate` closures see it via lexical scope. A `breeding(…)` helper
   in the example crosses two parent strands via `breed!` for Mendelian
   segregation. See ADR-011, ADR-012, ADR-013.
+- `curves.rs` — stroke tape → `(grow axiom rules n)` → `(draw! …)` →
+  ASCII canvas. The pure-lisp rewrite engine (`expand`, `expand-one`,
+  `grow`) lives in the curves prelude; turtle state + the
+  `draw!`/`render!`/`reset!` prims live in `crates/curves/`. First demo
+  whose tape is rewritten before being interpreted. See ADR-019.
 
 Sibling crates:
 
@@ -87,6 +95,11 @@ Sibling crates:
 - `crates/codons/` — ASCII RNA codon tape (`AUG CGA …`) → `(list …)` sexpr.
   Zero deps; sole source of truth for the codon table. Mirrors the
   `runes/` shape; ADR-011.
+- `crates/strokes/` — turtle glyph tape (`F + - [ ]`) → `(list 'F '+ …)`
+  sexpr. Zero deps; sole source of truth for the stroke table. Output
+  is *quoted symbols* (not function calls) so the curves prelude's
+  pure-lisp `grow` can rewrite the tape before `draw!` interprets it.
+  See ADR-019.
 - `crates/world/` — `World` (tile grid + event log) and the 5 world
   prims (`world-tile`, `world-set-tile!`, `world-log!`, `world-size`,
   `world-apply!`). Hosts wire it in via `world::world_prim::install(&mut
@@ -108,43 +121,60 @@ Sibling crates:
   the creature-card renderer. Depends only on `lisp` (`Vm`, `Val`,
   `Arity`). Shared by `examples/genes.rs` and the WASM bridge. See
   ADR-011, ADR-014, ADR-016.
+- `crates/curves/` — L-system vocabulary: `Turtle` (8-direction sparse
+  canvas, host-owned via `Rc<RefCell<Turtle>>`), the three turtle prims
+  (`draw!`, `render!`, `reset!`), `PRELUDE_DEFINES` with the pure-lisp
+  rewrite engine (`expand`, `expand-one`, `grow`), and a Rust-side
+  `render(&Turtle) -> String` for direct access. `install(vm, turtle)`
+  wires all of it in one call. Depends only on `lisp`. Cast pipeline is
+  `(draw! (grow axiom rules n))` then `(render!)`. See ADR-019.
 - `crates/wasm/` — JS-facing bridge (`wasm-bindgen` `cdylib`). Wraps
-  `lisp::Vm` + `World`, embeds the spell prelude as a const string, exposes
-  `new(width, height)`, `eval(src)`, `cast(tape, x, y)`, `grid()`, `log()`,
-  `reset_world()`, and `cast_genome(tape)` (returns a rendered creature
-  card; consumes `genes` so there's a single source of truth across
-  CLI + WASM). ~120 LOC. Pinned to `wasm-bindgen =0.2.114` to match the
-  installed CLI (ADR-009).
+  `lisp::Vm` + `World` + `Turtle`, installs all three DSL packs at
+  construction, exposes `new(width, height)`, `eval(src)`,
+  `cast(tape, x, y)`, `cast_genome(tape, seed)`, `cast_breed(a, b, seed)`,
+  `cast_curve(axiom, rules_sexpr, iters)`, plus `grid()` / `log()` /
+  `reset_world()`. Pinned to `wasm-bindgen =0.2.114` to match the
+  installed CLI (ADR-009). The curve bridge expects `rules_sexpr` as a
+  pre-built lisp form (the page module owns the `lhs = rhs` parser) so
+  the Rust side stays domain-neutral.
 
-Web shell at `web/` — three pages, one bundle:
+Web shell at `web/` — four pages, one bundle:
 
-- `web/index.html` — landing page. Two `.lab-card` links to the demos
-  (plum-accented Spell Lab, honey-accented Gene Lab) over a Letrs
-  masthead. No WASM init on this page; it's pure HTML.
+- `web/index.html` — landing page. Three `.lab-card` links to the demos
+  (plum-accented Spell Lab, honey-accented Gene Lab, copper-accented
+  Curve Lab) over a Letrs masthead. No WASM init on this page; it's
+  pure HTML.
 - `web/spells.html` — Spell Lab + REPL, two-column at ≥940px. Plum
   rune-palette aesthetic.
 - `web/genes.html` — Gene Lab + REPL, two-column at ≥940px. Honey/sage
   codon-palette aesthetic.
+- `web/curves.html` — Curve Lab + REPL, two-column at ≥940px. Copper
+  stroke-palette aesthetic; rotation buttons indigo, branching buttons
+  sage so the three glyph groups read distinctly.
 - `web/styles.css` — shared. Palette + typography lifted from
   `docs/letrs.html`. Per-page accents picked via per-element classes
-  (`.sigil.gene`, `.lab-card.spells`, etc).
+  (`.sigil.gene`, `.lab-card.spells`, `.canvas`, etc).
 - `web/common.js` — plain ESM. `await init()`, `Vm` construction, COI
-  chip, REPL wiring. Imported by spells.js and genes.js.
+  chip, REPL wiring. Imported by spells.js, genes.js, and curves.js.
 - `web/spells.js` — Spell Lab page module: rune palette, `vm.cast`,
   world refresh, seed cast.
 - `web/genes.js` — Gene Lab page module: codon palette,
   `vm.cast_genome`, render card, seed.
+- `web/curves.js` — Curve Lab page module: stroke palette, rules-text
+  parser (`lhs = rhs` per line → lisp alist), `vm.cast_curve`, canvas
+  refresh, seed.
 - `web/pkg/` — `wasm-bindgen` output (gitignored).
 
 ## Build / test
 
 ```bash
-just              # default: cargo test --workspace (97 tests)
+just              # default: cargo test --workspace (114 tests)
 just test         # same — explicit
 just repl
 just spells       # CLI rune-tape demo
 just world        # CLI spell-paints-tiles demo
 just genes        # CLI codon-tape → creature card demo
+just curves       # CLI stroke-tape → L-system → ASCII canvas demo
 just check
 just wasm-build   # cargo build --target wasm32-unknown-unknown + wasm-bindgen
 just wasm-serve   # build + python3 -m http.server -d web 8000
@@ -152,11 +182,11 @@ just bench        # criterion benches under crates/bench/ (core + demos)
 ```
 
 Rust 1.93+, edition 2024. The core `lisp` crate stays zero-deps —
-keep it that way. `runes` and `codons` are zero-deps too. `world`,
-`spells`, and `genes` depend only on `lisp` (and `spells` also depends
-on `world` for the `install_with_world` helper). `wasm` may take deps
-(`wasm-bindgen`, `console_error_panic_hook`); this is allowed by
-ADR-002's "lisp stays platform-independent" caveat.
+keep it that way. `runes`, `codons`, and `strokes` are zero-deps too.
+`world`, `spells`, `genes`, and `curves` depend only on `lisp` (and
+`spells` also depends on `world` for the `install_with_world` helper).
+`wasm` may take deps (`wasm-bindgen`, `console_error_panic_hook`); this
+is allowed by ADR-002's "lisp stays platform-independent" caveat.
 
 WASM build requires three tools installed once:
 
@@ -201,6 +231,12 @@ ships a larger bundle.
   dom)`) so the evaluator treats them as symbols rather than variable
   lookups. For a new categorical trait, add its option pool to
   `Kind::Categorical(&[…])` so `mutate!` knows what values to draw from.
+- Adding a new stroke: edit `crates/strokes/src/lib.rs` (table) AND
+  extend the `draw!` dispatch in `crates/curves/src/lib.rs` to handle
+  the new symbol — strokes emits quoted symbols, `draw!` is where the
+  turtle action lives. Strokes that map to compound turtle motion
+  (e.g. a 90° turn) belong as prelude-level lisp defines rather than
+  new prims; keep the prim surface minimal.
 - Installable preludes (ADR-014): `eval_str` accepts a sequence of
   top-level forms. `(define name body)` extends the Vm env in place;
   single-binding self-recursion works via `extend_placeholder`,
