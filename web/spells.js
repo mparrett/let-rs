@@ -75,7 +75,9 @@ $('#clear-tape').addEventListener('click', () => { tapeEl.value = ''; });
 // fire — replacing innerHTML each tick would destroy the elements
 // before the browser could animate them.
 let castToken = 0;
-const HOLD_MS     = 400;  // pause after cast before dissipation begins
+const HOLD_MS     = 2000; // pause after cast before dissipation begins —
+                          // long enough for the eye to read the painted
+                          // pattern before it starts to retreat
 const RING_STEP   = 180;  // ms between consecutive rings
 const RING_JITTER =  60;  // ms randomization within a ring
 const FADE_MS     = 220;  // per-cell opacity transition each direction
