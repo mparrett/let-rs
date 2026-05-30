@@ -30,7 +30,7 @@ Slices that have landed:
 - curves demo: stroke-tape → L-system rewrite → 8-direction turtle →
   ASCII canvas, third sibling completing the rule of three (see ADR-019)
 
-114 tests pass across the workspace; `lisp` core stays zero-deps.
+The `lisp` core stays zero-deps.
 
 ## Architecture (read this first)
 
@@ -168,7 +168,7 @@ Web shell at `web/` — four pages, one bundle:
 ## Build / test
 
 ```bash
-just              # default: cargo test --workspace (114 tests)
+just              # default: cargo test --workspace
 just test         # same — explicit
 just repl
 just spells       # CLI rune-tape demo
