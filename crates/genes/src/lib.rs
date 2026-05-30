@@ -17,20 +17,24 @@ use lisp::val::{Arity, Val};
 
 /// Seed-independent half of the genome prelude — installed once via
 /// `install(vm)`. `dom` / `rec` bind to `#t` / `#f` so the codon
-/// fragments (e.g. `(size 70 dom)`) evaluate without quoting. `start`
-/// and `stop` are ctx-identity anchors so the codon table can lean on
-/// the biological start/stop convention without special-casing them in
-/// `thread`. Each trait closure is curried: `(size 70 dom)` returns a
-/// `ctx → ctx` that adds the allele.
+/// fragments (e.g. `(size 70 dom)`) evaluate without quoting.
+/// `genome-start` and `genome-stop` are ctx-identity anchors so the
+/// codon table can lean on the biological start/stop convention
+/// without special-casing them in `thread` — they're namespaced
+/// (rather than bare `start`/`stop`) so that a host installing the
+/// spells pack alongside genes can keep spells' zero-arg `start` for
+/// its pipeline seed without collision. Each trait closure is
+/// curried: `(size 70 dom)` returns a `ctx → ctx` that adds the
+/// allele.
 pub const PRELUDE_DEFINES: &str = r#"
-(define dom        #t)
-(define rec        #f)
-(define assoc-set  (lambda (k v ctx) (cons (cons k v) ctx)))
-(define thread     (lambda (ctx fs)
-                     (if (null? fs) ctx
-                         (thread ((car fs) ctx) (cdr fs)))))
-(define start      (lambda (ctx) ctx))
-(define stop       (lambda (ctx) ctx))
+(define dom          #t)
+(define rec          #f)
+(define assoc-set    (lambda (k v ctx) (cons (cons k v) ctx)))
+(define thread       (lambda (ctx fs)
+                       (if (null? fs) ctx
+                           (thread ((car fs) ctx) (cdr fs)))))
+(define genome-start (lambda (ctx) ctx))
+(define genome-stop  (lambda (ctx) ctx))
 (define add-allele (lambda (trait value kind ctx)
                      (assoc-set trait
                                 (cons (cons value kind)

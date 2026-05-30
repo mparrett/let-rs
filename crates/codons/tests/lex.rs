@@ -8,15 +8,19 @@ fn empty_tape_yields_empty_list() {
 
 #[test]
 fn single_control_codon() {
-    assert_eq!(tape_to_sexpr("AUG").unwrap(), "(list start)");
-    assert_eq!(tape_to_sexpr("UAA").unwrap(), "(list stop)");
+    // AUG/UAA/UGA emit namespaced anchors (`genome-start`/`genome-stop`)
+    // so that hosts installing the spell pack alongside genes don't
+    // collide on the bare `start` name (zero-arg in spells, one-arg
+    // ctx-identity here).
+    assert_eq!(tape_to_sexpr("AUG").unwrap(), "(list genome-start)");
+    assert_eq!(tape_to_sexpr("UAA").unwrap(), "(list genome-stop)");
 }
 
 #[test]
 fn canonical_strand() {
     assert_eq!(
         tape_to_sexpr("AUG CGA CGU UAA").unwrap(),
-        "(list start (size 70 dom) (size 30 rec) stop)"
+        "(list genome-start (size 70 dom) (size 30 rec) genome-stop)"
     );
 }
 
@@ -38,9 +42,9 @@ fn unknown_codon_errors() {
 fn full_genome_balanced_creature() {
     // Mirrors the "balanced" sequence in examples/genes.rs.
     let s = tape_to_sexpr("AUG CGA GCA ACA UCA GCG AUC GAU UAA").unwrap();
-    assert!(s.starts_with("(list start "));
+    assert!(s.starts_with("(list genome-start "));
     assert!(s.contains("(size 70 dom)"));
     assert!(s.contains("(strength 75 dom)"));
     assert!(s.contains("(biome 'volcanic dom)"));
-    assert!(s.ends_with(" stop)"));
+    assert!(s.ends_with(" genome-stop)"));
 }

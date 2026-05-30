@@ -16,13 +16,16 @@
 //! `runes/` (sibling DSLs each get their own table, per ADR-010).
 
 /// Codon table: each entry pairs a 3-character RNA triplet with a complete
-/// sexpr fragment. Control codons (`AUG`, `UAA`, `UGA`) emit no-op anchors;
-/// allele codons emit `(trait value dom|rec)` triples.
+/// sexpr fragment. Control codons (`AUG`, `UAA`, `UGA`) emit no-op anchors
+/// (namespaced as `genome-start` / `genome-stop` to avoid colliding with
+/// the spell DSL's zero-arg `start` — both packs install onto the same
+/// Vm in the WASM bridge); allele codons emit `(trait value dom|rec)`
+/// triples.
 pub const CODONS: &[(&str, &str)] = &[
     // control
-    ("AUG", "start"),
-    ("UAA", "stop"),
-    ("UGA", "stop"),
+    ("AUG", "genome-start"),
+    ("UAA", "genome-stop"),
+    ("UGA", "genome-stop"),
     // size
     ("CGA", "(size 70 dom)"),
     ("CGU", "(size 30 rec)"),
