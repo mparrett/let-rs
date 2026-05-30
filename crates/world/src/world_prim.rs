@@ -83,7 +83,7 @@ fn world_apply(args: &[Val], w: &mut World) -> R {
     };
 
     // Clamp the paint region to the grid intersection. Pre-fix a tape
-    // like `ᚠ ᛊ 1000000000` drove ~4e18 iterations on a 7×5 grid; now
+    // like `ᚦ ᛞ 1000000000` drove ~4e18 iterations on a 7×5 grid; now
     // we only walk the actual rectangle that lands inside the world.
     // Saturating arithmetic on i64 lets `area = i64::MAX` survive without
     // overflowing the bounds computation.

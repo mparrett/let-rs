@@ -699,22 +699,30 @@
         </p>
 
         <p style="margin: 18px 0 22px;">
-          <span class="tape">ᚠ</span>
-          <span class="tape">ᚠ ᛊ 3 ᛁ</span>
-          <span class="tape">ᚱ ᚠ ᛏ 5</span>
-          <span class="tape">ᛒ ᛁ ᛊ 2</span>
+          <span class="tape">ᚦ</span>
+          <span class="tape">ᚦ ᛞ 3 ᛇ</span>
+          <span class="tape">ᛚ ᚦ ᛟ 5</span>
+          <span class="tape">ᛗ ᛇ ᛞ 2</span>
         </p>
 
         <p>
           A ~50-line Rust translator (<code>examples/spells.rs</code>) tokenizes
-          each rune through a table: plain runes (<code>ᚠ → fire</code>) become
-          unary primitives; parametrized runes (<code>ᛊ → area</code>,
-          <code>ᛏ → power</code>) pair with the following numeral. The result
+          each rune through a table: plain runes (<code>ᚦ → fire</code>) become
+          unary primitives; parametrized runes (<code>ᛞ → area</code>,
+          <code>ᛟ → power</code>) pair with the following numeral. The result
           is an s-expression that wraps the rune list in a user-level threading
           combinator:
         </p>
 
-        <div class="boxed code-wrap" data-label="ᚠ ᛊ 3 ᛁ · compiled">
+        <p class="note">
+          Each rune is chosen by its Elder Futhark meaning — <code>ᚦ</code>
+          THURISAZ (thorn) for fire, <code>ᛇ</code> EIHWAZ (yew) for ice,
+          <code>ᛚ</code> LAGUZ (water) for bolt, <code>ᛗ</code> MANNAZ (man)
+          for self, <code>ᛞ</code> DAGAZ (day) for area,
+          <code>ᛟ</code> OTHALA (legacy) for power.
+        </p>
+
+        <div class="boxed code-wrap" data-label="ᚦ ᛞ 3 ᛇ · compiled">
         <pre class="code"><span class="vio">(thread (start) (list</span> <span class="hl">fire</span> <span class="hl">(area 3)</span> <span class="hl">ice</span><span class="vio">))</span></pre>
         </div>
 
@@ -752,7 +760,7 @@
 
         <p class="note">
           Notice what happens when a tape mentions two elements:
-          <code>ᚠ ᛊ 3 ᛁ</code> produces a ctx with both
+          <code>ᚦ ᛞ 3 ᛇ</code> produces a ctx with both
           <code>(element . fire)</code> and <code>(element . ice)</code> still
           present. The resolver currently takes the freshest, but the older
           binding hasn't been erased — it's structurally still there. This is

@@ -2,7 +2,7 @@
 //!
 //! A DSL layer on top of the [`lisp`](../lisp/index.html) crate. Each rune
 //! is mapped to a primitive name; parametrized runes pair with the
-//! immediately following numeral (e.g. `ᛊ 3` → `(area 3)`). The output is
+//! immediately following numeral (e.g. `ᛞ 3` → `(area 3)`). The output is
 //! a `(list …)` expression that callers wrap in their own spell pipeline
 //! (`(thread (start) …)` for the in-Vm demo; `(world-apply! (thread …))`
 //! for the resolver path used by the WASM bridge).
@@ -11,19 +11,20 @@
 //! about a particular DSL surface) while letting every host of the spell
 //! pipeline reuse one source of truth — see ADR-007 and ADR-010.
 
-/// Plain runes: each maps to a unary `ctx → ctx` primitive name.
+/// Plain runes: each chosen by its Elder Futhark meaning. Maps to a
+/// unary `ctx → ctx` primitive name.
 pub const PLAIN: &[(char, &str)] = &[
-    ('ᚠ', "fire"), // FEHU
-    ('ᛁ', "ice"),  // ISA
-    ('ᚱ', "bolt"), // RAIDO
-    ('ᛒ', "self"), // BERKANO — target self
+    ('ᚦ', "fire"), // THURISAZ — thorn, sharp/destructive
+    ('ᛇ', "ice"),  // EIHWAZ   — yew, winter-hardy evergreen
+    ('ᛚ', "bolt"), // LAGUZ    — water, flow
+    ('ᛗ', "self"), // MANNAZ   — man, the self
 ];
 
 /// Parametrized runes: each maps to `n → ctx → ctx`. Consumes the
 /// immediately following numeral.
 pub const PARAM: &[(char, &str)] = &[
-    ('ᛊ', "area"),  // SOWILO
-    ('ᛏ', "power"), // TIWAZ
+    ('ᛞ', "area"),  // DAGAZ  — day, expansion
+    ('ᛟ', "power"), // OTHALA — inheritance, legacy
 ];
 
 #[derive(Debug, Clone)]

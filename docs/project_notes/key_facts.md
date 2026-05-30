@@ -103,7 +103,7 @@ letrs/
 - `macro_thread_first` — `(-> 5 (+ 3) (* 2))` → `16`, defined in lisp
 - `macro_calls_macro` — a macro body uses another macro
 - `quasiquote_splice` — `\`(1 ,@xs 4)` with `xs = '(2 3)` → `(1 2 3 4)`
-- `canonical_example` (runes) — `tape_to_sexpr("ᚠ ᛊ 3 ᛁ") == "(list fire (area 3) ice)"`
+- `canonical_example` (runes) — `tape_to_sexpr("ᚦ ᛞ 3 ᛇ") == "(list fire (area 3) ice)"`
 
 ## Style & conventions
 

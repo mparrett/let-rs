@@ -165,7 +165,7 @@ document.querySelectorAll('.tape-example').forEach((el) => {
 // until the user does something, rather than evaporating before they
 // can read what's on screen.
 try {
-  vm.cast('ᚠ ᛊ 3 ᛁ', 3n, 2n);
+  vm.cast('ᚦ ᛞ 3 ᛇ', 3n, 2n);
 } catch (e) {
   console.warn('seed cast failed:', e);
 }
