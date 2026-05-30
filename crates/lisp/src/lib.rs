@@ -6,9 +6,12 @@
 //! - `k`           — first-class continuations (the "stack" reified as data)
 //! - `step`        — `step(State) -> Step` and the driver loop
 //! - `prim`        — pure built-in primitives and the initial environment
-//! - `world`       — minimal grid world used by the spell demo
-//! - `world_prim`  — world-aware primitives that read/mutate the host world
 //! - `parse`       — s-expression reader + special-form compiler
+//!
+//! Host state is the host's problem: register state-capturing primitives
+//! via [`Vm::register_prim`] (the closure captures whatever handle the
+//! host owns). The engine ships no `World` type or world prims; the spell
+//! demo's tile grid lives in the sibling `world` crate (ADR-017, ADR-018).
 //!
 //! Macros: `defmacro` is a top-level form that registers a procedural macro.
 //! Each subsequent `eval_str` expands macro calls in the source (pre-compile)

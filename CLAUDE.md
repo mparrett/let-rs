@@ -139,7 +139,7 @@ Web shell at `web/` — three pages, one bundle:
 ## Build / test
 
 ```bash
-just              # default: cargo test --workspace (90 tests)
+just              # default: cargo test --workspace (97 tests)
 just test         # same — explicit
 just repl
 just spells       # CLI rune-tape demo
