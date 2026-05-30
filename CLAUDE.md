@@ -12,8 +12,9 @@ context through a pipeline of primitives. The point is that the smallest
 interesting substrate you can call a real programming language fits in a few
 hundred lines and once you have it, the rest is just a vocabulary.
 
-Narrative overview lives in `docs/letrs.html` — open it in a browser, it's the
-single-page tour of what's here and why.
+Narrative overview lives in `web/letrs.html` (also linked from
+`web/index.html`) — open it in a browser, it's the single-page tour
+of what's here and why.
 
 Slices that have landed:
 
@@ -152,7 +153,7 @@ Web shell at `web/` — four pages, one bundle:
   stroke-palette aesthetic; rotation buttons indigo, branching buttons
   sage so the three glyph groups read distinctly.
 - `web/styles.css` — shared. Palette + typography lifted from
-  `docs/letrs.html`. Per-page accents picked via per-element classes
+  `web/letrs.html`. Per-page accents picked via per-element classes
   (`.sigil.gene`, `.lab-card.spells`, `.canvas`, etc).
 - `web/common.js` — plain ESM. `await init()`, `Vm` construction, COI
   chip, REPL wiring. Imported by spells.js, genes.js, and curves.js.
