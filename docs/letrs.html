@@ -545,12 +545,12 @@
       </div>
       <h1>Let<span class="sigil">rs</span></h1>
       <p class="sub">
-        A CEK abstract machine, a small functional lisp grown on top, two structurally-different DSLs above that (spells over a tile world, genomes over a diploid resolver), and an engine that learned nothing new for either — built in zero-dependency Rust, with exact rationals, installable preludes, mutual-recursive top-level defines, and 78 tests.
+        A CEK abstract machine, a small functional lisp grown on top, two structurally-different DSLs above that (spells over a tile world, genomes over a diploid resolver), and an engine that learned nothing new for either — built in zero-dependency Rust, with exact rationals, installable preludes, mutual-recursive top-level defines, a host-agnostic <code>Vm</code>, and 97 tests.
       </p>
       <dl class="seal">
         <div><dt>Engine (zero-dep)</dt><dd>~1.6K LOC Rust</dd></div>
-        <div><dt>Sibling crates</dt><dd>runes · codons · wasm</dd></div>
-        <div><dt>Tests</dt><dd>78 passing</dd></div>
+        <div><dt>Sibling crates</dt><dd>runes · codons · spells · genes · world · wasm</dd></div>
+        <div><dt>Tests</dt><dd>97 passing</dd></div>
         <div><dt>Tail depth</dt><dd>100,000 verified</dd></div>
       </dl>
     </header>
@@ -965,6 +965,12 @@
           (<code>lisp::genes</code>) similarly. The rule kept the
           deduplication honest — never one consumer ahead of an
           abstraction.
+          <em>Update 2026-05-29 (ADR-016):</em> the same rule fired
+          again — both DSL packs are now sibling crates
+          (<code>crates/spells/</code>, <code>crates/genes/</code>)
+          parallel to <code>runes</code> and <code>codons</code>. The
+          lisp crate is "engine + parser + numeric tower" again and
+          ships no demo vocabulary.
         </p>
 
         <p class="note">
@@ -977,6 +983,16 @@
           weight. <code>docs/project_notes/host-state.md</code> captures
           the design conversation; the host-agnostic-<code>Vm</code>
           refactor it points at is the next big slice.
+          <em>Update 2026-05-29 (ADR-017, ADR-018):</em> the slice
+          landed. <code>Val::WorldPrim</code> collapsed into a single
+          closure-capable <code>Val::Prim</code> carrying
+          <code>Rc&lt;dyn Fn&gt;</code>; <code>Vm.world</code> was
+          dropped; the engine no longer knows <code>World</code>
+          exists. <code>world.rs</code> moved to <code>crates/world/</code>
+          as a sibling micro-crate. Hosts wire grid prims in via
+          <code>world::world_prim::install(&amp;mut vm, world)</code>
+          — or call the one-line
+          <code>spells::install_with_world</code> convenience.
         </p>
       </div>
     </section>
@@ -1062,9 +1078,15 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           the same <code>eval_str</code> call freely refer to each
           other. The cross-call case (define <code>foo</code> in one
           REPL line, define <code>bar</code> in the next, expect
-          <code>foo</code> to call <code>bar</code>) still doesn't
-          work — closures capture env at evaluation time — and that
-          limitation is documented and pinned by a test.
+          <code>foo</code> to call <code>bar</code>) initially didn't
+          work — closures captured env at evaluation time. ADR-015
+          closed that gap the same day, as a side effect of moving
+          top-level bindings into a <code>Vm</code>-owned globals
+          table that every <code>Env</code> points back to via a
+          <code>Weak</code>. Closures now resolve forward references
+          at call time against the table's current contents, so the
+          REPL-line case works freely — and the original limitation
+          test got flipped to assert success.
         </p>
 
         <p>
@@ -1099,20 +1121,6 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         urgent than they looked on day one. The shortlist:
       </p>
       <ul>
-        <li><strong>Host-agnostic <code>Vm</code>.</strong> Drop the
-          fixed <code>Val::WorldPrim</code> variant and the
-          <code>Rc&lt;RefCell&lt;World&gt;&gt;</code> field, switch to
-          closure-capable prims that capture whatever host state the
-          caller cares to expose. Move the <code>World</code> /
-          <code>Tile</code> code into its own sibling crate. ~150 LOC
-          of mechanical refactor, no behavior change, and the engine
-          stops naming any specific host type. Design rationale in
-          <code>docs/project_notes/host-state.md</code>.</li>
-        <li><strong>A <code>crates/world/</code> micro-crate.</strong>
-          <code>Grid&lt;T&gt;</code> + <code>EventLog</code> as a
-          reusable building block, opt-in for hosts whose state shape
-          fits. Sibling to <code>runes</code> and <code>codons</code>.
-          Companion to the host-agnostic <code>Vm</code> move.</li>
         <li><strong>Structured errors.</strong> Today
           <code>eval_str</code> returns <code>Result&lt;Val, String&gt;</code>
           and the web REPL surfaces those strings raw. Track
@@ -1133,6 +1141,16 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           the cons-list, a <code>Val::Map</code> backed by a small
           persistent structure. Both DSLs use alists; both are
           comfortable below ~30 keys; this isn't urgent.</li>
+        <li><strong>The <code>letrec</code> Rc cycle.</strong>
+          ADR-015 broke the top-level-<code>define</code> cycle by
+          routing those bindings through a <code>Vm</code>-owned
+          globals table with a <code>Weak</code> back-edge.
+          <code>letrec</code>-bound closures still form the same
+          shape (a closure captures the env containing its own
+          placeholder cell). Negligible at REPL scale; a slow leak in
+          long-lived sessions that lean heavily on <code>letrec</code>.
+          Fix is shape-similar but trickier because the surrounding
+          lexical scope is the legitimate owner of the cell.</li>
         <li><strong>The play loop.</strong> Turn-based render, input →
           spell → world tick → next state. The game part. The lisp
           and host-state pieces are in place; this is mostly UI.</li>
@@ -1140,8 +1158,16 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       <p>
         Crossed off since day one: the WASM bridge (<code>crates/wasm/</code>
         plus a three-page web shell — landing, Spell Lab, Gene Lab),
-        installable preludes, the numeric tower, mutual-recursive
-        top-level defines, the genes vocabulary itself. None of the
+        installable preludes (ADR-014), the numeric tower,
+        mutual-recursive top-level defines (within and across
+        <code>eval_str</code> calls, after ADR-015 broke the
+        top-level Rc cycle), the genes vocabulary itself. Then the
+        2026-05-29 audit refactor sequence: the spell + genes packs
+        moved to sibling crates (ADR-016), the engine went
+        host-agnostic via closure-capable prims (ADR-017), and
+        <code>world.rs</code> moved to its own micro-crate (ADR-018).
+        The <code>lisp</code> crate is "engine + parser + numeric
+        tower" — zero host types, zero demo vocabulary. None of the
         remaining items are large; all of them are interesting; most
         of them are independent. The hard parts are done — the
         language is itself, and the second DSL proved it.
@@ -1187,8 +1213,8 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
     </div>
 
     <footer class="colophon">
-      <span>letrs · 2026-05-25 → 26</span>
-      <span>fifteen commits · 78 tests · core stays zero-dep</span>
+      <span>letrs · 2026-05-25 → 29</span>
+      <span>97 tests · core stays zero-dep</span>
       <span>built on a CEK machine</span>
     </footer>
 
