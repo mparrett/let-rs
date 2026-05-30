@@ -18,9 +18,8 @@ fn bench_cast_spell(c: &mut Criterion) {
     // The canonical four-rune cast: fire, area-3, ice. Mirrors what
     // `examples/spells.rs` and the WASM Spell Lab run on every click.
     let list = rune_tape_to_sexpr("ᚠ ᛊ 3 ᛁ").unwrap();
-    let body = format!(
-        "(world-apply! (assoc-set 'tx 4 (assoc-set 'ty 2 (thread (start) {list}))))"
-    );
+    let body =
+        format!("(world-apply! (assoc-set 'tx 4 (assoc-set 'ty 2 (thread (start) {list}))))");
     c.bench_function("cast_spell_canonical", |b| {
         b.iter_batched(
             || {
@@ -83,9 +82,7 @@ fn bench_breed_diploid(c: &mut Criterion) {
     let papa = "AUG CGC CGG GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
     let la = codon_tape_to_sexpr(mama).unwrap();
     let lb = codon_tape_to_sexpr(papa).unwrap();
-    let body = format!(
-        "(express! (breed! seed (thread '() {la}) (thread '() {lb})))"
-    );
+    let body = format!("(express! (breed! seed (thread '() {la}) (thread '() {lb})))");
     let src = genes::seeded(7, &body);
     c.bench_function("breed_diploid", |b| {
         b.iter_batched(

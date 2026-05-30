@@ -107,9 +107,14 @@ impl Vm {
     where
         F: Fn(&[Val]) -> Result<Val, String> + 'static,
     {
-        self.env = self
-            .env
-            .extend(name.into(), Val::Prim { name, arity, f: Rc::new(f) });
+        self.env = self.env.extend(
+            name.into(),
+            Val::Prim {
+                name,
+                arity,
+                f: Rc::new(f),
+            },
+        );
     }
 
     /// Evaluate a sequence of top-level forms. Each form is one of:

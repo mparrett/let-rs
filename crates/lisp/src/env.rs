@@ -40,14 +40,20 @@ impl Env {
     /// find what's in the (empty) frame chain. Used by tests that build
     /// envs in isolation; production code goes through `with_globals`.
     pub fn empty() -> Self {
-        Env { frame: None, globals: Weak::new() }
+        Env {
+            frame: None,
+            globals: Weak::new(),
+        }
     }
 
     /// Env with no frames but a live back-edge to a globals table. The
     /// `Weak` is upgraded on lookup miss; while the Vm holds the strong
     /// ref it always succeeds.
     pub fn with_globals(globals: &Globals) -> Self {
-        Env { frame: None, globals: Rc::downgrade(globals) }
+        Env {
+            frame: None,
+            globals: Rc::downgrade(globals),
+        }
     }
 
     pub fn extend(&self, name: Sym, val: Val) -> Env {

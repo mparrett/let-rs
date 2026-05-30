@@ -68,9 +68,7 @@ impl World {
         let total = (width as u64)
             .checked_mul(height as u64)
             .filter(|&n| n <= isize::MAX as u64)
-            .ok_or_else(|| {
-                format!("World::new: {width}×{height} exceeds addressable cells")
-            })?;
+            .ok_or_else(|| format!("World::new: {width}×{height} exceeds addressable cells"))?;
         Ok(World {
             width,
             height,

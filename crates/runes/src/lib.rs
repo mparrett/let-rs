@@ -13,10 +13,10 @@
 
 /// Plain runes: each maps to a unary `ctx → ctx` primitive name.
 pub const PLAIN: &[(char, &str)] = &[
-    ('ᚠ', "fire"),  // FEHU
-    ('ᛁ', "ice"),   // ISA
-    ('ᚱ', "bolt"),  // RAIDO
-    ('ᛒ', "self"),  // BERKANO — target self
+    ('ᚠ', "fire"), // FEHU
+    ('ᛁ', "ice"),  // ISA
+    ('ᚱ', "bolt"), // RAIDO
+    ('ᛒ', "self"), // BERKANO — target self
 ];
 
 /// Parametrized runes: each maps to `n → ctx → ctx`. Consumes the

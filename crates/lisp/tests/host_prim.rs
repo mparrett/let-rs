@@ -70,7 +70,10 @@ fn dropping_vm_releases_closure_prim_captures() {
 
     // Drop the host's strong ref; only the closure keeps `cell` alive now.
     drop(cell);
-    assert!(weak.upgrade().is_some(), "closure still holds cell while Vm lives");
+    assert!(
+        weak.upgrade().is_some(),
+        "closure still holds cell while Vm lives"
+    );
 
     drop(vm);
     assert!(

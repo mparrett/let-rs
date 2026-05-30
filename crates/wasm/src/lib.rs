@@ -57,8 +57,9 @@ impl WasmVm {
     #[wasm_bindgen(constructor)]
     pub fn new(width: u32, height: u32) -> Result<WasmVm, JsValue> {
         console_error_panic_hook::set_once();
-        let world =
-            Rc::new(RefCell::new(World::new(width, height).map_err(|e| JsValue::from_str(&e))?));
+        let world = Rc::new(RefCell::new(
+            World::new(width, height).map_err(|e| JsValue::from_str(&e))?,
+        ));
         let turtle = Rc::new(RefCell::new(Turtle::new()));
         let mut inner = LispVm::new();
         spells::install_with_world(&mut inner, world.clone());
@@ -69,7 +70,13 @@ impl WasmVm {
         // browser eval runs on the main thread, so an unbounded loop
         // hangs the page — this is the backstop.
         inner.set_step_budget(10_000_000);
-        Ok(WasmVm { inner, world, turtle, width, height })
+        Ok(WasmVm {
+            inner,
+            world,
+            turtle,
+            width,
+            height,
+        })
     }
 
     /// Override the CEK step budget for subsequent evaluations.
@@ -134,19 +141,12 @@ impl WasmVm {
     /// `breed!`, and resolve the child with `express!`. Returns the
     /// rendered child creature card. Same `(tape_a, tape_b, seed)` →
     /// same child (Mendelian gamete pick is seeded).
-    pub fn cast_breed(
-        &mut self,
-        tape_a: &str,
-        tape_b: &str,
-        seed: i64,
-    ) -> Result<String, JsValue> {
+    pub fn cast_breed(&mut self, tape_a: &str, tape_b: &str, seed: i64) -> Result<String, JsValue> {
         let la = codons::tape_to_sexpr(tape_a)
             .map_err(|e| JsValue::from_str(&format!("codon (parent A): {e}")))?;
         let lb = codons::tape_to_sexpr(tape_b)
             .map_err(|e| JsValue::from_str(&format!("codon (parent B): {e}")))?;
-        let body = format!(
-            "(express! (breed! seed (thread '() {la}) (thread '() {lb})))"
-        );
+        let body = format!("(express! (breed! seed (thread '() {la}) (thread '() {lb})))");
         let src = genes::seeded(seed, &body);
         let phenotype = self
             .inner
@@ -160,8 +160,8 @@ impl WasmVm {
     /// `seed` is the lexical RNG seed for any `MUT` codons in the tape;
     /// strands without `MUT` ignore it. Errors throw to JS.
     pub fn cast_genome(&mut self, tape: &str, seed: i64) -> Result<String, JsValue> {
-        let list_expr = codons::tape_to_sexpr(tape)
-            .map_err(|e| JsValue::from_str(&format!("codon: {e}")))?;
+        let list_expr =
+            codons::tape_to_sexpr(tape).map_err(|e| JsValue::from_str(&format!("codon: {e}")))?;
         // `genes::seeded` wraps the body in a let chain so MUT's mutate
         // closure captures the caller's seed via lexical scope. See
         // ADR-012.
@@ -189,7 +189,11 @@ impl WasmVm {
     ) -> Result<String, JsValue> {
         let axiom_list = strokes::tape_to_sexpr(axiom)
             .map_err(|e| JsValue::from_str(&format!("stroke: {e}")))?;
-        let rules = if rules_sexpr.trim().is_empty() { "()" } else { rules_sexpr };
+        let rules = if rules_sexpr.trim().is_empty() {
+            "()"
+        } else {
+            rules_sexpr
+        };
         // Each cast resets the turtle so successive casts don't pile on
         // the same canvas. `let ((_ …))` is the project's standing
         // workaround for the missing `begin` (see ADR-019).

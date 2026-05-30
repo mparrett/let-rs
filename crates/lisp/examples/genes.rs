@@ -40,9 +40,7 @@ fn breeding(vm: &mut Vm, label: &str, seed: i64, tape_a: &str, tape_b: &str) {
             return;
         }
     };
-    let body = format!(
-        "(express! (breed! seed (thread '() {la}) (thread '() {lb})))"
-    );
+    let body = format!("(express! (breed! seed (thread '() {la}) (thread '() {lb})))");
     let src = genes::seeded(seed, &body);
     match vm.eval_str(&src) {
         Ok(phenotype) => println!("{}\n", genes::render_creature(&phenotype)),
@@ -57,32 +55,40 @@ fn main() {
     println!("letrs genes demo\n================\n");
 
     // one allele per trait — every locus expresses solo
-    sequence(&mut vm, "balanced", 0,
-        "AUG CGA GCA ACA UCA GCG AUC GAU UAA");
+    sequence(
+        &mut vm,
+        "balanced",
+        0,
+        "AUG CGA GCA ACA UCA GCG AUC GAU UAA",
+    );
 
     // two size alleles (70 dom + 30 rec) — phenotype averages to 50
-    sequence(&mut vm, "size-averaged", 0,
-        "AUG CGA CGU GCA UAA");
+    sequence(&mut vm, "size-averaged", 0, "AUG CGA CGU GCA UAA");
 
     // partial genome — only color stated, the rest sit out
-    sequence(&mut vm, "fragmentary", 0,
-        "AUG GCG UAA");
+    sequence(&mut vm, "fragmentary", 0, "AUG GCG UAA");
 
     // both alleles dominant for color — hash tiebreak chooses one,
     // deterministically
-    sequence(&mut vm, "color-conflict-dom", 0,
-        "AUG GCG GCG UAA");
+    sequence(&mut vm, "color-conflict-dom", 0, "AUG GCG GCG UAA");
 
     // both recessive — same tiebreak path
-    sequence(&mut vm, "color-conflict-rec", 0,
-        "AUG GCC GCC UAA");
+    sequence(&mut vm, "color-conflict-rec", 0, "AUG GCC GCC UAA");
 
     // mutation: same parent genome, two different seeds → two different
     // offspring. Same seed twice → identical offspring.
-    sequence(&mut vm, "balanced + MUT", 42,
-        "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA");
-    sequence(&mut vm, "balanced + MUT", 99,
-        "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA");
+    sequence(
+        &mut vm,
+        "balanced + MUT",
+        42,
+        "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA",
+    );
+    sequence(
+        &mut vm,
+        "balanced + MUT",
+        99,
+        "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA",
+    );
 
     // breeding: two diploid parents. Each parent has TWO alleles per
     // trait, so the seed actually controls which allele is inherited

@@ -59,7 +59,13 @@ fn main() {
 
     // Fractal-plant shape: F → F[+F]F[-F]F. Branches splay at 45°;
     // 2 iterations gives a recognizable Y-tree, 3 starts to fill in.
-    cast(&mut vm, "fractal plant", "F", "(F F [ + F ] F [ - F ] F)", 2);
+    cast(
+        &mut vm,
+        "fractal plant",
+        "F",
+        "(F F [ + F ] F [ - F ] F)",
+        2,
+    );
 
     // Error surfaces: unknown glyph in tape, unmatched ']'
     cast(&mut vm, "bad-glyph", "Fx", "", 0);

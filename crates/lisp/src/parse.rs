@@ -287,8 +287,10 @@ fn compile_let_star(rest: &[Datum]) -> Result<Expr, String> {
 
 fn compile_letrec(rest: &[Datum]) -> Result<Expr, String> {
     let (names, inits, body) = split_bindings(rest, "letrec")?;
-    let bindings: Vec<(Sym, Rc<Expr>)> =
-        names.into_iter().zip(inits.into_iter().map(Rc::new)).collect();
+    let bindings: Vec<(Sym, Rc<Expr>)> = names
+        .into_iter()
+        .zip(inits.into_iter().map(Rc::new))
+        .collect();
     Ok(Expr::Letrec(bindings, Rc::new(body)))
 }
 

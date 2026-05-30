@@ -57,8 +57,8 @@ pub const PRELUDE_DEFINES: &str = r#"
 /// capture the caller's seed via lexical scope (ADR-012).
 pub fn install(vm: &mut Vm) {
     vm.register_prim("express!", Arity::Exact(1), express_prim);
-    vm.register_prim("mutate!",  Arity::Exact(3), mutate_prim);
-    vm.register_prim("breed!",   Arity::Exact(3), breed_prim);
+    vm.register_prim("mutate!", Arity::Exact(3), mutate_prim);
+    vm.register_prim("breed!", Arity::Exact(3), breed_prim);
     vm.eval_str(PRELUDE_DEFINES)
         .expect("genes prelude failed to install");
 }
@@ -99,13 +99,13 @@ enum Kind {
 }
 
 const TRAITS: &[(&str, Kind)] = &[
-    ("size",     Kind::Numeric),
+    ("size", Kind::Numeric),
     ("strength", Kind::Numeric),
-    ("speed",    Kind::Numeric),
-    ("armor",    Kind::Numeric),
-    ("color",    Kind::Categorical(&["green", "red"])),
-    ("ability",  Kind::Categorical(&["fire-breath", "sonic-roar"])),
-    ("biome",    Kind::Categorical(&["volcanic", "ocean"])),
+    ("speed", Kind::Numeric),
+    ("armor", Kind::Numeric),
+    ("color", Kind::Categorical(&["green", "red"])),
+    ("ability", Kind::Categorical(&["fire-breath", "sonic-roar"])),
+    ("biome", Kind::Categorical(&["volcanic", "ocean"])),
 ];
 
 fn trait_kind(name: &str) -> Option<Kind> {
@@ -228,7 +228,11 @@ fn mutate_prim(args: &[Val]) -> Result<Val, String> {
             }
             *val_slot = match (kind, &*val_slot) {
                 (Kind::Numeric, Val::Num(n)) => {
-                    let delta = if xorshift32(&mut rng) & 1 == 0 { 10 } else { -10 };
+                    let delta = if xorshift32(&mut rng) & 1 == 0 {
+                        10
+                    } else {
+                        -10
+                    };
                     Val::Num((*n + delta).clamp(0, 100))
                 }
                 (Kind::Categorical(pool), Val::Sym(s)) => {
@@ -236,8 +240,7 @@ fn mutate_prim(args: &[Val]) -> Result<Val, String> {
                     // pick a *different* pool value; for 2-option pools
                     // this is the other one, for larger pools it's a
                     // random pick excluding the current value.
-                    let others: Vec<&&str> =
-                        pool.iter().filter(|opt| **opt != cur).collect();
+                    let others: Vec<&&str> = pool.iter().filter(|opt| **opt != cur).collect();
                     if others.is_empty() {
                         continue; // pool only contains current value; no-op
                     }
@@ -290,8 +293,12 @@ fn breed_prim(args: &[Val]) -> Result<Val, String> {
 
     let mut out_traits: Vec<(String, Vec<(Val, Val)>)> = Vec::new();
     for key in keys {
-        let from_a = lookup(&pa, &key).map(|v| unpack_pairs(&v)).unwrap_or_default();
-        let from_b = lookup(&pb, &key).map(|v| unpack_pairs(&v)).unwrap_or_default();
+        let from_a = lookup(&pa, &key)
+            .map(|v| unpack_pairs(&v))
+            .unwrap_or_default();
+        let from_b = lookup(&pb, &key)
+            .map(|v| unpack_pairs(&v))
+            .unwrap_or_default();
         let mut child_alleles: Vec<(Val, Val)> = Vec::new();
         if !from_a.is_empty() {
             let pick = (xorshift32(&mut rng) as usize) % from_a.len();
@@ -327,7 +334,11 @@ fn rate_as_probability(v: &Val) -> Result<(u128, u128), String> {
 }
 
 fn display_ratio(n: i128, d: i128) -> String {
-    if d == 1 { n.to_string() } else { format!("{n}/{d}") }
+    if d == 1 {
+        n.to_string()
+    } else {
+        format!("{n}/{d}")
+    }
 }
 
 /// xorshift32 PRNG. Tiny, dep-free, deterministic — perfect for a demo.
@@ -361,7 +372,11 @@ fn resolve_numeric(alleles: &[(Val, Val)]) -> Result<Val, String> {
                 sum += n;
                 count += 1;
             }
-            other => return Err(format!("express!: numeric allele value must be int, got {other}")),
+            other => {
+                return Err(format!(
+                    "express!: numeric allele value must be int, got {other}"
+                ));
+            }
         }
     }
     Ok(Val::Num(sum / count.max(1)))
@@ -379,7 +394,11 @@ fn resolve_categorical(alleles: &[(Val, Val)], genome_hash: u32) -> Val {
         (false, true) => pair[1].0.clone(),
         _ => {
             // tie: deterministic by genome hash parity
-            if genome_hash & 1 == 0 { pair[0].0.clone() } else { pair[1].0.clone() }
+            if genome_hash & 1 == 0 {
+                pair[0].0.clone()
+            } else {
+                pair[1].0.clone()
+            }
         }
     }
 }
@@ -394,13 +413,13 @@ pub fn render_creature(phenotype: &Val) -> String {
     let pairs = collect_first_pairs(phenotype);
     let g = |k: &str| pairs.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
 
-    let size     = g("size").and_then(num);
+    let size = g("size").and_then(num);
     let strength = g("strength").and_then(num);
-    let speed    = g("speed").and_then(num);
-    let armor    = g("armor").and_then(num);
-    let color    = g("color").and_then(sym).unwrap_or("—".into());
-    let ability  = g("ability").and_then(sym).unwrap_or("—".into());
-    let biome    = g("biome").and_then(sym).unwrap_or("—".into());
+    let speed = g("speed").and_then(num);
+    let armor = g("armor").and_then(num);
+    let color = g("color").and_then(sym).unwrap_or("—".into());
+    let ability = g("ability").and_then(sym).unwrap_or("—".into());
+    let biome = g("biome").and_then(sym).unwrap_or("—".into());
 
     let cell = |n: Option<i64>| n.map(|x| x.to_string()).unwrap_or("—".into());
     // portrait bucket uses size if present, falls back to mid
@@ -421,10 +440,15 @@ pub fn render_creature(phenotype: &Val) -> String {
     // A double-width font would push the right border on portrait
     // rows over by a cell — we'd need a wcwidth-aware padding helper.
     let mut out = String::new();
-    out.push_str(&format!("╭─ creature #{name} ─────────────────────────────╮\n"));
+    out.push_str(&format!(
+        "╭─ creature #{name} ─────────────────────────────╮\n"
+    ));
     out.push_str(&format!(
         "│ size {:>3}  strength {:>3}  speed {:>3}  armor {:>3} │\n",
-        cell(size), cell(strength), cell(speed), cell(armor)
+        cell(size),
+        cell(strength),
+        cell(speed),
+        cell(armor)
     ));
     out.push_str(&format!("│ color {color:<8}  ability {ability:<20} │\n"));
     out.push_str(&format!("│ biome {biome:<38} │\n"));
@@ -440,15 +464,29 @@ fn num(v: Val) -> Option<i64> {
 }
 
 fn sym(v: Val) -> Option<String> {
-    if let Val::Sym(s) = v { Some(s.to_string()) } else { None }
+    if let Val::Sym(s) = v {
+        Some(s.to_string())
+    } else {
+        None
+    }
 }
 
 /// A tiny portrait table: 3 lines, varying width with size (small/mid/big)
 /// and crown-row with spike count. Color is a verbal cue in the card so
 /// the portrait stays color-blind-safe.
 fn portrait_for(size: i64, _color: &str, spikes: usize) -> [String; 3] {
-    let bucket = if size < 34 { 0 } else if size < 67 { 1 } else { 2 };
-    let crown = if spikes == 0 { String::from("     ") } else { "▲".repeat(spikes) };
+    let bucket = if size < 34 {
+        0
+    } else if size < 67 {
+        1
+    } else {
+        2
+    };
+    let crown = if spikes == 0 {
+        String::from("     ")
+    } else {
+        "▲".repeat(spikes)
+    };
     let body = match bucket {
         0 => "(o o)",
         1 => "(◉ ◉)",

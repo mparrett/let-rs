@@ -14,10 +14,7 @@ fn single_glyph() {
 
 #[test]
 fn canonical_example() {
-    assert_eq!(
-        tape_to_sexpr("F+F-F").unwrap(),
-        "(list 'F '+ 'F '- 'F)"
-    );
+    assert_eq!(tape_to_sexpr("F+F-F").unwrap(), "(list 'F '+ 'F '- 'F)");
 }
 
 #[test]
@@ -58,5 +55,8 @@ fn unknown_non_letter_glyph_errors() {
     let r = tape_to_sexpr("F$");
     assert!(matches!(r, Err(e) if e.contains("unknown stroke") && e.contains('$')));
     let r = tape_to_sexpr("F!");
-    assert!(matches!(&r, Err(e) if e.contains("unknown stroke") && e.contains('!')), "got {r:?}");
+    assert!(
+        matches!(&r, Err(e) if e.contains("unknown stroke") && e.contains('!')),
+        "got {r:?}"
+    );
 }

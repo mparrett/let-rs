@@ -43,7 +43,11 @@ fn reduce((n, d): Ratio) -> Ratio {
         return (n, d);
     }
     let g = gcd(n, d);
-    if d < 0 { (-n / g, -d / g) } else { (n / g, d / g) }
+    if d < 0 {
+        (-n / g, -d / g)
+    } else {
+        (n / g, d / g)
+    }
 }
 
 fn overflow(op: &str) -> String {
@@ -183,11 +187,21 @@ fn cmp_chain(args: &[Val], name: &str, ok: fn(i128, i128) -> bool) -> R {
     Ok(Val::Bool(true))
 }
 
-fn eq_num(args: &[Val]) -> R { cmp_chain(args, "=", |a, b| a == b) }
-fn lt(args: &[Val]) -> R     { cmp_chain(args, "<", |a, b| a < b) }
-fn gt(args: &[Val]) -> R     { cmp_chain(args, ">", |a, b| a > b) }
-fn le(args: &[Val]) -> R     { cmp_chain(args, "<=", |a, b| a <= b) }
-fn ge(args: &[Val]) -> R     { cmp_chain(args, ">=", |a, b| a >= b) }
+fn eq_num(args: &[Val]) -> R {
+    cmp_chain(args, "=", |a, b| a == b)
+}
+fn lt(args: &[Val]) -> R {
+    cmp_chain(args, "<", |a, b| a < b)
+}
+fn gt(args: &[Val]) -> R {
+    cmp_chain(args, ">", |a, b| a > b)
+}
+fn le(args: &[Val]) -> R {
+    cmp_chain(args, "<=", |a, b| a <= b)
+}
+fn ge(args: &[Val]) -> R {
+    cmp_chain(args, ">=", |a, b| a >= b)
+}
 
 fn not(args: &[Val]) -> R {
     Ok(Val::Bool(!args[0].is_truthy()))
@@ -297,7 +311,11 @@ fn floor_or_ceiling(v: &Val, name: &str, ceil: bool) -> R {
             // negative infinity (Rust's "Euclidean division").
             let n = *n as i128;
             let d = *d as i128;
-            let q = if ceil { -((-n).div_euclid(d)) } else { n.div_euclid(d) };
+            let q = if ceil {
+                -((-n).div_euclid(d))
+            } else {
+                n.div_euclid(d)
+            };
             q.try_into()
                 .map(Val::Num)
                 .map_err(|_| format!("{name}: result {q} doesn't fit in i64"))
@@ -325,38 +343,45 @@ fn assoc_get(args: &[Val]) -> R {
 }
 
 const BUILTINS: &[(&str, Arity, BuiltinFn)] = &[
-    ("+",       Arity::AtLeast(0), add),
-    ("-",       Arity::AtLeast(1), sub),
-    ("*",       Arity::AtLeast(0), mul),
-    ("/",       Arity::AtLeast(2), div),
-    ("mod",     Arity::Exact(2),   modulo),
-    ("=",       Arity::AtLeast(2), eq_num),
-    ("<",       Arity::AtLeast(2), lt),
-    (">",       Arity::AtLeast(2), gt),
-    ("<=",      Arity::AtLeast(2), le),
-    (">=",      Arity::AtLeast(2), ge),
-    ("not",     Arity::Exact(1),   not),
-    ("eq?",     Arity::Exact(2),   eq_q),
-    ("cons",    Arity::Exact(2),   cons),
-    ("car",     Arity::Exact(1),   car),
-    ("cdr",     Arity::Exact(1),   cdr),
-    ("list",    Arity::AtLeast(0), list),
-    ("append",  Arity::AtLeast(0), append),
-    ("null?",   Arity::Exact(1),   null_q),
-    ("pair?",   Arity::Exact(1),   pair_q),
-    ("number?",     Arity::Exact(1), number_q),
-    ("symbol?",     Arity::Exact(1), symbol_q),
-    ("assoc-get",   Arity::Exact(2), assoc_get),
-    ("numerator",   Arity::Exact(1), numerator),
+    ("+", Arity::AtLeast(0), add),
+    ("-", Arity::AtLeast(1), sub),
+    ("*", Arity::AtLeast(0), mul),
+    ("/", Arity::AtLeast(2), div),
+    ("mod", Arity::Exact(2), modulo),
+    ("=", Arity::AtLeast(2), eq_num),
+    ("<", Arity::AtLeast(2), lt),
+    (">", Arity::AtLeast(2), gt),
+    ("<=", Arity::AtLeast(2), le),
+    (">=", Arity::AtLeast(2), ge),
+    ("not", Arity::Exact(1), not),
+    ("eq?", Arity::Exact(2), eq_q),
+    ("cons", Arity::Exact(2), cons),
+    ("car", Arity::Exact(1), car),
+    ("cdr", Arity::Exact(1), cdr),
+    ("list", Arity::AtLeast(0), list),
+    ("append", Arity::AtLeast(0), append),
+    ("null?", Arity::Exact(1), null_q),
+    ("pair?", Arity::Exact(1), pair_q),
+    ("number?", Arity::Exact(1), number_q),
+    ("symbol?", Arity::Exact(1), symbol_q),
+    ("assoc-get", Arity::Exact(2), assoc_get),
+    ("numerator", Arity::Exact(1), numerator),
     ("denominator", Arity::Exact(1), denominator),
-    ("floor",       Arity::Exact(1), floor),
-    ("ceiling",     Arity::Exact(1), ceiling),
+    ("floor", Arity::Exact(1), floor),
+    ("ceiling", Arity::Exact(1), ceiling),
 ];
 
 pub fn initial_env(globals: &crate::env::Globals) -> Env {
     BUILTINS
         .iter()
         .fold(Env::with_globals(globals), |env, &(name, arity, f)| {
-            env.extend(name.into(), Val::Prim { name, arity, f: Rc::new(f) })
+            env.extend(
+                name.into(),
+                Val::Prim {
+                    name,
+                    arity,
+                    f: Rc::new(f),
+                },
+            )
         })
 }

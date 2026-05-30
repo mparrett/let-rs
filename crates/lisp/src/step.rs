@@ -42,8 +42,13 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
             k,
         })),
         Expr::Var(name) => {
-            let v = env.lookup(name).ok_or_else(|| format!("unbound variable: {name}"))?;
-            Ok(Step::Continue(State { mode: Mode::Apply(v), k }))
+            let v = env
+                .lookup(name)
+                .ok_or_else(|| format!("unbound variable: {name}"))?;
+            Ok(Step::Continue(State {
+                mode: Mode::Apply(v),
+                k,
+            }))
         }
         Expr::Lam(params, body) => {
             let clo = Val::Clo {
@@ -51,7 +56,10 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
                 body: body.clone(),
                 env: env.clone(),
             };
-            Ok(Step::Continue(State { mode: Mode::Apply(clo), k }))
+            Ok(Step::Continue(State {
+                mode: Mode::Apply(clo),
+                k,
+            }))
         }
         Expr::If(cond, t, e) => {
             let new_k = Rc::new(K::If {
@@ -60,7 +68,10 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
                 env: env.clone(),
                 k,
             });
-            Ok(Step::Continue(State { mode: Mode::Eval(cond.clone(), env), k: new_k }))
+            Ok(Step::Continue(State {
+                mode: Mode::Eval(cond.clone(), env),
+                k: new_k,
+            }))
         }
         Expr::App(exprs) => {
             if exprs.is_empty() {
@@ -74,7 +85,10 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
                 env: env.clone(),
                 k,
             });
-            Ok(Step::Continue(State { mode: Mode::Eval(first, env), k: new_k }))
+            Ok(Step::Continue(State {
+                mode: Mode::Eval(first, env),
+                k: new_k,
+            }))
         }
         Expr::Letrec(bindings, body) => {
             // Allocate placeholders for all names, then start evaluating the first init
@@ -88,7 +102,10 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
             }
 
             if bindings.is_empty() {
-                return Ok(Step::Continue(State { mode: Mode::Eval(body.clone(), env_rec), k }));
+                return Ok(Step::Continue(State {
+                    mode: Mode::Eval(body.clone(), env_rec),
+                    k,
+                }));
             }
 
             let mut remaining: Vec<Rc<Expr>> = bindings.iter().map(|(_, e)| e.clone()).collect();
@@ -101,7 +118,10 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
                 env: env_rec.clone(),
                 k,
             });
-            Ok(Step::Continue(State { mode: Mode::Eval(first, env_rec), k: new_k }))
+            Ok(Step::Continue(State {
+                mode: Mode::Eval(first, env_rec),
+                k: new_k,
+            }))
         }
     }
 }
@@ -110,7 +130,12 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
     match &*k {
         K::Halt => Ok(Step::Done(v)),
 
-        K::App { evaled, remaining, env, k: outer } => {
+        K::App {
+            evaled,
+            remaining,
+            env,
+            k: outer,
+        } => {
             let mut evaled = evaled.clone();
             evaled.push(v);
             if remaining.is_empty() {
@@ -125,19 +150,38 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
                     env: env.clone(),
                     k: outer.clone(),
                 });
-                Ok(Step::Continue(State { mode: Mode::Eval(next, env), k: new_k }))
+                Ok(Step::Continue(State {
+                    mode: Mode::Eval(next, env),
+                    k: new_k,
+                }))
             }
         }
 
-        K::If { then_branch, else_branch, env, k: outer } => {
-            let branch = if v.is_truthy() { then_branch.clone() } else { else_branch.clone() };
+        K::If {
+            then_branch,
+            else_branch,
+            env,
+            k: outer,
+        } => {
+            let branch = if v.is_truthy() {
+                then_branch.clone()
+            } else {
+                else_branch.clone()
+            };
             Ok(Step::Continue(State {
                 mode: Mode::Eval(branch, env.clone()),
                 k: outer.clone(),
             }))
         }
 
-        K::Letrec { cells, next, remaining, body, env, k: outer } => {
+        K::Letrec {
+            cells,
+            next,
+            remaining,
+            body,
+            env,
+            k: outer,
+        } => {
             *cells[*next].borrow_mut() = v;
             if remaining.is_empty() {
                 Ok(Step::Continue(State {
@@ -180,7 +224,10 @@ fn apply(evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
             let env = env.extend_many(params.into_iter().zip(args));
             // Tail-call note: we pass `k` through unchanged. No frame pushed for
             // entering the closure body, so a tail call grows nothing.
-            Ok(Step::Continue(State { mode: Mode::Eval(body, env), k }))
+            Ok(Step::Continue(State {
+                mode: Mode::Eval(body, env),
+                k,
+            }))
         }
         Val::Prim { name, arity, f } => {
             if !arity.accepts(args.len()) {
@@ -191,7 +238,10 @@ fn apply(evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
                 ));
             }
             let v = f(&args)?;
-            Ok(Step::Continue(State { mode: Mode::Apply(v), k }))
+            Ok(Step::Continue(State {
+                mode: Mode::Apply(v),
+                k,
+            }))
         }
         other => Err(format!("not callable: {other}")),
     }

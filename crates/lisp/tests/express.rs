@@ -122,7 +122,10 @@ fn mutate_prim_rejects_rates_outside_zero_to_one() {
     genes::install(&mut vm);
     for bad in ["25", "100", "-1", "2/1", "-1/4"] {
         let r = vm.eval_str(&format!("(mutate! {bad} 1 '())"));
-        assert!(r.is_err(), "{bad} should be rejected as a probability: {r:?}");
+        assert!(
+            r.is_err(),
+            "{bad} should be rejected as a probability: {r:?}"
+        );
     }
     // 0 and 1 (the integer-shaped endpoints) and any ratio in [0,1]
     // are accepted.
@@ -153,7 +156,10 @@ fn mutation_differs_across_seeds() {
             break;
         }
     }
-    assert!(seen_diff, "no seed in 43..=999 produced a different phenotype than seed 42");
+    assert!(
+        seen_diff,
+        "no seed in 43..=999 produced a different phenotype than seed 42"
+    );
 }
 
 #[test]
@@ -183,9 +189,9 @@ fn categorical_mutation_lands_in_pool() {
     // Categorical mutations must pick a value from the trait's option
     // pool — never anything else.
     let pools: &[(&str, &[&str])] = &[
-        ("color",   &["green", "red"]),
+        ("color", &["green", "red"]),
         ("ability", &["fire-breath", "sonic-roar"]),
-        ("biome",   &["volcanic", "ocean"]),
+        ("biome", &["volcanic", "ocean"]),
     ];
     for seed in 0..10 {
         let p = express_seeded(BALANCED_MUT, seed);
@@ -223,17 +229,13 @@ fn breed(tape_a: &str, tape_b: &str, seed: i64) -> String {
     genes::install(&mut vm);
     let la = tape_to_sexpr(tape_a).expect("parent A should lex");
     let lb = tape_to_sexpr(tape_b).expect("parent B should lex");
-    let body = format!(
-        "(express! (breed! seed (thread '() {la}) (thread '() {lb})))"
-    );
+    let body = format!("(express! (breed! seed (thread '() {la}) (thread '() {lb})))");
     let src = genes::seeded(seed, &body);
     format!("{}", vm.eval_str(&src).expect("breed should evaluate"))
 }
 
-const DIPLOID_A: &str =
-    "AUG CGA CGU GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
-const DIPLOID_B: &str =
-    "AUG CGC CGG GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
+const DIPLOID_A: &str = "AUG CGA CGU GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
+const DIPLOID_B: &str = "AUG CGC CGG GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
 
 #[test]
 fn breeding_is_deterministic_for_same_seed() {
@@ -262,8 +264,8 @@ fn breeding_differs_across_seeds() {
 fn child_inherits_traits_from_either_parent() {
     // Parent A has size + speed; parent B has color + biome. Child
     // should have ALL four (trait union, not intersection).
-    let a = "AUG CGA ACA UAA";        // size + speed only
-    let b = "AUG GCG GAU UAA";        // color + biome only
+    let a = "AUG CGA ACA UAA"; // size + speed only
+    let b = "AUG GCG GAU UAA"; // color + biome only
     let child = breed(a, b, 1);
     for needle in ["size", "speed", "color", "biome"] {
         assert!(child.contains(needle), "missing {needle:?} in {child}");
@@ -274,11 +276,14 @@ fn child_inherits_traits_from_either_parent() {
 fn trait_missing_from_both_parents_is_missing_from_child() {
     // Neither parent has strength/armor/ability. Neither should appear
     // in the child.
-    let a = "AUG CGA ACA UAA";        // size + speed
-    let b = "AUG GCG GAU UAA";        // color + biome
+    let a = "AUG CGA ACA UAA"; // size + speed
+    let b = "AUG GCG GAU UAA"; // color + biome
     let child = breed(a, b, 1);
     for absent in ["strength", "armor", "ability"] {
-        assert!(!child.contains(absent), "did not expect {absent:?} in {child}");
+        assert!(
+            !child.contains(absent),
+            "did not expect {absent:?} in {child}"
+        );
     }
 }
 
@@ -287,8 +292,11 @@ fn child_phenotype_can_differ_from_both_parents() {
     // Parent A only has size 70 dom; parent B only has size 30 rec.
     // The child has one allele from each: (70 dom, 30 rec) → avg 50.
     // Neither parent expresses size 50 in isolation.
-    let a = "AUG CGA UAA";   // size 70 dom
-    let b = "AUG CGU UAA";   // size 30 rec
+    let a = "AUG CGA UAA"; // size 70 dom
+    let b = "AUG CGU UAA"; // size 30 rec
     let child = breed(a, b, 1);
-    assert!(child.contains("(size . 50)"), "expected averaged size, got {child}");
+    assert!(
+        child.contains("(size . 50)"),
+        "expected averaged size, got {child}"
+    );
 }

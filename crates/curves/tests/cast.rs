@@ -48,7 +48,11 @@ fn closed_octagon_returns_to_start() {
     // (corners trimmed because the path doesn't go through them).
     let canvas = cast_axiom("F+F+F+F+F+F+F+F");
     let lines: Vec<&str> = canvas.lines().collect();
-    assert_eq!(lines.len(), 4, "octagon should occupy 4 rows, got:\n{canvas}");
+    assert_eq!(
+        lines.len(),
+        4,
+        "octagon should occupy 4 rows, got:\n{canvas}"
+    );
     // every row should be exactly the bbox width (4 cells)
     for line in &lines {
         assert_eq!(line.chars().count(), 4, "row width mismatch in:\n{canvas}");
@@ -85,7 +89,10 @@ fn truly_unknown_symbol_still_errors() {
     // the nonterminal pass-through is scoped to single ASCII letters.
     let (mut vm, _t) = fresh_vm();
     let r = vm.eval_str("(draw! '(F foo F))");
-    assert!(matches!(&r, Err(e) if e.contains("unknown stroke")), "got {r:?}");
+    assert!(
+        matches!(&r, Err(e) if e.contains("unknown stroke")),
+        "got {r:?}"
+    );
 }
 
 #[test]
@@ -93,7 +100,10 @@ fn unmatched_pop_errors() {
     let (mut vm, _t) = fresh_vm();
     let list = tape_to_sexpr("F]").unwrap();
     let r = vm.eval_str(&format!("(draw! {list})"));
-    assert!(matches!(&r, Err(e) if e.contains("pop on empty")), "got {r:?}");
+    assert!(
+        matches!(&r, Err(e) if e.contains("pop on empty")),
+        "got {r:?}"
+    );
 }
 
 #[test]
@@ -103,7 +113,8 @@ fn grow_zero_returns_axiom() {
     // on the axiom.
     let (mut vm, turtle) = fresh_vm();
     let list = tape_to_sexpr("F+F").unwrap();
-    vm.eval_str(&format!("(draw! (grow {list} '() 0))")).unwrap();
+    vm.eval_str(&format!("(draw! (grow {list} '() 0))"))
+        .unwrap();
     let via_grow = render(&turtle.borrow());
 
     let direct = cast_axiom("F+F");
@@ -116,10 +127,8 @@ fn grow_one_iteration_replaces_matching_symbols() {
     // from 1). Cell count = 2 forwards = 2.
     let (mut vm, turtle) = fresh_vm();
     let list = tape_to_sexpr("F").unwrap();
-    vm.eval_str(&format!(
-        "(draw! (grow {list} '((F F + F)) 1))"
-    ))
-    .unwrap();
+    vm.eval_str(&format!("(draw! (grow {list} '((F F + F)) 1))"))
+        .unwrap();
     assert_eq!(turtle.borrow().cell_count(), 2);
 }
 
@@ -130,10 +139,8 @@ fn grow_skips_non_matching_symbols() {
     // the identity-rewrite fallback in `expand-one`.
     let (mut vm, turtle) = fresh_vm();
     let list = tape_to_sexpr("F+F").unwrap();
-    vm.eval_str(&format!(
-        "(draw! (grow {list} '((F F F)) 1))"
-    ))
-    .unwrap();
+    vm.eval_str(&format!("(draw! (grow {list} '((F F F)) 1))"))
+        .unwrap();
     assert_eq!(turtle.borrow().cell_count(), 4);
 }
 

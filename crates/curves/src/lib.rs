@@ -95,7 +95,8 @@ impl Turtle {
         self.x += dx;
         self.y += dy;
         if draw {
-            self.cells.insert((self.x, self.y), heading_glyph(self.heading));
+            self.cells
+                .insert((self.x, self.y), heading_glyph(self.heading));
         }
     }
 
@@ -129,14 +130,14 @@ impl Turtle {
 }
 
 const HEADING_DELTAS: [(i32, i32); 8] = [
-    ( 1,  0), // 0: East
-    ( 1, -1), // 1: NE
-    ( 0, -1), // 2: North
+    (1, 0),   // 0: East
+    (1, -1),  // 1: NE
+    (0, -1),  // 2: North
     (-1, -1), // 3: NW
-    (-1,  0), // 4: West
-    (-1,  1), // 5: SW
-    ( 0,  1), // 6: South
-    ( 1,  1), // 7: SE
+    (-1, 0),  // 4: West
+    (-1, 1),  // 5: SW
+    (0, 1),   // 6: South
+    (1, 1),   // 7: SE
 ];
 
 /// Pick a glyph that visually matches the heading direction. Diagonals

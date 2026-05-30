@@ -11,8 +11,9 @@ type WorldPrimFn = fn(&[Val], &mut World) -> R;
 
 fn coord(v: &Val, name: &str) -> Result<u32, String> {
     match v {
-        Val::Num(n) => u32::try_from(*n)
-            .map_err(|_| format!("{name}: coord out of u32 range, got {n}")),
+        Val::Num(n) => {
+            u32::try_from(*n).map_err(|_| format!("{name}: coord out of u32 range, got {n}"))
+        }
         _ => Err(format!("{name}: expected non-negative integer, got {v}")),
     }
 }
@@ -33,7 +34,11 @@ fn world_set_tile(args: &[Val], w: &mut World) -> R {
         Val::Sym(s) => {
             Tile::from_sym(s).ok_or_else(|| format!("world-set-tile!: unknown tile '{s}'"))?
         }
-        other => return Err(format!("world-set-tile!: 3rd arg must be a symbol, got {other}")),
+        other => {
+            return Err(format!(
+                "world-set-tile!: 3rd arg must be a symbol, got {other}"
+            ));
+        }
     };
     Ok(Val::Bool(w.set_tile(x, y, kind)))
 }
@@ -49,7 +54,10 @@ fn world_log(args: &[Val], w: &mut World) -> R {
 }
 
 fn world_size(_args: &[Val], w: &mut World) -> R {
-    Ok(Val::cons(Val::Num(w.width as i64), Val::Num(w.height as i64)))
+    Ok(Val::cons(
+        Val::Num(w.width as i64),
+        Val::Num(w.height as i64),
+    ))
 }
 
 /// `(world-apply! ctx)` — resolver: reads `element`, `tx`, `ty`, optional `area`
@@ -63,9 +71,14 @@ fn world_apply(args: &[Val], w: &mut World) -> R {
     let area = assoc_get(ctx, "area").and_then(as_num).unwrap_or(0).max(0);
 
     let tile = match element.as_ref() {
-        Some(Val::Sym(s)) => Tile::from_sym(s)
-            .ok_or_else(|| format!("world-apply!: unknown element '{s}'"))?,
-        Some(other) => return Err(format!("world-apply!: element must be a symbol, got {other}")),
+        Some(Val::Sym(s)) => {
+            Tile::from_sym(s).ok_or_else(|| format!("world-apply!: unknown element '{s}'"))?
+        }
+        Some(other) => {
+            return Err(format!(
+                "world-apply!: element must be a symbol, got {other}"
+            ));
+        }
         None => return Err("world-apply!: ctx has no 'element".into()),
     };
 
@@ -126,11 +139,11 @@ fn as_num(v: Val) -> Option<i64> {
 }
 
 pub const WORLD_PRIMS: &[(&str, Arity, WorldPrimFn)] = &[
-    ("world-tile",      Arity::Exact(2),   world_tile),
-    ("world-set-tile!", Arity::Exact(3),   world_set_tile),
-    ("world-log!",      Arity::AtLeast(1), world_log),
-    ("world-size",      Arity::Exact(0),   world_size),
-    ("world-apply!",    Arity::Exact(1),   world_apply),
+    ("world-tile", Arity::Exact(2), world_tile),
+    ("world-set-tile!", Arity::Exact(3), world_set_tile),
+    ("world-log!", Arity::AtLeast(1), world_log),
+    ("world-size", Arity::Exact(0), world_size),
+    ("world-apply!", Arity::Exact(1), world_apply),
 ];
 
 /// Register every entry in [`WORLD_PRIMS`] as a state-capturing closure
