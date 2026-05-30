@@ -68,7 +68,7 @@ fn lex(tape: &str) -> Result<Vec<Tok>, String> {
     Ok(out)
 }
 
-fn resolve(toks: Vec<Tok>) -> Result<Vec<String>, String> {
+fn resolve(toks: &[Tok]) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < toks.len() {
@@ -95,6 +95,6 @@ fn resolve(toks: Vec<Tok>) -> Result<Vec<String>, String> {
 /// for unknown runes, stray numbers, or parametrized runes with no number.
 pub fn tape_to_sexpr(tape: &str) -> Result<String, String> {
     let toks = lex(tape)?;
-    let parts = resolve(toks)?;
+    let parts = resolve(&toks)?;
     Ok(format!("(list {})", parts.join(" ")))
 }
