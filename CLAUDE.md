@@ -12,8 +12,8 @@ context through a pipeline of primitives. The point is that the smallest
 interesting substrate you can call a real programming language fits in a few
 hundred lines and once you have it, the rest is just a vocabulary.
 
-Narrative overview lives in `web/letrs.html` (also linked from
-`web/index.html`) — open it in a browser, it's the single-page tour
+The dev log lives in `web/letrs.html` (also linked from
+`web/index.html`) — open it in a browser, it's the running narrative
 of what's here and why.
 
 Slices that have landed:
