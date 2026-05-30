@@ -41,12 +41,14 @@
           <button type="button" class="rune digit" data-rune="3">3</button>
           <button type="button" class="rune digit" data-rune="5">5</button>
           <button type="button" class="rune ctl"   id="space-rune" data-rune=" " title="space">␣</button>
-          <button type="button" class="rune ctl"   id="clear-tape" title="clear tape">⌫</button>
         </div>
 
         <label class="field">
           <span>tape</span>
-          <input type="text" id="tape" value="ᚠ ᛊ 3 ᛁ" autocomplete="off" spellcheck="false">
+          <div class="input-row">
+            <input type="text" id="tape" value="ᚠ ᛊ 3 ᛁ" autocomplete="off" spellcheck="false">
+            <button type="button" class="rune ctl" id="clear-tape" title="clear tape">⌫</button>
+          </div>
         </label>
 
         <div class="row">

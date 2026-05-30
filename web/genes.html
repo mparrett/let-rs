@@ -66,13 +66,14 @@
             <button type="button" class="codon mut" data-codon="M10" title="mutate at 10%">M10</button>
             <button type="button" class="codon mut" data-codon="M50" title="mutate at 50% (heavy drift)">M50</button>
           </span>
-          <span class="palette-sep"></span>
-          <button type="button" class="rune ctl" id="clear-tape-genes" title="clear tape">⌫</button>
         </div>
 
         <label class="field">
           <span>tape</span>
-          <input type="text" id="tape-genes" value="AUG CGA GCA ACA UCA GCG AUC GAU UAA" autocomplete="off" spellcheck="false">
+          <div class="input-row">
+            <input type="text" id="tape-genes" value="AUG CGA GCA ACA UCA GCG AUC GAU UAA" autocomplete="off" spellcheck="false">
+            <button type="button" class="rune ctl" id="clear-tape-genes" title="clear tape">⌫</button>
+          </div>
         </label>
 
         <div class="row">

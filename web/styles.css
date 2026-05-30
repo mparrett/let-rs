@@ -174,6 +174,20 @@ input:focus, textarea:focus {
 }
 input[type="text"] { letter-spacing: 0.05em; font-size: 16px; }
 
+/* Tape/axiom inputs with a trailing ⌫ button on the same row. The button
+   stretches to match the input height (matches `align-items: stretch`). */
+.input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.input-row input { flex: 1; min-width: 0; }
+.input-row .rune.ctl,
+.input-row .stroke.ctl {
+  height: auto;
+  align-self: stretch;
+}
+
 .row {
   display: flex; align-items: end; gap: 10px;
   flex-wrap: wrap;
