@@ -405,6 +405,52 @@ arc — like ADR-001 → eventual ADR-N). Until then, hosts that need
 their own undo can snapshot at their own layer (clone the `World`
 struct before each cast).
 
+### Prims-to-globals — symmetric top-level lookup
+
+**Problem.** `prim::initial_env` installs ~40 built-in prims as
+nested `Env` frames (`prim.rs:374`); top-level `define` writes to a
+separate `Globals` hashmap (ADR-015). Lookup walks the prim chain
+before falling through to globals. Two homes for "top-level names"
+— conceptually weird, minor perf cost. Called out in ADR-015 but
+punted to keep the cycle-break minimal. Re-surfaced in the
+2026-05-29 architecture audit as item #3.
+
+**What it would take.** Move `BUILTINS` registration from the
+`env.extend` chain to `globals.insert` at `Vm::new` time. Lookup
+already falls through to globals; the prim chain just goes away.
+Compatible with ADR-015's `Weak` back-edge — prims don't capture
+state, so no cycle risk.
+
+**Blocker.** Shadow semantics for `(define + 5)`. Today it
+lexically shadows the prim; if prims live in globals it would
+overwrite. Needs a small ADR resolving this. Most likely call:
+overwrite (matches Scheme `(define +)`) and document the warning
+surface.
+
+**Cost.** Small. `prim.rs` registration loop + the ADR. No
+engine-rule changes.
+
+### `letrec` Rc cycle — Weak back-edge in lexical scope
+
+**Problem.** Same shape as the top-level Rc cycle ADR-015 broke,
+but in lexical scope: a closure created inside `letrec` captures
+the surrounding env, which contains the cell holding the closure.
+Cycle. Negligible at REPL scale; matters in long-lived sessions
+where a letrec-defined recursive proc would otherwise outlive its
+scope. ADR-015 punted on this because the top-level case dominated
+by ~10× and letrec's "the surrounding lexical scope is what holds
+this cell alive" constraint makes the fix design-noisier than the
+top-level Weak back-edge. Re-surfaced in the 2026-05-29 audit as
+item #4.
+
+**Likely shape.** Same `Weak` back-edge pattern but in `Env` for
+letrec frames specifically. Needs a way to mark letrec frames so
+the common `let` case isn't penalized.
+
+**Cost.** Small to medium. `env.rs` + the letrec compile path in
+`parse.rs`. Test mirrors `dropping_vm_releases_top_level_closures`
+but for a letrec-defined recursive proc.
+
 ---
 
 ## Out of scope here (already on the docs/let-rs.html coda)
