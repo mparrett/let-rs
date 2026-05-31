@@ -1324,3 +1324,163 @@ the actual bbox of visited cells at render time.
   table.** Out of scope until a second turtle-shaped host appears,
   same "promote on second consumer" rule.
 
+## ADR-020: Prims live in globals; `(define +)` overwrites (2026-05-31)
+
+**Context**: ADR-015 split top-level `define` bindings off the env
+frame chain into a `Vm`-owned globals table to break an `Rc` cycle,
+and explicitly punted on moving built-in prims to the same table.
+The result is an asymmetry: `prim::initial_env` still installs ~40
+prims as `env.extend` frames at `Vm::new` time, while defines write
+to `globals`. `Env::lookup` walks frames first, then falls through
+to globals on miss (`env.rs:94`).
+
+Two visible costs:
+
+1. **Lookup walks ~40 prim frames before reaching globals on every
+   miss.** Negligible in practice; cosmetically odd.
+2. **`(define + 5)` is silently inert today.** The pre-pass
+   allocates `globals['+'] = cell`, the body writes `5` into it,
+   and then `(+ 1 2)` looks up `+`, walks the prim frame chain,
+   finds the built-in `+`, and returns `3`. The new globals binding
+   is never reached. No error, no warning — just a dead write.
+   Worse than either shadowing or overwriting.
+
+The 2026-05-29 architecture audit (item #3) called the asymmetry
+out and noted the blocker: nobody had picked the semantics for
+`(define + 5)` once the prim chain goes away. This ADR resolves
+that.
+
+**Decision**: Move `BUILTINS` registration from
+`env.extend(...)` at `prim::initial_env` time to
+`globals.insert(...)` at `Vm::new` time. Drop the prim frame chain
+entirely — `prim::initial_env(&globals)` becomes "seed the globals
+table with the built-ins, then return an empty Env that points to
+it." Lookup is now: walk lexical frames (`let` / `letrec` / closure
+params) → fall through to globals (where prims and user defines
+both live). One home for top-level names.
+
+For the semantics question — `(define + 5)`:
+
+> **Overwrite.** `(define name body)` unconditionally writes the
+> body's value into `globals[name]`, regardless of whether `name`
+> already holds a prim, a previous user define, or nothing.
+
+That means after `(define + 5)`, subsequent `(+ 1 2)` fails at
+apply time with "5 is not callable" (or whatever the engine's
+"applied non-procedure" path says). The new binding is reachable;
+the prim is gone for this Vm's lifetime.
+
+**Alternatives considered**:
+- **Reject redefinition of names that came in via `BUILTINS`.**
+  Defensive — `(define + 5)` would error at register time with
+  "cannot redefine built-in `+`". Pros: preserves prelude
+  invariants; surfaces collisions loudly at the point of writing.
+  Cons: (a) requires marking globals entries as built-in vs
+  user-defined, so the entries are no longer just `Rc<RefCell<Val>>`
+  — there's metadata. (b) Constrains legitimate use: a user can't
+  write `(define + my-generic-plus)` to extend arithmetic, which is
+  a real Scheme idiom. (c) The "what counts as built-in" line is
+  fuzzy once preludes (`spells::install`, `genes::install`,
+  `curves::install`) start installing their own defines that look
+  exactly like prims to a downstream reader. Rejected.
+- **Lexical shadow only — `define` always errors on a top-level
+  collision; `(let ((+ 5)) …)` is the only way to shadow.** Strict
+  and predictable, but breaks the "preludes install via top-level
+  `define`" pattern (ADR-014): a prelude couldn't define a name
+  that any other pack also defined. The DSL packs already collide
+  in practice (spells and genes both defined `start` /
+  `stop` until ADR-019's namespace fix). Rejected — too rigid for
+  the pattern.
+- **Overwrite, but mark the new entry as "user-defined" so tooling
+  can warn.** A `(value: Val, source: BuiltinOr<User>)` shape on
+  globals entries. Pros: enables a host to highlight "you just
+  shadowed a prim" in a REPL. Cons: adds a field to every globals
+  entry to support a feature no caller has asked for. Filed under
+  "do it when a host wants it"; not part of this ADR.
+- **Keep prims in env frames, add an explicit error in the define
+  pre-pass when `name` is a known built-in.** Cheaper than the
+  move (no Env shape change). Cons: doesn't fix the lookup walk;
+  doesn't unify the two homes for top-level names; treats a
+  cosmetic asymmetry by adding a guard rather than removing it.
+  Rejected as a half-measure.
+
+**Consequences**:
+- **+** Uniform top-level lookup: one home for prims, defines, and
+  prelude-installed bindings. `Env::lookup`'s frame walk is now
+  meaningful (it's only lexical scopes), and the fall-through is
+  the only path to a top-level name.
+- **+** `(define + 5)` is no longer silently inert. After the
+  define, `(+ 1 2)` errors at apply time with a clear "non-procedure
+  applied" message. The footgun moved from "silently dead" to
+  "loud at the next call."
+- **+** Lookup is faster on the common miss: no ~40-frame prim
+  chain walk before the globals hit. Microbench territory; not
+  worth a perf claim, but it's not worse.
+- **+** `Vm::new` no longer threads `prim::initial_env(globals)` →
+  `self.env`. `self.env` can be `Env::with_globals(&globals)` plain
+  — a single line, no fold over `BUILTINS`. The `prim` module
+  becomes "the BUILTINS table plus their implementations"; the
+  registration mechanism moves to `lib.rs` (or stays in `prim.rs`
+  but writes to globals instead of returning an Env). Smaller
+  surface area for the registration story.
+- **+** Cycle is still broken. Prims don't capture env, so moving
+  them into globals (where they're held by strong `Rc`) doesn't
+  re-introduce the ADR-015 cycle. Closures still see globals via
+  `Weak`; prims see globals via strong `Rc` only because the Vm
+  itself owns the map.
+- **−** Possessing a working `+` after `(define + 5)` requires
+  resetting the Vm (drop and recreate) or implementing
+  `(forget 'name)` to delete a globals entry. ADR-015 noted that
+  globals are publicly exposed, so `vm.globals.borrow_mut().remove("+")`
+  works from the host side today, but there's no in-language affordance.
+  Filed as a follow-up if a REPL wants it.
+- **−** `register_prim`'s public API (Vm-level prim registration
+  for hosts wiring `world-set-tile!` etc.) needs to also write to
+  globals instead of `env.extend`. One-line change; documented in
+  implementation.
+- **−** ADR-014's "preludes are just top-level defines" property
+  now applies to overwriting prims by accident — a prelude with
+  `(define start …)` will shadow a prim called `start` if one
+  exists. Today the spell/gene/curve packs are namespaced and don't
+  collide with prims, but the failure mode shifts from "silently
+  dead" to "active overwrite," which a careless pack author would
+  surface in a runtime error instead of as a confused dead binding.
+  Net better, but worth a one-line note in the DSL-pack contract:
+  "your `define`s land in the same table as the built-ins."
+
+**Implementation sketch** (for the follow-up commit, not this ADR):
+
+```rust
+// crates/lisp/src/prim.rs
+pub fn install_builtins(globals: &Globals) {
+    let mut g = globals.borrow_mut();
+    for &(name, arity, f) in BUILTINS {
+        let val = Val::Prim { name, arity, f: Rc::new(f) };
+        g.insert(name.into(), Rc::new(RefCell::new(val)));
+    }
+}
+
+// crates/lisp/src/lib.rs — Vm::new
+let globals = Rc::new(RefCell::new(HashMap::new()));
+prim::install_builtins(&globals);
+let env = Env::with_globals(&globals);
+```
+
+Tests to add in `tests/eval.rs`:
+1. `define_over_prim_overwrites` — `(define + 5) +` returns `5`.
+2. `define_over_prim_then_call_errors` — `(define + 5) (+ 1 2)`
+   errors with "non-procedure applied" (or whatever the canonical
+   apply-error string is).
+3. `prim_still_callable_in_lexical_scope` — `(let ((+ 100)) (+ 1 2))`
+   returns `100` via lexical shadowing (frame walk wins for `let`
+   bindings). This was true before and stays true; pin it.
+
+**Deferred**:
+- `(forget 'name)` engine prim to remove a globals entry. Trivial
+  implementation (`globals.borrow_mut().remove(name)`); waiting on
+  a host that wants it.
+- Marking globals entries as "user" vs "built-in" for tooling
+  (REPL highlighting on collision). Not part of this ADR.
+- The `letrec` Rc cycle (ADR-015 punt). Independent of this move;
+  filed in `core-followups.md`.
+
