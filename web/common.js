@@ -1,4 +1,4 @@
-// letrs · web · shared module
+// let-rs · web · shared module
 //
 // One Vm per tab, plus the bits that don't care which DSL is on the page:
 // the COI status chip and the REPL (which is present on both lab pages

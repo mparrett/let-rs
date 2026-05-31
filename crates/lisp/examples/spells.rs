@@ -27,7 +27,7 @@ fn cast(vm: &mut Vm, tape: &str) {
 fn main() {
     let mut vm = Vm::new();
     spells::install(&mut vm);
-    println!("letrs spell demo\n================\n");
+    println!("let-rs spell demo\n================\n");
 
     cast(&mut vm, "ᚦ"); // just fire
     cast(&mut vm, "ᚦ ᛞ 3 ᛇ"); // the canonical example: fire, area-3, ice

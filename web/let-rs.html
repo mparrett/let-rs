@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Letrs · Five Rules and a Spell</title>
+  <title>Let-rs · Five Rules and a Spell</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
@@ -540,10 +540,10 @@
     <header class="mast">
       <div class="strip">
         <span>Build log · 2026-05-25 → 26</span>
-        <span class="here">letrs · two days in</span>
+        <span class="here">let-rs · two days in</span>
         <span>Two vocabularies, one lisp</span>
       </div>
-      <h1>Let<span class="sigil">rs</span></h1>
+      <h1>Let-<span class="sigil">rs</span></h1>
       <p class="sub">
         A CEK abstract machine, a small functional lisp grown on top, two structurally-different DSLs above that (spells over a tile world, genomes over a diploid resolver), and an engine that learned nothing new for either — built in zero-dependency Rust, with exact rationals, installable preludes, mutual-recursive top-level defines, a host-agnostic <code>Vm</code>, and 97 tests.
       </p>
@@ -556,7 +556,7 @@
     </header>
 
     <p class="prelude">
-      Xsofy is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Letrs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives. The second day proved it twice — a second DSL (genomes, codons, Mendelian breeding) shipped without the engine learning a thing about it.
+      Xsofy is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Let-rs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives. The second day proved it twice — a second DSL (genomes, codons, Mendelian breeding) shipped without the engine learning a thing about it.
     </p>
 
     <section class="act">
@@ -570,7 +570,7 @@
           <span class="tag">— the CEK abstract machine, on an index card</span>
         </h2>
         <p>
-          The heart of letrs is Felleisen &amp; Friedman's CEK machine (1980s) — a small evolution of Landin's SECD (1964) and one of the cleanest things anyone has ever written down about how lambda calculus actually runs. Three registers: <em>C</em>ontrol, <em>E</em>nvironment, <em>K</em>ontinuation. The whole evaluator is a function that takes one of those triples and returns the next one. There is no native call stack. The "stack" is the continuation, reified as plain data on the heap.
+          The heart of let-rs is Felleisen &amp; Friedman's CEK machine (1980s) — a small evolution of Landin's SECD (1964) and one of the cleanest things anyone has ever written down about how lambda calculus actually runs. Three registers: <em>C</em>ontrol, <em>E</em>nvironment, <em>K</em>ontinuation. The whole evaluator is a function that takes one of those triples and returns the next one. There is no native call stack. The "stack" is the continuation, reified as plain data on the heap.
         </p>
 
         <div class="boxed rules-wrap" data-label="the five transition rules · CEK">
@@ -811,7 +811,7 @@
           defined and starts being something the user can extend at compile time.
         </p>
         <p>
-          Letrs's macros are procedural — every macro is a regular closure that
+          Macros in let-rs are procedural — every macro is a regular closure that
           runs at compile time, takes the raw s-expression arguments as quoted
           data, and returns a new s-expression to be compiled in its place. The
           implementation is ~80 lines on top of the existing machinery. <code>defmacro</code>
@@ -1197,7 +1197,7 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
             Burak Emir · <em>CEK and Control</em>
           </a>
           — the CEK machine read against the broader landscape of control operators
-          (call/cc, delimited continuations); useful for placing letrs's tiny
+          (call/cc, delimited continuations); useful for placing the let-rs
           continuation tower in context.
         </li>
         <li>
@@ -1221,7 +1221,7 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
     </div>
 
     <footer class="colophon">
-      <span>letrs · 2026-05-25 → 29</span>
+      <span>let-rs · 2026-05-25 → 29</span>
       <span>97 tests · core stays zero-dep</span>
       <span>built on a CEK machine</span>
     </footer>

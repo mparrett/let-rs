@@ -1,4 +1,4 @@
-# letrs benchmarks
+# let-rs benchmarks
 
 Criterion-driven benchmark suite for the lisp engine and the
 spell/genes demos. Lives in its own crate so the core `lisp` crate
@@ -28,7 +28,7 @@ just bench -- --baseline pre
 ```
 
 Criterion prints a delta vs `pre` for every bench, with statistical
-significance flags. This is the intended use — letrs benchmarks
+significance flags. This is the intended use — let-rs benchmarks
 aren't about hitting an absolute number, they're about catching
 regressions when the engine changes.
 

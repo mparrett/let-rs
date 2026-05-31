@@ -48,7 +48,7 @@ fn main() {
     let mut vm = Vm::new();
     curves::install(&mut vm, turtle);
 
-    println!("letrs curves demo\n=================\n");
+    println!("let-rs curves demo\n=================\n");
 
     // octagon: 8 unit edges, 45° turns. No recursion — just the axiom.
     cast(&mut vm, "octagon", "F+F+F+F+F+F+F+F", "", 0);

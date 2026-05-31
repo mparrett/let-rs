@@ -8,7 +8,7 @@ fn main() {
     let mut stdout = io::stdout();
     let mut reader = stdin.lock();
 
-    eprintln!("letrs — Ctrl-D to exit");
+    eprintln!("let-rs — Ctrl-D to exit");
     loop {
         eprint!("> ");
         stdout.flush().ok();

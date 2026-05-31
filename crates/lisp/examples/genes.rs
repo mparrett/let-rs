@@ -52,7 +52,7 @@ fn main() {
     let mut vm = Vm::new();
     genes::install(&mut vm);
 
-    println!("letrs genes demo\n================\n");
+    println!("let-rs genes demo\n================\n");
 
     // one allele per trait — every locus expresses solo
     sequence(

@@ -1,4 +1,4 @@
-// letrs · web · Gene Lab
+// let-rs · web · Gene Lab
 //
 // Codon palette → tape, express → creature card. Seeds with a balanced
 // strand so the page lands on a rendered card.

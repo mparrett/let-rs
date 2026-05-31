@@ -1,6 +1,6 @@
 # Style & Conventions
 
-How letrs is written, day to day. This is a working dev doc, not a
+How let-rs is written, day to day. This is a working dev doc, not a
 specification — strong recommendations unless enforced by tooling or
 explicitly deviated from with a recorded reason.
 
@@ -9,7 +9,7 @@ architecture choices see `docs/project_notes/decisions.md`.
 
 ## References
 
-We cherry-pick from these — they are not authoritative for letrs:
+We cherry-pick from these — they are not authoritative for let-rs:
 
 - [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/about.html)
 - [Apollo Rust Best Practices](https://github.com/apollographql/rust-best-practices)

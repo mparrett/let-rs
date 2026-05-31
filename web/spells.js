@@ -1,4 +1,4 @@
-// letrs · web · Spell Lab
+// let-rs · web · Spell Lab
 //
 // Rune palette → tape, cast → world. Seeds with a small fire-then-ice
 // cast so visitors land on a rendered grid rather than a blank one.

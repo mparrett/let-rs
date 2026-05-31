@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in the `letrs` repository.
+Guidance for Claude Code when working in the `let-rs` repository.
 
 ## What this is
 
@@ -12,7 +12,7 @@ context through a pipeline of primitives. The point is that the smallest
 interesting substrate you can call a real programming language fits in a few
 hundred lines and once you have it, the rest is just a vocabulary.
 
-The dev log lives in `web/letrs.html` (also linked from
+The dev log lives in `web/let-rs.html` (also linked from
 `web/index.html`) — open it in a browser, it's the running narrative
 of what's here and why.
 
@@ -143,7 +143,7 @@ Web shell at `web/` — four pages, one bundle:
 
 - `web/index.html` — landing page. Three `.lab-card` links to the demos
   (plum-accented Spell Lab, honey-accented Gene Lab, copper-accented
-  Curve Lab) over a Letrs masthead. No WASM init on this page; it's
+  Curve Lab) over a Let-rs masthead. No WASM init on this page; it's
   pure HTML.
 - `web/spells.html` — Spell Lab + REPL, two-column at ≥940px. Plum
   rune-palette aesthetic.
@@ -153,7 +153,7 @@ Web shell at `web/` — four pages, one bundle:
   stroke-palette aesthetic; rotation buttons indigo, branching buttons
   sage so the three glyph groups read distinctly.
 - `web/styles.css` — shared. Palette + typography lifted from
-  `web/letrs.html`. Per-page accents picked via per-element classes
+  `web/let-rs.html`. Per-page accents picked via per-element classes
   (`.sigil.gene`, `.lab-card.spells`, `.canvas`, etc).
 - `web/common.js` — plain ESM. `await init()`, `Vm` construction, COI
   chip, REPL wiring. Imported by spells.js, genes.js, and curves.js.

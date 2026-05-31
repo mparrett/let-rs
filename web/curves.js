@@ -1,4 +1,4 @@
-// letrs · web · Curve Lab
+// let-rs · web · Curve Lab
 //
 // Stroke palette → axiom, rules textarea → lisp alist, draw → canvas.
 // The bridge expects rules as a pre-built lisp form, so the page module

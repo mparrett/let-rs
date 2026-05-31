@@ -7,7 +7,7 @@ the original entry — the reasoning is part of the history.
 
 ## ADR-001: CEK abstract machine as the evaluator (2026-05-25)
 
-**Context**: Letrs needs an interpreter for a small functional lisp. The
+**Context**: Let-rs needs an interpreter for a small functional lisp. The
 choice of machine shape determines what's easy (tail calls, continuations,
 debugging) and what's hard (performance, FFI), and influences every later
 extension.
@@ -463,7 +463,7 @@ codon palette color-coded by trait category. Bundle grew ~19 KB
 "needs RNG (thread-local? WorldPrim against a per-Vm seed?), a
 non-trivial decision." With the genes demo otherwise working, the
 question matured: what shape should `(mutate …)` take so it composes
-with the codon-tape style and stays consistent with letrs's "same
+with the codon-tape style and stays consistent with let-rs's "same
 input → same output" flavor everywhere else (pure CEK eval, FNV
 deterministic tiebreaks, no global state)?
 
@@ -500,7 +500,7 @@ Surface choices:
 **Alternatives considered**:
 - **True random (non-seeded)** — rejected. Breaks "same input → same
   output", makes tests flaky, and the web shell's "evolve →" button
-  loses meaning if every click is unrepeatable. Seeded is more letrs-y.
+  loses meaning if every click is unrepeatable. Seeded is more let-rs-y.
 - **Per-Vm seed via a `seed!` prim** (`(seed! 42)` once, then `(mutate
   ctx)` consumes the next number) — rejected. Adds mutable RNG state
   to `Vm` for one consumer's benefit. Lexical scope via outer `let`
@@ -1193,7 +1193,7 @@ helper saves the duplication. The lisp crate stops re-exporting
 - **Generalize `World` to `Grid<T> + EventLog`** as
   `host-state.md` proposed. Out of scope until a second grid-shaped
   host appears (the project's "promote on second consumer" rule).
-- **`docs/letrs.html` narrative** mentions `world.rs` and
+- **`docs/let-rs.html` narrative** mentions `world.rs` and
   `Val::WorldPrim`. Will need a refresh; tracked separately so this
   refactor sequence stays scoped.
 
@@ -1314,7 +1314,7 @@ the actual bbox of visited cells at render time.
   per-iteration slider — drag from 1→5 and watch the curve
   unfold. Out of scope for v1 (CLI demo lands first; promote to
   WASM when the existing two pages need a sibling).
-- **`docs/letrs.html` narrative refresh** to add curves alongside
+- **`docs/let-rs.html` narrative refresh** to add curves alongside
   spells/genes (the ADR-018 deferral covered the host-state edits;
   this is an additive pass).
 - **`begin` as an engine special form.** Tracked as a follow-up if

@@ -1,4 +1,4 @@
-# letrs core · next-slice follow-ups
+# let-rs core · next-slice follow-ups
 
 Engine-level work surfaced while building the genes demo (ADR-011,
 ADR-012, ADR-013). The demos validated the "vocabulary on top"
@@ -407,7 +407,7 @@ struct before each cast).
 
 ---
 
-## Out of scope here (already on the docs/letrs.html coda)
+## Out of scope here (already on the docs/let-rs.html coda)
 
 These are real but pre-existing follow-ups, not surfaced by the
 gene work. Listed for context so we don't duplicate them:
@@ -421,7 +421,7 @@ gene work. Listed for context so we don't duplicate them:
 - **Structured errors.** `eval_str` returns `Result<Val,
   String>`. The web REPL and gene/spell labs surface those
   strings raw. For a real REPL, line/column info would be nice.
-- **The play loop.** Listed in the docs/letrs.html "what comes
+- **The play loop.** Listed in the docs/let-rs.html "what comes
   after" — turn-based render/input/spell/world tick. The engine
   is ready; this is host-side work.
 

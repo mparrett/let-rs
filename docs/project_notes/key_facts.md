@@ -38,7 +38,7 @@ just bench        # criterion benches under crates/bench/
 ## Layout
 
 ```
-letrs/
+let-rs/
 ├── Cargo.toml                 workspace root, members = ["crates/*"]
 ├── CLAUDE.md                  session-orientation
 ├── justfile
@@ -72,12 +72,12 @@ letrs/
 │       ├── src/lib.rs         WasmVm wrapper, owns world handle
 │       └── Cargo.toml
 ├── web/                       browser shell — no bundler, plain ESM
-│   ├── {index,spells,genes}.html
-│   ├── styles.css             palette from docs/letrs.html
-│   ├── {common,spells,genes}.js
+│   ├── {index,spells,genes,curves}.html
+│   ├── let-rs.html            dev log (narrative tour)
+│   ├── styles.css             palette from let-rs.html
+│   ├── {common,spells,genes,curves}.js
 │   └── pkg/                   wasm-bindgen output (gitignored)
 └── docs/
-    ├── letrs.html             single-page narrative tour
     └── project_notes/         this directory
 ```
 
@@ -121,10 +121,10 @@ letrs/
 - `../xsofy` — the original roguelike whose spell DSL inspired this. Same
   authoring conventions; do not push to either upstream from local sessions.
 - `../let-go` — the Go-based Clojure dialect that xsofy runs on. Not used by
-  letrs; mentioned only for context.
+  let-rs; mentioned only for context.
 
 ## Narrative
 
-`docs/letrs.html` is the human-readable tour — open in a browser. Same
+`web/let-rs.html` is the dev log — open in a browser. Same
 typography/aesthetic as xsofy's quest notes, covering the CEK heart, the
 "real lisp" feature set, the spell DSL pipeline, and the macro system.

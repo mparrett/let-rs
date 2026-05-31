@@ -1,4 +1,4 @@
-# Host state in letrs — what "world" actually is
+# Host state in let-rs — what "world" actually is
 
 Reading guide for anyone (new contributor, future Claude session,
 archaeologist) trying to make sense of why the lisp engine has a
@@ -26,7 +26,7 @@ grid with an event log," built around what the spell demo needs.
 square of fire/ice tiles around `(tx, ty)`. That's not a general
 primitive; it's the spell DSL's punchline.
 
-## How state lives in letrs
+## How state lives in let-rs
 
 The lisp itself is purely functional. No `set!`, no mutable
 variables. Lists, closures, recursion, all over immutable `Val`s.
@@ -79,7 +79,7 @@ to "remove host state from the engine entirely."
 
 ## What a non-game would use World for
 
-Nothing. A non-game letrs use would do one of three things today:
+Nothing. A non-game let-rs use would do one of three things today:
 
 1. Ignore it (the way genes does — accept a dummy 0×0 grid sitting
    in memory).
