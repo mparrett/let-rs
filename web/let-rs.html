@@ -545,7 +545,7 @@
       </div>
       <h1>Let-<span class="sigil">rs</span></h1>
       <p class="sub">
-        A CEK abstract machine, a small functional lisp grown on top, two structurally-different DSLs above that (spells over a tile world, genomes over a diploid resolver), and an engine that learned nothing new for either — built in zero-dependency Rust, with exact rationals, installable preludes, mutual-recursive top-level defines, a host-agnostic <code>Vm</code>, and 97 tests.
+        A CEK abstract machine, a small functional lisp grown on top, three structurally-different DSLs above that (spells over a tile world, genomes over a diploid resolver, curves over a turtle canvas), and an engine that learned nothing new for any of them — built in zero-dependency Rust, with exact rationals, installable preludes, mutual-recursive top-level defines, a host-agnostic <code>Vm</code>, and uniform top-level lookup (ADR-020).
       </p>
       <dl class="seal">
         <div><dt>Engine (zero-dep)</dt><dd>~1.6K LOC Rust</dd></div>
@@ -1165,20 +1165,27 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       </ul>
       <p>
         Crossed off since day one: the WASM bridge (<code>crates/wasm/</code>
-        plus a three-page web shell — landing, Spell Lab, Gene Lab),
-        installable preludes (ADR-014), the numeric tower,
-        mutual-recursive top-level defines (within and across
+        plus a four-page web shell — landing, Spell Lab, Gene Lab,
+        Curve Lab), installable preludes (ADR-014), the numeric
+        tower, mutual-recursive top-level defines (within and across
         <code>eval_str</code> calls, after ADR-015 broke the
         top-level Rc cycle), the genes vocabulary itself. Then the
         2026-05-29 audit refactor sequence: the spell + genes packs
         moved to sibling crates (ADR-016), the engine went
         host-agnostic via closure-capable prims (ADR-017), and
         <code>world.rs</code> moved to its own micro-crate (ADR-018).
-        The <code>lisp</code> crate is "engine + parser + numeric
-        tower" — zero host types, zero demo vocabulary. None of the
-        remaining items are large; all of them are interesting; most
-        of them are independent. The hard parts are done — the
-        language is itself, and the second DSL proved it.
+        A third sibling vocabulary — L-systems → turtle → ASCII
+        canvas — landed the same day as <code>crates/curves/</code>
+        (ADR-019), proving the substrate carries a third DSL the
+        same way it carried the first two. Then ADR-020 collapsed
+        the prim frame chain into the same globals table user
+        <code>define</code>s live in, removing the last asymmetry in
+        top-level lookup. The <code>lisp</code> crate is "engine +
+        parser + numeric tower" — zero host types, zero demo
+        vocabulary. None of the remaining items are large; all of
+        them are interesting; most of them are independent. The
+        hard parts are done — the language is itself, and three
+        DSLs proved it.
       </p>
     </div>
 
@@ -1221,8 +1228,8 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
     </div>
 
     <footer class="colophon">
-      <span>let-rs · 2026-05-25 → 29</span>
-      <span>97 tests · core stays zero-dep</span>
+      <span>let-rs · 2026-05-25 →</span>
+      <span>core stays zero-dep</span>
       <span>built on a CEK machine</span>
     </footer>
 

@@ -6,7 +6,8 @@
 - Workspace at repo root, members = `["crates/*"]`, resolver = `"3"`
 - `just` is the task runner (Homebrew install). No `Makefile`.
 - Core `lisp` crate: zero dependencies — keep it that way.
-- `runes`, `codons`, `world`, `genes` crates: depend on nothing (`runes`, `codons`) or only on `lisp` (`world`, `genes`).
+- `runes`, `codons`, `strokes` crates: zero deps.
+- `world`, `genes`, `curves` crates: depend only on `lisp`.
 - `spells` crate: depends on `lisp` + `world` (the `install_with_world` helper combines both installs).
 - `wasm` crate: `wasm-bindgen` (=0.2.114 pinned to match CLI), `console_error_panic_hook`. Justified by ADR-002's "lisp stays platform-independent" caveat.
 
@@ -22,12 +23,13 @@ Pipeline: `cargo build` → `wasm-bindgen --target web` → `wasm-opt -Oz --stri
 ## Commands
 
 ```bash
-just              # default → cargo test --workspace (97 tests)
+just              # default → cargo test --workspace
 just test         # same — explicit
 just repl         # interactive REPL (examples/repl.rs)
 just spells       # CLI rune-tape demo
 just world        # CLI spell-paints-tiles demo
 just genes        # CLI codon-tape → creature card demo
+just curves       # CLI stroke-tape → L-system → ASCII canvas demo
 just check        # cargo check --all-targets
 just fmt          # cargo fmt --all
 just wasm-build   # cargo build wasm + wasm-bindgen → web/pkg/
