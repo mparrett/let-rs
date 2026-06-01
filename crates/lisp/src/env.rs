@@ -106,4 +106,20 @@ impl Env {
         let table = globals.borrow();
         table.get(name).map(|slot| slot.borrow().clone())
     }
+
+    /// Return a `Weak` handle to the lexical-scope slot for `name`, if
+    /// any. Walks frames only — does *not* fall through to globals.
+    /// Exposed for diagnostic tests that need to observe slot lifetime
+    /// across drops without extending it; see ADR-021's
+    /// `letrec_cycle_persists_after_drop`.
+    pub fn weak_slot(&self, name: &str) -> Option<Weak<RefCell<Val>>> {
+        let mut cur = self.frame.as_deref();
+        while let Some(f) = cur {
+            if &*f.name == name {
+                return Some(Rc::downgrade(&f.slot));
+            }
+            cur = f.parent.as_deref();
+        }
+        None
+    }
 }

@@ -675,3 +675,34 @@ fn prim_still_callable_in_lexical_scope() {
     // itself was in the base frame chain.
     assert_eq!(eval("(let ((+ 100)) +)"), "100");
 }
+
+#[test]
+fn letrec_cycle_persists_after_drop() {
+    // ADR-021 diagnostic: documents the residual letrec Rc cycle.
+    // A letrec closure that references its own name forms
+    // `Frame → cell → Val::Clo → closure.env → Frame`. After every
+    // user-side strong handle drops, the cycle keeps the cell alive
+    // (leak). When the engine grows a real fix — closure conversion
+    // or Y-style desugaring or a Store-reified CESK upgrade — this
+    // assertion flips, and that flip is the regression signal.
+    let mut vm = lisp::Vm::new();
+    let v = vm
+        .eval_str("(letrec ((f (lambda () (f)))) f)")
+        .unwrap();
+    // Reach into the returned closure's captured env for the "f" slot.
+    let weak = match &v {
+        lisp::Val::Clo { env, .. } => env
+            .weak_slot("f")
+            .expect("letrec frame should carry an `f` slot"),
+        other => panic!("expected letrec body to return a closure, got {other}"),
+    };
+    drop(v);
+    drop(vm);
+    assert!(
+        weak.upgrade().is_some(),
+        "today: the cell.value → closure → env.frame → cell cycle \
+         keeps the slot alive even after every external strong \
+         handle drops. When this flips to is_none() the cycle has \
+         been broken — update or remove this assertion at that point."
+    );
+}

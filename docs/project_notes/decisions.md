@@ -1488,3 +1488,166 @@ Tests to add in `tests/eval.rs`:
 - The `letrec` Rc cycle (ADR-015 punt). Independent of this move;
   filed in `core-followups.md`.
 
+## ADR-021: letrec Rc cycle — pinned, deferred (2026-05-31)
+
+**Context**: ADR-015 broke the top-level `define` Rc cycle by
+making `Env::globals` a `Weak` back-edge to the Vm-owned globals
+table. The same cycle exists in `letrec`, but the fix doesn't
+transfer. The 2026-05-29 audit listed it as item #4 (lower priority
+than the host-coupling and demo-crate moves); we filed it in
+`core-followups.md` after the audit triage; this ADR records the
+diagnosis and the conclusion that no clean fix exists without a
+substantially more invasive engine change.
+
+**The cycle.** Tracing `(letrec ((f (lambda () (f)))) f)` through
+`step.rs:93`:
+
+1. `env_rec = env.extend_placeholder("f")` allocates a `cell:
+   Rc<RefCell<Val>>` initialized to `Val::Bool(false)`, wraps it in
+   a `Frame { slot: cell, ... }`, hangs that off `env_rec.frame`.
+   `K::Letrec.cells[0]` also holds the cell strong.
+2. The lambda init evaluates in `env_rec`. The closure captures
+   `env_rec` by clone (`step.rs:50`); `Val::Clo { env: env_rec, …
+   }`. `closure.env.frame` is an `Rc::clone(env_rec.frame)`.
+3. `K::Letrec` patches `*cell.borrow_mut() = closure`. The cell now
+   contains the closure; the closure's env contains the frame; the
+   frame contains the cell. Cycle closed.
+
+After body eval finishes and `K::Letrec` drops, the strong refs are:
+
+- `frame` strong: 1 (held by `closure.env.frame`)
+- `cell` strong: 1 (held by `frame.slot`)
+- `closure` strong: 1 (lives by-value inside `cell`'s RefCell)
+
+Each cycle node has exactly one strong incoming reference from the
+next. Nothing reaches zero. Leak.
+
+**Why ADR-015's pattern doesn't transfer.** ADR-015 worked because
+globals have an unambiguous owner whose lifetime is strictly longer
+than every closure's: the Vm. Closures borrow globals via `Weak`;
+when the Vm drops, globals drop, and every closure stored there
+becomes unreachable and drops too. For letrec, the cells *must*
+live as long as any closure that closes over them — Scheme
+semantics require `(letrec ((f (lambda () (f)))) f)` to return a
+closure that, when called, still finds `f`. So `closure → cell`
+can't be `Weak` without breaking valid recursion.
+
+**Alternatives considered**:
+
+1. **Closure-converted letrec captures.** At lambda compile time,
+   identify free vars resolving to letrec-allocated cells; carry
+   them as a `Vec<(Sym, Rc<RefCell<Val>>)>` on `Val::Clo` instead
+   of through the captured env; make the letrec frame slots `Weak`.
+   Pros: closures stop capturing entire letrec env chains
+   (memory-cost win even if cycles remain). Cons: still a
+   `cell ↔ closure` self-cycle for any closure that references its
+   own name (`closure.letrec_captures[0]` strong-holds cell, cell
+   strong-holds Val::Clo, which is the same closure shape). Reduces
+   the cycle from three nodes to two; doesn't eliminate it.
+2. **A separate `LetrecScope` struct held strong by returned
+   closures.** Closures hold `Rc<LetrecScope>`; scope holds cells;
+   frames hold `Weak`. Pros: env can drop cleanly. Cons: same two-
+   node `cell ↔ scope` cycle via `cell.value = Val::Clo {
+   letrec_scope: Rc<scope> }`, `scope.cells[0] = Rc<cell>`.
+   Equivalent leak shape, more code.
+3. **Y-combinator desugaring at compile time.** Rewrite
+   `(letrec ((f init)) body)` into application of a fixed-point
+   operator so the lambda body doesn't reference `f` by name at
+   all. Pros: zero cycles — the closure is freshly materialized on
+   each call. Cons: substantial compile-pass work, semantic edge
+   cases for mutually-recursive bindings, fresh-closure-per-call
+   has a perf cost. Plausible but invasive.
+4. **Cycle collector.** Hand-rolled mark-and-sweep over `Val::Clo`
+   reachability. Breaks ADR-002's zero-deps stance unless a
+   one-off implementation is written. Heavy.
+5. **Weak self-ref with cell-stored-as-Weak.** Make the cell hold
+   `Weak<Val::Clo>` for self-referencing letrec bindings, with the
+   strong ref living in whatever externally holds the closure.
+   Cons: breaks valid Scheme — `(letrec ((f (lambda () (f)))) f)`
+   returns a closure whose internal `f` lookup fails because the
+   external holder is the result of letrec, not the cell.
+
+None of (1)-(5) ship today's bang for the buck. (1) and (2) are
+half-fixes; (3) is a real fix but a meaty refactor; (4) breaks
+ADR-002 or eats months of hand-rolled GC code; (5) breaks
+semantics.
+
+**Decision**: Pin the cycle's shape with a diagnostic test, accept
+the leak, defer the fix until either a host actually observes
+material growth or the engine is ready for the Y-style desugaring
+refactor (probably alongside an ADR-NNN CESK upgrade, which is
+where store-reified bindings would already be in scope).
+
+The diagnostic test (`letrec_cycle_persists_after_drop` in
+`tests/eval.rs`) asserts that, today, a `Weak` handle to a letrec-
+allocated cell *still upgrades* after the closure has been dropped
+from the user's scope. That's the inverse of
+`dropping_vm_releases_top_level_closures` — it pins the leak so a
+silent fix in the future would flip it loudly.
+
+**Consequences**:
+- **+** Cycle is documented in code (the test) and in this ADR.
+  Future engine work that fixes it has a regression target.
+- **+** No engine change ships today. Zero risk to existing
+  semantics; no behavior shift.
+- **−** Per letrec form with a recursive closure, the leak is:
+  one `Frame` + one `Rc<RefCell<Val>>` cell + one `Val::Clo`
+  (body `Rc<Expr>` + captured `Env`). Ballpark ~200 bytes plus
+  the closure body's compiled-expr Rc graph. At REPL scale
+  (one-shot evaluations) negligible; in a loop that creates
+  letrec closures repeatedly it grows linearly. The web REPL is
+  bounded by the step budget so a single eval can't loop letrec
+  unboundedly, but successive REPL submissions can accumulate.
+- **−** Hosts running long sessions with heavy `letrec` use will
+  see slow heap growth. Workarounds: drop and recreate the Vm
+  periodically; prefer top-level `define` over `letrec` for
+  recursive procs (ADR-015 already broke that cycle).
+- **−** The audit's clean-up debt remains visible. Subsequent
+  audits will flag it; this ADR is the canonical "we know, we
+  measured, we chose to wait" answer.
+
+**Implementation sketch** (for the diagnostic test, not the fix):
+
+```rust
+#[test]
+fn letrec_cycle_persists_after_drop() {
+    // ADR-021: documents the residual letrec Rc cycle. A letrec
+    // closure that references its own name forms cell → Val::Clo
+    // → env.frame → cell. After the user's strong handle drops,
+    // the cycle keeps every node alive (leak). When the engine
+    // grows a real fix, this assertion flips — and that flip is
+    // the signal we want.
+    use std::rc::Rc;
+    let mut vm = lisp::Vm::new();
+    let v = vm
+        .eval_str("(letrec ((f (lambda () (f)))) f)")
+        .unwrap();
+    // Walk into the returned closure to get a Weak handle on its
+    // captured env's letrec cell …
+    // (helper digs through Val::Clo → env.frame.slot for "f")
+    let weak = letrec_cell_weak(&v).expect("cell handle");
+    drop(v);
+    drop(vm);
+    assert!(
+        weak.upgrade().is_some(),
+        "today: letrec cycle keeps the cell alive past every \
+         strong handle; when this flips to is_none(), a real fix \
+         landed"
+    );
+}
+```
+
+The `letrec_cell_weak` helper needs to reach into `Val::Clo`'s env
+and find the named slot. That's the only added surface; everything
+else is the test body.
+
+**Deferred**:
+- The fix itself. The two leading candidates are option 1 (closure
+  conversion, half-fix) and option 3 (Y-style desugaring, full
+  fix). Pick when a host needs it. The CESK upgrade (separate
+  ADR, also deferred) would refactor Env's storage anyway, so the
+  letrec fix probably lands alongside or after CESK.
+- `Vm::heap_summary()` or similar host-visible diagnostic for
+  measuring growth. Not part of this ADR; would be filed if a
+  consumer asked for it.
+

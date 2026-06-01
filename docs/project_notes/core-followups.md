@@ -439,26 +439,22 @@ surface.
 **Cost.** Small. `prim.rs` registration loop + the ADR. No
 engine-rule changes.
 
-### `letrec` Rc cycle — Weak back-edge in lexical scope
+### `letrec` Rc cycle — **PINNED + DEFERRED (ADR-021, 2026-05-31)**
 
-**Problem.** Same shape as the top-level Rc cycle ADR-015 broke,
-but in lexical scope: a closure created inside `letrec` captures
-the surrounding env, which contains the cell holding the closure.
-Cycle. Negligible at REPL scale; matters in long-lived sessions
-where a letrec-defined recursive proc would otherwise outlive its
-scope. ADR-015 punted on this because the top-level case dominated
-by ~10× and letrec's "the surrounding lexical scope is what holds
-this cell alive" constraint makes the fix design-noisier than the
-top-level Weak back-edge. Re-surfaced in the 2026-05-29 audit as
-item #4.
-
-**Likely shape.** Same `Weak` back-edge pattern but in `Env` for
-letrec frames specifically. Needs a way to mark letrec frames so
-the common `let` case isn't penalized.
-
-**Cost.** Small to medium. `env.rs` + the letrec compile path in
-`parse.rs`. Test mirrors `dropping_vm_releases_top_level_closures`
-but for a letrec-defined recursive proc.
+> Diagnosed: the cycle is `Frame → cell → Val::Clo → closure.env →
+> Frame`, structurally different from ADR-015's top-level case
+> because cells must outlive the lexical scope when a closure
+> escapes (canonical Scheme semantics). None of the candidate
+> fixes — closure-converted captures, `LetrecScope` holder,
+> Y-combinator desugaring, hand-rolled cycle collector, Weak self-
+> ref — both break the cycle *and* preserve `(letrec ((f (lambda
+> () (f)))) f)` semantics without an invasive engine refactor.
+> Decision: pin the cycle's shape with `letrec_cycle_persists_after_drop`
+> (tests/eval.rs) so a silent fix in the future flips the test
+> loudly. Real fix probably lands alongside the CESK upgrade
+> (Store-reified bindings would already touch this surface). See
+> ADR-021 for the full design space. Original problem statement
+> below.
 
 ---
 
