@@ -1651,3 +1651,169 @@ else is the test body.
   measuring growth. Not part of this ADR; would be filed if a
   consumer asked for it.
 
+## ADR-022: Structured parse errors with source spans (2026-05-31)
+
+**Context**: Every error in `lisp` is a flat `Result<_, String>`.
+Tokenizer, reader, compiler, macro-expander, CEK step, and built-in
+prims all return bare strings. The web REPL surfaces those strings
+raw. A user typing a multi-line define with a missing close-paren
+sees `unexpected eof` with no idea which paren or line.
+
+This has been the top item in `web/let-rs.html`'s "What comes
+after" coda since day one, and shows up as a TLC item in the
+2026-05-29 architecture audit. The fix is straightforward but
+unavoidably wide — it touches the public API of `eval_str` and
+most internal error sites — so it deserves an ADR rather than a
+silent migration.
+
+**Decision**: Introduce a structured `LispErr` carrying an optional
+source `Span`. Ship in two phases; this ADR scopes Phase 1
+explicitly and acknowledges Phase 2 as a separate later move.
+
+```rust
+// crates/lisp/src/error.rs (new module)
+pub struct LispErr {
+    pub msg: String,
+    pub span: Option<Span>,
+}
+
+pub struct Span {
+    pub line: u32,  // 1-indexed
+    pub col:  u32,  // 1-indexed (byte column for ASCII, char column otherwise)
+    pub len:  u32,  // span length in source bytes, for highlight rendering
+}
+
+impl Display for LispErr {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match &self.span {
+            Some(s) => write!(f, "{}:{}: {}", s.line, s.col, self.msg),
+            None    => write!(f, "{}", self.msg),
+        }
+    }
+}
+
+impl From<String> for LispErr { /* span: None */ }
+impl From<&str>   for LispErr { /* span: None */ }
+```
+
+**Phase 1 (this ADR)**: parse-time errors get spans.
+
+- `Tok` becomes `Spanned<TokKind>` (or `Tok` gains a `span: Span`
+  field — implementation detail). `tokenize` attaches a span to
+  every emitted token.
+- `read_datum` errors carry the offending token's span. EOF errors
+  carry a synthesized span at the end of source.
+- `Datum` gains an optional `span: Option<Span>` field. Parse-
+  produced datums have `Some`; macro-synthesized datums have
+  `None`. Macros that want spanned output can borrow the call-site
+  span when synthesizing.
+- `compile` errors propagate the source datum's span.
+- Public API: `eval_str(&mut self, src: &str) -> Result<Val, LispErr>`.
+  `From<String>` lets every internal `String` error propagate
+  unchanged via `?`; the span is `None` and the host's `Display`
+  rendering matches today.
+- Internal call sites that emit positioned errors do so explicitly
+  by building a `LispErr` with span attached (e.g., the
+  unmatched-paren site in `tokenize`).
+
+**Phase 2 (separate ADR, deferred)**: runtime errors get spans.
+Plumbing `Span` through `Expr` so step-time errors carry the
+source location of the failing form. The change is mechanical but
+touches every `Expr` variant — bigger than Phase 1. Filed as a
+follow-up; this ADR doesn't ship it.
+
+**Alternatives considered**:
+
+1. **No span; structured `kind` enum only.** Solves nothing for
+   the actual UX gap. Rejected.
+2. **Full Expr-level spans in one go (Phase 1 + 2 together).**
+   Bigger change; touches every step.rs site that constructs or
+   matches `Expr`. Deferring Phase 2 lets us ship the parse
+   wins quickly and revisit runtime spans when we know which
+   site categories matter for UX.
+3. **Byte-offset spans (single `start: u32` instead of `line:col`).**
+   More compact internally but every host wants `line:col` for
+   display. Converting at error-construction time is fine and
+   keeps the public API human-readable.
+4. **`thiserror` / `anyhow` for the error type.** Violates ADR-002
+   (zero deps). `LispErr` is small enough to hand-roll.
+5. **A separate `parse-error` crate.** Too small to justify; the
+   error type is intrinsically shared between parse and eval.
+6. **Inline-error-position via panicking with a string.** Already
+   exists implicitly; not a structured solution.
+
+**Consequences**:
+- **+** Web REPL errors gain `line:col` immediately. The Spell
+  Lab and Gene Lab errors (currently raw strings in `<pre
+  class="log">`) become clickable / highlightable.
+- **+** Internal code keeps emitting `String` via `?`. `From<String>`
+  is the bridge — no rewrite of `step.rs` / `prim.rs` needed for
+  Phase 1.
+- **+** Hosts that want richer rendering (IDE-style underline) get
+  `len`. The WASM bridge can surface `Span` to JS as a struct,
+  not just a string.
+- **+** Phase 2 is incremental: add `span: Option<Span>` to `Expr`
+  variants, attach during compile, look up at step-time. No
+  re-architecture.
+- **−** Public API change: `eval_str -> Result<Val, LispErr>`
+  instead of `Result<Val, String>`. Hosts that match on the error
+  string need `.to_string()` interposed, or to read `e.msg`. The
+  WASM bridge needs a one-line update
+  (`.map_err(|e| JsValue::from_str(&e.to_string()))?`).
+- **−** Internal `Result<_, String>` signatures fan out to
+  `Result<_, LispErr>` for every function on the parse / expand /
+  compile / eval path. ~30 signatures. The bodies stay the same
+  thanks to `From<String>`; the churn is mostly type signatures
+  and `?`-bridging.
+- **−** Tests that call `.unwrap_err()` and `assert!(err.contains("…"))`
+  need `.to_string()` interposed or `err.msg.contains(…)`. ~15-20
+  tests in `tests/eval.rs` and `tests/express.rs`.
+- **−** `Datum` gains an `Option<Span>` field (8 bytes on 64-bit
+  with `Option<u32>` triple — actually 16 bytes for `Span { u32,
+  u32, u32 }` plus discriminant, padded). Memory cost is a few
+  hundred bytes per parsed top-level form. Negligible at REPL
+  scale.
+
+**Implementation order**:
+
+1. Add `crates/lisp/src/error.rs` with `LispErr` + `Span` +
+   `Display` + `From<String>`/`From<&str>`. `pub use` from
+   `lib.rs`.
+2. `tokenize` returns `Result<Vec<Tok>, LispErr>`; `Tok` carries a
+   `span` field. Single positioned error site: the catch-all that
+   today returns a plain "unexpected char" string.
+3. `read_datum` returns `Result<Datum, LispErr>`; `Datum` gains
+   `span: Option<Span>`. The EOF error gets a synthesized end-of-
+   source span.
+4. `compile` and friends switch to `Result<_, LispErr>`. Existing
+   `String` errors propagate via `From`. Compile-time errors that
+   want spans pull from the input `Datum::span`.
+5. `eval_str` public signature flips. `step.rs` / `prim.rs` stay
+   on `Result<_, String>` for Phase 1 and get wrapped at the
+   `eval_str_inner` boundary (`.map_err(LispErr::from)?`).
+6. WASM bridge: one-line `.to_string()` change.
+7. Tests: ~15 string-match assertions get `.msg.contains(…)` or
+   `.to_string().contains(…)`.
+8. Add new tests pinning positioned errors:
+   - `unmatched_open_paren_at_position` — `"(+ 1\n  2"` errors at
+     line 1 col 1.
+   - `unknown_symbol_carries_span` — `"(\n  foo)"` errors at line 2
+     col 3 with msg referencing `foo`.
+   - `runtime_error_has_no_span_yet` — `"(define + 5) (+ 1 2)"`
+     errors with `not callable: 5` and `span: None` (this pins
+     Phase 1's boundary and flips to `Some` when Phase 2 lands).
+
+**Deferred**:
+- **Phase 2**: runtime errors carry spans by plumbing `Span` through
+  `Expr`. Separate ADR when shipped.
+- **Multi-line error rendering / underlines**: a `LispErr::render(src)`
+  helper that returns a multi-line string with a caret pointing
+  at the span. Not engine-level; could live host-side or in a
+  thin utility crate when a host wants it.
+- **Macro-expansion span tracking** (the call-site → expanded
+  forms mapping). For Phase 1, macro-expanded datums have
+  `span: None`. A future ADR could attach the call-site span to
+  every datum the macro emits, making expanded-code errors point
+  back to the user's source rather than into macro-generated
+  forms.
+
