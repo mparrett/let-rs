@@ -1817,3 +1817,205 @@ follow-up; this ADR doesn't ship it.
   back to the user's source rather than into macro-generated
   forms.
 
+## ADR-023: CESK migration — designed, deferred (2026-06-01)
+
+**Context**: The engine today is CEK. The three explicit registers
+are control, environment, continuation (`State { mode, k }` at
+`step.rs:13-16`; `Env { frame, globals }` at `env.rs:27-30`), with
+the closure value carrying its own captured env as a fourth
+implicit register. Each frame slot is an `Rc<RefCell<Val>>` so
+`letrec` can hand a placeholder cell to a freshly-evaluated
+closure and patch it later. ADR-015 broke the top-level `define`
+cycle by making `Env::globals` a `Weak` back-edge to the Vm-owned
+globals table; ADR-021 documented why the same fix can't apply to
+`letrec` (closures must keep their own self-referential cells
+alive) and pinned the residual leak with the diagnostic test
+`letrec_cycle_persists_after_drop`. That ADR concluded the cleanest
+fix is option 3 (Y-style desugaring) and noted: *"the CESK upgrade
+(separate ADR, also deferred) would refactor Env's storage anyway,
+so the letrec fix probably lands alongside or after CESK."* This
+ADR is the separate one.
+
+The gap CESK closes: the cell that holds a recursive binding has
+to be reachable two ways — by the closure (so calls find it) and
+by something not-the-closure (so the closure can drop without
+keeping the cell alive). Today there is no such layer; the env's
+frame slots and the closure's captured env are the same Rc-linked
+data. CESK introduces a store as exactly that layer.
+
+**What CESK is**: A four-register state machine in the Felleisen &
+Friedman tradition (mid-1980s). CESK adds a **Store** that maps
+addresses to values; the environment becomes a map from names to
+addresses; lookup grows one indirection.
+
+```
+CEK today:   env: Sym → Rc<RefCell<Val>>   (cell is the binding)
+CESK after:  env: Sym → Addr               (env names a slot)
+             store: Addr → Val             (store holds the value)
+```
+
+Today's `Frame.slot: Rc<RefCell<Val>>` is already a proto-store —
+a single-binding-at-a-time allocation that exists precisely to
+support letrec's two-phase placeholder pattern. CESK reifies that
+pattern, unifies allocation in one place, and lets the engine
+treat bindings as data the Vm owns rather than as Rc graphs each
+closure participates in.
+
+**Decision**: Pin the design. Defer the build until a host or UX
+need pulls it (see *Deferred* for the trigger conditions). When
+pulled, follow the migration sketch below in the listed order.
+The five CEK transitions remain five transitions; the diff is
+"every place that reads or writes a binding now goes through the
+store" plus one new file.
+
+**Migration sketch** (concrete enough to act on when triggered):
+
+1. **New `crates/lisp/src/store.rs`.** `pub struct Addr(u32);` and
+   `pub struct Store(Vec<Val>);` with `alloc(Val) -> Addr`,
+   `get(Addr) -> &Val`, `set(Addr, Val)`. `Addr` is `Copy`,
+   no Rc. Vec-indexed is the simplest viable representation;
+   revisit for a HAMT only if the snapshot/undo trigger (see
+   below) is what un-defers this.
+2. **`env.rs`.** `Frame.slot: Rc<RefCell<Val>>` becomes
+   `Frame.slot: Addr`. `Env::lookup` returns `Option<Addr>` (or
+   takes a `&Store` and returns `Option<Val>` — caller's choice).
+   `extend_placeholder(name)` becomes "allocate a placeholder
+   `Val::Bool(false)` in the store, return the new Env extended
+   with that Addr plus the Addr itself for later patching."
+3. **`step.rs`.** `State` grows a `store: Store` (or the driver
+   threads it alongside). The five transitions thread it. The
+   letrec arm at `step.rs:93` allocates via the store instead of
+   `Rc::new(RefCell::new(...))`. The closure-creation arm at
+   `step.rs:53` is unchanged — `Val::Clo { env, ... }` still
+   captures env by clone; the env's slots are now Addrs.
+4. **`k.rs`.** `K::Letrec.cells: Vec<Rc<RefCell<Val>>>` becomes
+   `Vec<Addr>`. The patch step in `apply_k` (around `step.rs:178`,
+   today `*cells[*next].borrow_mut() = v`) becomes
+   `store.set(addrs[*next], v)`. Other K variants unchanged.
+5. **`val.rs`.** `Val::Clo { params, body, env }` unchanged.
+   The cycle dissolves by construction: closure → env → frame →
+   Addr (plain int) → store (Vm-owned). `Addr` is `Copy`, so
+   there is no Rc edge back from the closure to the cell.
+6. **`lib.rs`.** `Vm` holds the store. Top-level `define`
+   installation (`lib.rs:139` region) is unchanged in spirit —
+   globals are still a `HashMap<Sym, ???>`, but `???` can become
+   `Addr` and the slot value lives in the store alongside frame
+   slots. Whether globals collapse fully into the store or remain
+   a sibling region is a follow-on decision (see *Deferred*).
+
+Mechanical surface: ~30–40 lines net change across the five
+existing files, plus the one new file. The driver loop in
+`step::run` grows a store argument; demo crates that call
+`Vm::eval_str` see no signature change.
+
+**Alternatives considered**:
+
+1. **Status quo — CEK plus the pinned ADR-021 leak.** Legitimate.
+   The leak is bounded at REPL scale (one-shot evals; the web
+   REPL has a step budget). If no UX or host work pulls and no
+   other CESK-shaped capability is wanted, this is the right
+   answer. The cost of doing nothing is the leak's slow heap
+   growth in letrec-heavy long-running sessions, plus the doors
+   that stay closed (no mutation, no snapshots, no undo).
+2. **Y-style desugaring only** (ADR-021 option 3). Rewrite
+   `(letrec ((f init)) body)` at compile time into application of
+   a fixed-point operator so the closure body doesn't reference
+   `f` by name. Solves the leak; opens no doors. Right call *only
+   if* the letrec leak alone forces action and CESK still hasn't
+   been pulled by other capability demand. Cheaper to ship but
+   strictly less capable than CESK. After CESK lands this option
+   becomes moot — the store dissolves the cycle without the
+   compile-pass.
+3. **Closure conversion only** (ADR-021 option 1). Half-fix. More
+   code than Y-style. Already rejected in ADR-021; listed here
+   only to record that CESK does not change its standing.
+4. **Custom hand-rolled cycle collector** (ADR-021 option 4).
+   Heavy. Solves only the leak. Breaks ADR-002's zero-deps stance
+   unless hand-rolled, in which case it's months of GC code for
+   one specific cycle shape. Strictly worse than CESK once CESK
+   is on the table.
+
+**Consequences**:
+- **+** The letrec leak goes away by construction. `Addr` is
+  `Copy`, so closure → store has no Rc edge; the store is the
+  sole strong owner of binding values, owned by the Vm.
+- **+** `set!` becomes ~5 lines (`store.set(addr, new_val)`).
+  Every closure that captured an env containing that Addr sees
+  the update on the next lookup. The capability that today
+  requires `Rc<RefCell<…>>` plumbing everywhere becomes a
+  one-line change at the call site.
+- **+** State snapshots become viable. A `Vec<State>` for undo or
+  replay scrubbing is no longer blocked by "you can't cheaply
+  snapshot Rc graphs." Store clone dominates the cost; with a
+  persistent HAMT the snapshot becomes O(log n) per write.
+- **+** The engine aligns with the standard CESK literature.
+  Future features like continuation marks, delimited control,
+  or formal small-step semantics have an established vocabulary
+  and shape to draw on.
+- **+** Globals can collapse into the store (one allocation pool,
+  simpler ownership story) — though this is a separate decision.
+- **−** Every variable lookup adds a store hop. Probably sub-µs at
+  REPL scale; not measured yet. A criterion bench in
+  `crates/bench/` would be the place to land the before/after.
+- **−** The five transitions grow new store threading. Mechanical
+  surface, ~30–40 lines net, but every state-transition site
+  touches it.
+- **−** Spell/gene/curve preludes are semantically unchanged but
+  the existing test surface (60+ tests in `tests/eval.rs` plus
+  the demo-prelude tests) must stay green throughout. The
+  migration is "one transition at a time, keep tests green," not
+  a single big-bang swap.
+- **−** The snapshot use case will eventually want a persistent
+  store (HAMT / im-rs-style) for cheap undo depth. A plain
+  `Vec<Val>` is the right starting point but it caps undo at the
+  cost of full-store clones per snapshot. The HAMT decision is
+  deferred until the snapshot trigger fires (see below).
+- **−** ADR-002's zero-deps stance constrains the persistent-store
+  choice. A hand-rolled HAMT is feasible (the lisp crate is
+  zero-deps today and would stay so); an `im` dependency would
+  require revisiting ADR-002 for the lisp crate.
+
+**Deferred**:
+
+*Pull triggers — any one un-defers this ADR.*
+
+1. A web-UI undo button or replay scrubber for the labs
+   (Spells / Genes / Curves). This is the canonical case.
+2. A first-class mutation primitive (`set!` or analogous), either
+   in the language surface or as a host-level capability.
+3. A host that needs reactive bindings (re-evaluate consumers
+   when a cell changes — e.g. a spreadsheet-style lab).
+4. A host observing material memory growth from letrec-heavy
+   programs in long-running sessions. Today: not observed; the
+   REPL is bounded by step budget and one-shot evals.
+5. A formal-semantics or interpreter-spec write-up that wants the
+   canonical CESK shape rather than the current CEK-with-cells.
+
+*Follow-on decisions, after this ADR un-defers:*
+
+- Persistent store representation: plain `Vec<Val>` first; HAMT
+  (hand-rolled vs `im` dep) if the snapshot trigger is what
+  un-defers and undo depth matters.
+- Globals: collapse fully into the store, or keep as a sibling
+  region. The Weak back-edge from ADR-015 may need re-derivation
+  either way.
+- `set!` semantic ADR: cheap to implement post-CESK; the question
+  becomes whether the language *should* have it, not whether it
+  *can*.
+- Undo-button UX shape (out of scope here — that's the trigger,
+  not the design).
+
+*Regression targets when implemented:*
+
+- `letrec_cycle_persists_after_drop` (`tests/eval.rs`) — the
+  assertion flips from `is_some()` to `is_none()`. The test name
+  and comment need updating, or the test is removed and a
+  positive `letrec_does_not_leak` replaces it. Either way, the
+  flip is the signal we want.
+- Currently green and must stay green: `letrec_self_recursion`,
+  `letrec_mutual_recursion`, `map_via_letrec`,
+  `closure_captures_lexical_env`,
+  `defines_in_one_eval_str_are_mutually_recursive`,
+  `dropping_vm_releases_top_level_closures`,
+  `define_over_prim_overwrites_globals_slot` (ADR-020).
+
