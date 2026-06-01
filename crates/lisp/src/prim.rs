@@ -1,13 +1,14 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::env::Env;
 use crate::val::{Arity, Val, gcd_i128};
 
 type R = Result<Val, String>;
 /// Internal fn-ptr type for the `BUILTINS` table. Each entry is wrapped
-/// once in an `Rc<dyn Fn>` at `initial_env` time (~40 allocations per
-/// Vm), so the per-call lookup cost is a refcount bump rather than a
-/// fn-ptr copy. See ADR-017.
+/// once in an `Rc<dyn Fn>` at `Vm::new` time (~40 allocations per Vm),
+/// so the per-call lookup cost is a refcount bump rather than a fn-ptr
+/// copy. See ADR-017 (closure-capable prims) and ADR-020 (prims live
+/// alongside user defines in the Vm-owned globals table).
 type BuiltinFn = fn(&[Val]) -> R;
 
 // ---- numeric tower helpers ----
@@ -371,17 +372,18 @@ const BUILTINS: &[(&str, Arity, BuiltinFn)] = &[
     ("ceiling", Arity::Exact(1), ceiling),
 ];
 
-pub fn initial_env(globals: &crate::env::Globals) -> Env {
-    BUILTINS
-        .iter()
-        .fold(Env::with_globals(globals), |env, &(name, arity, f)| {
-            env.extend(
-                name.into(),
-                Val::Prim {
-                    name,
-                    arity,
-                    f: Rc::new(f),
-                },
-            )
-        })
+/// Seed the Vm's globals table with the built-in prims. Called once
+/// at `Vm::new` time. Each prim lives in the same table as user-level
+/// `(define …)` bindings, so a `(define + 5)` overwrites the slot and
+/// the next `(+ 1 2)` errors with "not callable: 5" — see ADR-020.
+pub fn install_builtins(globals: &crate::env::Globals) {
+    let mut g = globals.borrow_mut();
+    for &(name, arity, f) in BUILTINS {
+        let val = Val::Prim {
+            name,
+            arity,
+            f: Rc::new(f),
+        };
+        g.insert(name.into(), Rc::new(RefCell::new(val)));
+    }
 }

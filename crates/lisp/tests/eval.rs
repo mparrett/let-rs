@@ -640,3 +640,38 @@ fn dropping_vm_releases_top_level_closures() {
         "dropping the Vm should release every prelude closure cell"
     );
 }
+
+// ADR-020: prims live in the same globals table as user defines.
+// `(define + 5)` overwrites the prim slot. Lexical `(let ((+ 5)) …)`
+// still shadows via the frame walk because lookup walks frames before
+// falling through to globals.
+
+#[test]
+fn define_over_prim_overwrites_globals_slot() {
+    let mut vm = Vm::new();
+    vm.eval_str("(define + 5)").unwrap();
+    // After the overwrite, looking up `+` returns the new value, not
+    // the original prim. Pre-ADR-020 this returned `+`'s Prim repr
+    // because lookup walked the prim frame chain first.
+    assert_eq!(format!("{}", vm.eval_str("+").unwrap()), "5");
+}
+
+#[test]
+fn define_over_prim_then_call_errors() {
+    let mut vm = Vm::new();
+    vm.eval_str("(define + 5)").unwrap();
+    let r = vm.eval_str("(+ 1 2)");
+    assert!(
+        r.as_ref().is_err_and(|e| e.starts_with("not callable")),
+        "expected 'not callable' error, got {r:?}",
+    );
+}
+
+#[test]
+fn prim_still_callable_in_lexical_scope() {
+    // `let` bindings live in env frames; lookup walks frames before
+    // falling through to globals. So a `let`-shadowed `+` resolves to
+    // the let binding, exactly as it did pre-ADR-020 when the prim
+    // itself was in the base frame chain.
+    assert_eq!(eval("(let ((+ 100)) +)"), "100");
+}

@@ -914,10 +914,14 @@ closure's captured env drops — clean shutdown.
   back-edge specifically for letrec-allocated cells, with a panic
   path if the cell is collected before the closure is called.
   Tracked in `core-followups.md`.
-- **Move prims to globals.** Would unify lookup (everything via
+- **Move prims to globals.** ~~Would unify lookup (everything via
   hash, no frame walk for the common case) but changes
   `(define + 5)` semantics from shadowing to overwrite. Reasonable;
-  needs a separate ADR for the semantics call.
+  needs a separate ADR for the semantics call.~~ **Done — ADR-020
+  (2026-05-31).** Semantics is overwrite; discovery during the ADR
+  was that today's behavior isn't lexical shadowing as assumed but
+  silent dead-write (lookup walks the prim chain and never reaches
+  the globals slot the define wrote into).
 
 ## ADR-016: Spell + gene packs in their own sibling crates (2026-05-29)
 

@@ -405,7 +405,16 @@ arc — like ADR-001 → eventual ADR-N). Until then, hosts that need
 their own undo can snapshot at their own layer (clone the `World`
 struct before each cast).
 
-### Prims-to-globals — symmetric top-level lookup
+### Prims-to-globals — symmetric top-level lookup — **DONE (ADR-020, 2026-05-31)**
+
+> Resolved. `prim::install_builtins(&globals)` writes the BUILTINS
+> table into the Vm's globals at construction; `Env::with_globals`
+> seeds `Vm::new`'s env with no prim frame chain. `register_prim`
+> also writes to globals so host prims land in the same table.
+> `(define + 5)` now overwrites the slot (next call errors with
+> "not callable: 5") instead of being silently dead-written. Three
+> tests pinned in `tests/eval.rs`. Original problem statement below.
+>
 
 **Problem.** `prim::initial_env` installs ~40 built-in prims as
 nested `Env` frames (`prim.rs:374`); top-level `define` writes to a

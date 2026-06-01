@@ -82,7 +82,8 @@ impl Vm {
     /// top (ADR-018).
     pub fn new() -> Self {
         let globals: Globals = Rc::new(RefCell::new(HashMap::new()));
-        let env = prim::initial_env(&globals);
+        prim::install_builtins(&globals);
+        let env = Env::with_globals(&globals);
         Vm {
             env,
             globals,
@@ -98,23 +99,26 @@ impl Vm {
         self.step_budget = n;
     }
 
-    /// Install a host primitive into the VM's initial env. The callback
-    /// is wrapped in an `Rc<dyn Fn>` so it can capture host state —
-    /// e.g., `move |args| { /* read/write &mut world.borrow_mut() */ }`.
+    /// Install a host primitive into the VM's globals table. The
+    /// callback is wrapped in an `Rc<dyn Fn>` so it can capture host
+    /// state — e.g., `move |args| { /* read/write &mut world.borrow_mut() */ }`.
     /// Replaces the ADR-005 split between pure `register_prim` and
     /// world-aware `register_world_prim`; both shapes collapse here.
+    /// Host prims live in the same table as `BUILTINS` and user
+    /// `(define …)` bindings (ADR-020): a later `(define name v)`
+    /// overwrites the prim slot.
     pub fn register_prim<F>(&mut self, name: &'static str, arity: val::Arity, f: F)
     where
         F: Fn(&[Val]) -> Result<Val, String> + 'static,
     {
-        self.env = self.env.extend(
-            name.into(),
-            Val::Prim {
-                name,
-                arity,
-                f: Rc::new(f),
-            },
-        );
+        let val = Val::Prim {
+            name,
+            arity,
+            f: Rc::new(f),
+        };
+        self.globals
+            .borrow_mut()
+            .insert(name.into(), Rc::new(RefCell::new(val)));
     }
 
     /// Evaluate a sequence of top-level forms. Each form is one of:
