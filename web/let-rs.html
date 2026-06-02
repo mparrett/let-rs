@@ -100,6 +100,46 @@
     }
     .mast .strip .here { color: var(--indigo); }
 
+    .mast .lab-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: baseline;
+      margin-top: 36px;
+      padding-top: 18px;
+      border-top: 1px solid var(--rule);
+      font-family: var(--display);
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ink-dust);
+    }
+    .mast .lab-nav .lead { color: var(--ink-dim); margin-right: 4px; }
+    .mast .lab-nav a {
+      color: var(--ink-dim);
+      border-bottom: 1px dotted transparent;
+      transition: color 0.2s ease, border-bottom-color 0.2s ease;
+    }
+    .mast .lab-nav a:hover {
+      color: var(--indigo);
+      border-bottom-color: var(--indigo);
+    }
+    .mast .lab-nav a[href$="spells.html"]:hover {
+      color: var(--plum);
+      border-bottom-color: var(--plum);
+    }
+    .mast .lab-nav a[href$="genes.html"]:hover {
+      color: var(--honey);
+      border-bottom-color: var(--honey);
+    }
+    .mast .lab-nav a[href$="curves.html"]:hover {
+      color: var(--copper);
+      border-bottom-color: var(--copper);
+    }
+    .mast .lab-nav .sep,
+    .mast .lab-nav .pipe { color: var(--ink-dust); opacity: 0.45; }
+    .mast .lab-nav .pipe { margin: 0 4px; }
+
     .mast h1 {
       font-family: var(--display);
       font-weight: 500;
@@ -479,13 +519,14 @@
     .act:nth-of-type(4) { animation-delay: 0.66s; }
     @keyframes enter { to { opacity: 1; transform: translateY(0); } }
 
-    .mast h1, .mast .sub, .mast .strip, .mast .seal {
+    .mast h1, .mast .sub, .mast .strip, .mast .seal, .mast .lab-nav {
       opacity: 0; animation: enter 0.8s ease-out forwards;
     }
-    .mast .strip { animation-delay: 0.05s; }
-    .mast h1    { animation-delay: 0.18s; }
-    .mast .sub  { animation-delay: 0.32s; }
-    .mast .seal { animation-delay: 0.48s; }
+    .mast .strip   { animation-delay: 0.05s; }
+    .mast h1       { animation-delay: 0.18s; }
+    .mast .sub     { animation-delay: 0.32s; }
+    .mast .seal    { animation-delay: 0.48s; }
+    .mast .lab-nav { animation-delay: 0.60s; }
 
     @media (max-width: 720px) {
       .frame { padding: 6vh 4vw 14vh; }
@@ -717,6 +758,16 @@
         <div><dt>Tests</dt><dd>97 passing</dd></div>
         <div><dt>Tail depth</dt><dd>100,000 verified</dd></div>
       </dl>
+      <nav class="lab-nav" aria-label="Try the labs">
+        <span class="lead">Try the labs</span>
+        <a href="./spells.html">Spells</a>
+        <span class="sep" aria-hidden="true">·</span>
+        <a href="./genes.html">Genes</a>
+        <span class="sep" aria-hidden="true">·</span>
+        <a href="./curves.html">Curves</a>
+        <span class="pipe" aria-hidden="true">|</span>
+        <a href="./index.html">← Landing</a>
+      </nav>
     </header>
 
     <section class="prelude-wrap">
