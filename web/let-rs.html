@@ -564,14 +564,16 @@
       transition: color 0.2s ease;
     }
 
-    /* Chevron affordance LEADING the h2 title. Character swap (not
-       rotation) so the glyph never shifts the heading's baseline or
-       horizontal layout. Fixed-width inline-block keeps the title's
-       left edge stable across collapsed/expanded states. */
+    /* Chevron affordance LEADING the h2 title. Renders in negative
+       margin space to the left of the heading, so the heading text
+       keeps its natural left edge (lined up with paragraphs below).
+       Character swap (not rotation) so the heading is pixel-stable
+       across collapsed/expanded toggles. */
     html.accordion-ready .act .body > h2::before {
       content: "▸";
       display: inline-block;
       width: 0.9em;
+      margin-left: -1.25em;
       margin-right: 0.35em;
       font-size: 0.55em;
       vertical-align: 0.22em;
