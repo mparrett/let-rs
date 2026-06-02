@@ -512,6 +512,104 @@
       .coda ul { margin-top: 12px; }
       .coda li { padding: 4px 0; }
     }
+
+    /* ─── Collapsible acts (accordion) ─────────────────── */
+    /* Controls strip above the first act */
+    .act-controls {
+      display: flex;
+      gap: 16px;
+      align-items: baseline;
+      margin: 32px 0 -8px;
+      padding-left: 156px; /* line up with the 120px glyph col + 36px gap */
+      font-family: var(--display);
+      font-size: 10.5px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ink-dust);
+    }
+    .act-controls button {
+      background: none;
+      border: none;
+      padding: 0;
+      color: var(--ink-dim);
+      font: inherit;
+      letter-spacing: inherit;
+      text-transform: inherit;
+      cursor: pointer;
+      border-bottom: 1px dotted rgba(139, 143, 255, 0.35);
+      transition: color 0.2s ease, border-bottom-color 0.2s ease;
+    }
+    .act-controls button:hover {
+      color: var(--indigo);
+      border-bottom-color: var(--indigo);
+      border-bottom-style: solid;
+    }
+    .act-controls .sep { color: var(--ink-dust); opacity: 0.45; }
+
+    /* Visual behavior gated on `.accordion-ready` set by the JS so
+       no-JS readers see fully-expanded content. */
+    html.accordion-ready .act .glyph,
+    html.accordion-ready .act .body > h2 {
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    html.accordion-ready .act .body > h2:hover,
+    html.accordion-ready .act .glyph:hover .roman {
+      color: var(--ink);
+    }
+    html.accordion-ready .act .body > h2 {
+      transition: color 0.2s ease;
+    }
+    html.accordion-ready .act .glyph .roman {
+      transition: color 0.2s ease;
+    }
+
+    /* Chevron affordance trailing the h2 title (not the tag). */
+    html.accordion-ready .act .body > h2::after {
+      content: "▸";
+      display: inline-block;
+      margin-left: 0.55em;
+      font-size: 0.42em;
+      vertical-align: 0.28em;
+      color: var(--ink-dust);
+      transition: transform 0.25s ease, color 0.25s ease;
+      font-family: var(--mono);
+      font-weight: 400;
+    }
+    html.accordion-ready .act.is-expanded .body > h2::after {
+      transform: rotate(90deg);
+      color: var(--indigo);
+    }
+
+    /* The collapsed content area: clamped with a downward mask fade.
+       Matches the horizontal mask pattern used on .rules / .code. */
+    html.accordion-ready .act .act-content {
+      max-height: 8em;
+      overflow: hidden;
+      -webkit-mask-image: linear-gradient(to bottom, black 25%, transparent 100%);
+              mask-image: linear-gradient(to bottom, black 25%, transparent 100%);
+      transition:
+        max-height 0.4s ease,
+        -webkit-mask-image 0.4s ease,
+                mask-image 0.4s ease;
+    }
+    html.accordion-ready .act.is-expanded .act-content {
+      max-height: 12000px;
+      -webkit-mask-image: none;
+              mask-image: none;
+    }
+
+    /* Click-to-expand hint near the bottom of the preview fade. Only
+       shown when collapsed; replaces what would otherwise be a hard cut. */
+    html.accordion-ready .act:not(.is-expanded) .act-content::after {
+      /* Visual handled by the mask; this hint sits in the body row
+         below the content. */
+    }
+
+    @media (max-width: 720px) {
+      .act-controls { padding-left: 0; margin: 24px 0 -4px; }
+    }
   </style>
 </head>
 <body>
@@ -558,6 +656,12 @@
     <p class="prelude">
       Xsofy is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Let-rs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives. The second day proved it twice — a second DSL (genomes, codons, Mendelian breeding) shipped without the engine learning a thing about it.
     </p>
+
+    <div class="act-controls" aria-label="Section controls">
+      <button id="expand-all" type="button">Expand all</button>
+      <span class="sep" aria-hidden="true">·</span>
+      <button id="collapse-all" type="button">Collapse all</button>
+    </div>
 
     <section class="act">
       <div class="glyph">
@@ -1308,6 +1412,93 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
     </footer>
 
   </main>
+
+  <script>
+    // Accordion behavior for the Act sections. Default: collapsed
+    // with a downward gradient-fade preview of each act's content.
+    // Click the glyph or the h2 to expand; localStorage persists per-act.
+    (function () {
+      var STORAGE_KEY = 'let-rs.act-state.v1';
+
+      function loadState() {
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
+        catch (e) { return {}; }
+      }
+      function saveState(state) {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+      }
+
+      var acts = Array.prototype.slice.call(document.querySelectorAll('section.act'));
+      var state = loadState();
+
+      function setExpanded(act, h2, expanded) {
+        act.classList.toggle('is-expanded', expanded);
+        h2.setAttribute('aria-expanded', String(expanded));
+      }
+
+      acts.forEach(function (act, idx) {
+        var body = act.querySelector('.body');
+        var glyph = act.querySelector('.glyph');
+        if (!body) return;
+        var h2 = body.firstElementChild && body.firstElementChild.tagName === 'H2'
+          ? body.firstElementChild
+          : body.querySelector('h2');
+        if (!h2) return;
+
+        // Wrap everything after the h2 (inside body) in an .act-content
+        // div so the CSS can clamp + fade exactly that region.
+        var content = document.createElement('div');
+        content.className = 'act-content';
+        content.id = 'act-' + idx + '-content';
+        while (h2.nextSibling) content.appendChild(h2.nextSibling);
+        body.appendChild(content);
+
+        h2.setAttribute('role', 'button');
+        h2.setAttribute('tabindex', '0');
+        h2.setAttribute('aria-controls', content.id);
+
+        var initiallyExpanded = !!state[idx];
+        setExpanded(act, h2, initiallyExpanded);
+
+        function toggle() {
+          var nextExpanded = !act.classList.contains('is-expanded');
+          setExpanded(act, h2, nextExpanded);
+          if (nextExpanded) state[idx] = true;
+          else delete state[idx];
+          saveState(state);
+        }
+
+        h2.addEventListener('click', toggle);
+        if (glyph) glyph.addEventListener('click', toggle);
+        h2.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggle();
+          }
+        });
+      });
+
+      function setAll(expanded) {
+        acts.forEach(function (act, idx) {
+          var h2 = act.querySelector('.body > h2');
+          if (!h2) return;
+          setExpanded(act, h2, expanded);
+          if (expanded) state[idx] = true;
+          else delete state[idx];
+        });
+        saveState(state);
+      }
+      var expandBtn = document.getElementById('expand-all');
+      var collapseBtn = document.getElementById('collapse-all');
+      if (expandBtn) expandBtn.addEventListener('click', function () { setAll(true); });
+      if (collapseBtn) collapseBtn.addEventListener('click', function () { setAll(false); });
+
+      // Enable accordion CSS rules now that the wrappers + handlers exist.
+      // Without JS, the page reads as fully expanded (the CSS rules are gated
+      // on this class).
+      document.documentElement.classList.add('accordion-ready');
+    })();
+  </script>
 
 </body>
 </html>
