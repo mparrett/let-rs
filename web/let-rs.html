@@ -1121,6 +1121,78 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       </div>
     </section>
 
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">VII</span>
+        <span class="mark">⎈</span>
+      </div>
+      <div class="body">
+        <h2>The fourth register
+          <span class="tag">— the store arrives; the letrec cycle dissolves by construction</span>
+        </h2>
+        <p>
+          The shortlist that closed the last chapter named a known
+          weakness: the <code>letrec</code> Rc cycle. A closure that
+          captures the env containing its own placeholder cell forms
+          a ring — <code>cell → Val::Clo → env.frame → cell</code> —
+          that nothing breaks. ADR-021 pinned it with a diagnostic
+          test and parked the fix; the cleanest available cure was a
+          Y-style desugaring pass nobody wanted to write unless they
+          had to.
+        </p>
+
+        <p>
+          The cleaner cure turned out to be one letter further down
+          the alphabet. CEK threads three explicit registers
+          (control, environment, continuation); CESK threads four.
+          The new register is a <strong>store</strong>: an
+          append-only heap of values owned by the <code>Vm</code>,
+          indexed by a <code>Copy</code> <code>Addr(u32)</code>.
+          Frame slots stop being <code>Rc&lt;RefCell&lt;Val&gt;&gt;</code>
+          cells and become plain <code>Addr</code>s. The closure →
+          env → frame → Addr → store path still exists; what's gone
+          is the <code>Rc</code> edge at the far end. Addresses
+          don't hold anything alive, so closures can't root their
+          own cells anymore. The cycle dissolves by construction —
+          not by patching the engine, by moving where the values
+          live.
+        </p>
+
+        <p>
+          The migration came in smaller than the design estimated:
+          a new <code>store.rs</code> (≈50 lines), one retyped field
+          in <code>Frame</code>, <code>K::Letrec.cells</code> renamed
+          <code>addrs</code>, and a second <code>Weak</code> in
+          <code>Env</code> — alongside the existing back-edge to
+          globals — that points at the store. The five CEK
+          transitions stayed five; <code>step</code>, <code>run</code>,
+          and <code>run_bounded</code> kept their signatures because
+          the store is reachable through any env it threads. The
+          ADR-021 diagnostic flipped from
+          <code>letrec_cycle_persists_after_drop</code> to
+          <code>letrec_does_not_leak</code> and asserts the opposite
+          property: drop the Vm, the store drops with it. 121 tests
+          passed on the first run. Globals kept their
+          <code>Rc&lt;RefCell&lt;Val&gt;&gt;</code> shape — the
+          ADR-015 Weak back-edge already worked there, and not
+          touching it was the right call.
+        </p>
+
+        <p class="lift">
+          The chapter that opens here isn't written yet.
+          <code>set!</code> is now five lines. The CEK
+          <code>State</code> is plain data you can clone, which puts
+          undo and replay scrubbing for the labs on the roadmap as
+          a real thing rather than a wistful aside. Persistent
+          stores — a HAMT under the <code>Vec&lt;Val&gt;</code>, for
+          O(log n) snapshots — are the natural follow-on if any of
+          that pulls. The five transitions are still five
+          transitions. The substrate just grew a register.
+        </p>
+      </div>
+    </section>
+
     <div class="coda">
       <h3>What comes after</h3>
       <p>
@@ -1149,19 +1221,16 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           the cons-list, a <code>Val::Map</code> backed by a small
           persistent structure. Both DSLs use alists; both are
           comfortable below ~30 keys; this isn't urgent.</li>
-        <li><strong>The <code>letrec</code> Rc cycle.</strong>
-          ADR-015 broke the top-level-<code>define</code> cycle by
-          routing those bindings through a <code>Vm</code>-owned
-          globals table with a <code>Weak</code> back-edge.
-          <code>letrec</code>-bound closures still form the same
-          shape (a closure captures the env containing its own
-          placeholder cell). Negligible at REPL scale; a slow leak in
-          long-lived sessions that lean heavily on <code>letrec</code>.
-          Fix is shape-similar but trickier because the surrounding
-          lexical scope is the legitimate owner of the cell.</li>
         <li><strong>The play loop.</strong> Turn-based render, input →
           spell → world tick → next state. The game part. The lisp
           and host-state pieces are in place; this is mostly UI.</li>
+        <li><strong>What CESK opens.</strong>
+          <code>set!</code>, an undo button or replay scrubber for
+          the labs, reactive bindings, a persistent
+          <code>Store</code> for cheap snapshots — all of these
+          were "deferred until a host pulls" entries that the store
+          register now makes cheap. None of them are urgent; all of
+          them are ready when the use case shows up.</li>
       </ul>
       <p>
         Crossed off since day one: the WASM bridge (<code>crates/wasm/</code>
@@ -1182,15 +1251,20 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         <code>define</code>s live in, removing the last asymmetry in
         top-level lookup. The <code>lisp</code> crate is "engine +
         parser + numeric tower" — zero host types, zero demo
-        vocabulary. None of the remaining items are large; all of
-        them are interesting; most of them are independent. The
-        hard parts are done — the language is itself, and three
-        DSLs proved it.
+        vocabulary. And then, on 2026-06-02, the
+        <code>letrec</code> Rc cycle that ADR-021 pinned dissolved
+        via ADR-023 — the engine became CESK, a store joined the
+        three registers, and frame slots became
+        <code>Copy</code> addresses. None of the remaining items
+        are large; all of them are interesting; most of them are
+        independent. The hard parts are done — the language is
+        itself, three DSLs proved it, and the substrate grew the
+        register it needed to carry whatever comes next.
       </p>
     </div>
 
     <div class="further">
-      <h3>Further reading on CEK machines</h3>
+      <h3>Further reading: CEK, CESK, and friends</h3>
       <ul>
         <li>
           <a href="https://matt.might.net/articles/cek-machines/" target="_blank" rel="noopener">
@@ -1230,7 +1304,7 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
     <footer class="colophon">
       <span>let-rs · 2026-05-25 →</span>
       <span>core stays zero-dep</span>
-      <span>built on a CEK machine</span>
+      <span>built on a CESK machine</span>
     </footer>
 
   </main>
