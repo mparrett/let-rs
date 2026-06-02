@@ -513,7 +513,28 @@
       .coda li { padding: 4px 0; }
     }
 
-    /* ─── Collapsible acts (accordion) ─────────────────── */
+    /* ─── Collapsible sections (accordion) ─────────────── */
+    /* Applies to .act, .prelude-wrap, and .coda. The JS wraps each
+       section's post-heading siblings in an .act-content div for a
+       uniform clamp+fade collapsed state. */
+
+    /* Prelude header (small all-caps display label, mirroring the
+       act-controls and masthead strip aesthetic). */
+    .prelude-wrap { margin: 0; }
+    .prelude-toggle {
+      font-family: var(--display);
+      font-weight: 400;
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ink-dust);
+      margin: 24px 0 14px;
+      padding: 0;
+      display: block;
+      width: max-content;
+      max-width: 100%;
+    }
+
     /* Controls strip above the first act, flush-left with the prelude
        above it (NOT indented to the act body column). */
     .act-controls {
@@ -548,27 +569,31 @@
     /* Visual behavior gated on `.accordion-ready` set by the JS so
        no-JS readers see fully-expanded content. */
     html.accordion-ready .act .glyph,
-    html.accordion-ready .act .body > h2 {
+    html.accordion-ready .act .body > h2,
+    html.accordion-ready .prelude-wrap > .prelude-toggle,
+    html.accordion-ready .coda > h3 {
       cursor: pointer;
       user-select: none;
       -webkit-user-select: none;
     }
     html.accordion-ready .act .body > h2:hover,
-    html.accordion-ready .act .glyph:hover .roman {
+    html.accordion-ready .act .glyph:hover .roman,
+    html.accordion-ready .prelude-wrap > .prelude-toggle:hover,
+    html.accordion-ready .coda > h3:hover {
       color: var(--ink);
     }
-    html.accordion-ready .act .body > h2 {
+    html.accordion-ready .act .body > h2,
+    html.accordion-ready .prelude-wrap > .prelude-toggle,
+    html.accordion-ready .coda > h3 {
       transition: color 0.2s ease;
     }
     html.accordion-ready .act .glyph .roman {
       transition: color 0.2s ease;
     }
 
-    /* Chevron affordance LEADING the h2 title. Renders in negative
-       margin space to the left of the heading, so the heading text
-       keeps its natural left edge (lined up with paragraphs below).
-       Character swap (not rotation) so the heading is pixel-stable
-       across collapsed/expanded toggles. */
+    /* Chevron LEADING the act h2. Renders in negative-margin space so
+       the heading text aligns with the paragraphs below. Character
+       swap (not rotation) keeps the heading pixel-stable on toggle. */
     html.accordion-ready .act .body > h2::before {
       content: "▸";
       display: inline-block;
@@ -588,9 +613,51 @@
       color: var(--indigo);
     }
 
+    /* Chevron leading the small prelude-toggle label (inline; no
+       negative-margin hang because the toggle is left-edge text and
+       doesn't need to align with content below it). */
+    html.accordion-ready .prelude-wrap > .prelude-toggle::before {
+      content: "▸";
+      display: inline-block;
+      width: 0.9em;
+      margin-right: 0.4em;
+      text-align: center;
+      color: var(--ink-dust);
+      transition: color 0.25s ease;
+      font-family: var(--mono);
+    }
+    html.accordion-ready .prelude-wrap.is-expanded > .prelude-toggle::before {
+      content: "▾";
+      color: var(--indigo);
+    }
+
+    /* Chevron leading the coda h3 (same negative-margin pattern as
+       act h2s — the coda is a styled box, but the h3 wants the same
+       leading affordance). */
+    html.accordion-ready .coda > h3::before {
+      content: "▸";
+      display: inline-block;
+      width: 0.9em;
+      margin-left: -1.25em;
+      margin-right: 0.35em;
+      font-size: 0.55em;
+      vertical-align: 0.22em;
+      text-align: center;
+      color: var(--ink-dust);
+      transition: color 0.25s ease;
+      font-family: var(--mono);
+      font-weight: 400;
+    }
+    html.accordion-ready .coda.is-expanded > h3::before {
+      content: "▾";
+      color: var(--indigo);
+    }
+
     /* The collapsed content area: clamped with a downward mask fade.
-       Matches the horizontal mask pattern used on .rules / .code. */
-    html.accordion-ready .act .act-content {
+       Matches the horizontal mask pattern used on .rules / .code.
+       Selectors are not scoped to .act so the coda + prelude-wrap
+       reuse the same behavior. */
+    html.accordion-ready .act-content {
       max-height: 8em;
       overflow: hidden;
       -webkit-mask-image: linear-gradient(to bottom, black 25%, transparent 100%);
@@ -600,7 +667,7 @@
         -webkit-mask-image 0.4s ease,
                 mask-image 0.4s ease;
     }
-    html.accordion-ready .act.is-expanded .act-content {
+    html.accordion-ready .is-expanded .act-content {
       max-height: 12000px;
       -webkit-mask-image: none;
               mask-image: none;
@@ -652,9 +719,12 @@
       </dl>
     </header>
 
-    <p class="prelude">
-      Xsofy is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Let-rs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives. The second day proved it twice — a second DSL (genomes, codons, Mendelian breeding) shipped without the engine learning a thing about it.
-    </p>
+    <section class="prelude-wrap">
+      <h3 class="prelude-toggle">Prelude</h3>
+      <p class="prelude">
+        Xsofy is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Let-rs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives. The second day proved it twice — a second DSL (genomes, codons, Mendelian breeding) shipped without the engine learning a thing about it.
+      </p>
+    </section>
 
     <div class="act-controls" aria-label="Section controls">
       <button id="expand-all" type="button">Expand all</button>
@@ -1413,11 +1483,14 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
   </main>
 
   <script>
-    // Accordion behavior for the Act sections. Default: collapsed
-    // with a downward gradient-fade preview of each act's content.
-    // Click the glyph or the h2 to expand; localStorage persists per-act.
+    // Accordion behavior for the prelude, the Acts, and the coda.
+    // Default: collapsed with a downward gradient-fade preview of
+    // each section's content (`data-default-expanded="true"` on the
+    // section flips that default per-section). Click the section's
+    // heading (or the act glyph) to toggle; per-section state persists
+    // in localStorage.
     (function () {
-      var STORAGE_KEY = 'let-rs.act-state.v1';
+      var STORAGE_KEY = 'let-rs.collapsible-state.v2';
 
       function loadState() {
         try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
@@ -1427,49 +1500,55 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
       }
 
-      var acts = Array.prototype.slice.call(document.querySelectorAll('section.act'));
+      var sections = Array.prototype.slice.call(
+        document.querySelectorAll('section.act, section.prelude-wrap, .coda')
+      );
       var state = loadState();
+      var perSection = []; // [{section, heading}, ...] for setAll
 
-      function setExpanded(act, h2, expanded) {
-        act.classList.toggle('is-expanded', expanded);
-        h2.setAttribute('aria-expanded', String(expanded));
+      function setExpanded(section, heading, expanded) {
+        section.classList.toggle('is-expanded', expanded);
+        heading.setAttribute('aria-expanded', String(expanded));
       }
 
-      acts.forEach(function (act, idx) {
-        var body = act.querySelector('.body');
-        var glyph = act.querySelector('.glyph');
-        if (!body) return;
-        var h2 = body.firstElementChild && body.firstElementChild.tagName === 'H2'
-          ? body.firstElementChild
-          : body.querySelector('h2');
-        if (!h2) return;
+      sections.forEach(function (section, idx) {
+        // The body container is `.body` (acts) or the section itself
+        // (prelude-wrap, coda). The heading is the first h2 or h3 in
+        // that container.
+        var bodyContainer = section.querySelector(':scope > .body') || section;
+        var heading = bodyContainer.querySelector(':scope > h2, :scope > h3');
+        if (!heading) return;
+        var glyph = section.querySelector(':scope > .glyph');  // acts only
 
-        // Wrap everything after the h2 (inside body) in an .act-content
-        // div so the CSS can clamp + fade exactly that region.
+        // Wrap everything after the heading inside bodyContainer in
+        // an .act-content div so the CSS can clamp + fade it.
         var content = document.createElement('div');
         content.className = 'act-content';
-        content.id = 'act-' + idx + '-content';
-        while (h2.nextSibling) content.appendChild(h2.nextSibling);
-        body.appendChild(content);
+        content.id = 'collapsible-' + idx + '-content';
+        while (heading.nextSibling) content.appendChild(heading.nextSibling);
+        bodyContainer.appendChild(content);
 
-        h2.setAttribute('role', 'button');
-        h2.setAttribute('tabindex', '0');
-        h2.setAttribute('aria-controls', content.id);
+        heading.setAttribute('role', 'button');
+        heading.setAttribute('tabindex', '0');
+        heading.setAttribute('aria-controls', content.id);
 
-        var initiallyExpanded = !!state[idx];
-        setExpanded(act, h2, initiallyExpanded);
+        var defaultExpanded = section.dataset.defaultExpanded === 'true';
+        var initiallyExpanded = state[idx] !== undefined ? !!state[idx] : defaultExpanded;
+        setExpanded(section, heading, initiallyExpanded);
+        perSection.push({ section: section, heading: heading });
 
         function toggle() {
-          var nextExpanded = !act.classList.contains('is-expanded');
-          setExpanded(act, h2, nextExpanded);
-          if (nextExpanded) state[idx] = true;
-          else delete state[idx];
+          var next = !section.classList.contains('is-expanded');
+          setExpanded(section, heading, next);
+          // Always store explicit boolean so a default-expanded section
+          // doesn't snap back to default after the user collapses it.
+          state[idx] = next;
           saveState(state);
         }
 
-        h2.addEventListener('click', toggle);
+        heading.addEventListener('click', toggle);
         if (glyph) glyph.addEventListener('click', toggle);
-        h2.addEventListener('keydown', function (e) {
+        heading.addEventListener('keydown', function (e) {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             toggle();
@@ -1478,12 +1557,9 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       });
 
       function setAll(expanded) {
-        acts.forEach(function (act, idx) {
-          var h2 = act.querySelector('.body > h2');
-          if (!h2) return;
-          setExpanded(act, h2, expanded);
-          if (expanded) state[idx] = true;
-          else delete state[idx];
+        perSection.forEach(function (rec, idx) {
+          setExpanded(rec.section, rec.heading, expanded);
+          state[idx] = expanded;
         });
         saveState(state);
       }
@@ -1493,8 +1569,8 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       if (collapseBtn) collapseBtn.addEventListener('click', function () { setAll(false); });
 
       // Enable accordion CSS rules now that the wrappers + handlers exist.
-      // Without JS, the page reads as fully expanded (the CSS rules are gated
-      // on this class).
+      // Without JS, the page reads as fully expanded (the CSS rules are
+      // gated on this class).
       document.documentElement.classList.add('accordion-ready');
     })();
   </script>
