@@ -1642,14 +1642,21 @@ and find the named slot. That's the only added surface; everything
 else is the test body.
 
 **Deferred**:
-- The fix itself. The two leading candidates are option 1 (closure
-  conversion, half-fix) and option 3 (Y-style desugaring, full
-  fix). Pick when a host needs it. The CESK upgrade (separate
+- ~~The fix itself. The two leading candidates are option 1
+  (closure conversion, half-fix) and option 3 (Y-style desugaring,
+  full fix). Pick when a host needs it. The CESK upgrade (separate
   ADR, also deferred) would refactor Env's storage anyway, so the
-  letrec fix probably lands alongside or after CESK.
+  letrec fix probably lands alongside or after CESK.~~ **DONE
+  2026-06-02 via ADR-023 (CESK store).** Frame slots are now
+  `Addr` indices into a Vm-owned `Store`; closures hold a
+  `Weak<Store>` via env, so the cycle dissolves by construction.
+  The diagnostic test renamed `letrec_does_not_leak` and now
+  asserts the store drops with the Vm.
 - `Vm::heap_summary()` or similar host-visible diagnostic for
   measuring growth. Not part of this ADR; would be filed if a
-  consumer asked for it.
+  consumer asked for it. (Post-CESK: `Vm::store.len()` is the
+  one-liner here; full host-visible diagnostic is still a future
+  ADR if needed.)
 
 ## ADR-022: Structured parse errors with source spans (2026-05-31)
 
@@ -2018,4 +2025,45 @@ existing files, plus the one new file. The driver loop in
   `defines_in_one_eval_str_are_mutually_recursive`,
   `dropping_vm_releases_top_level_closures`,
   `define_over_prim_overwrites_globals_slot` (ADR-020).
+
+**Postscript — implemented 2026-06-02**: shipped the same day the
+ADR was drafted, against the design above. The migration came in
+smaller than the sketch's ~30-40 line estimate:
+
+- `crates/lisp/src/store.rs` — new, ~50 lines: `Addr(u32)` Copy
+  newtype + `Store { cells: RefCell<Vec<Val>> }` with `alloc` /
+  `get` / `set` / `len`.
+- `crates/lisp/src/env.rs` — `Frame.slot` is now `Addr`. `Env`
+  gained a `store: Weak<Store>` field alongside the existing
+  `globals: Weak<…>`. `Env::with_globals(globals, store)` takes
+  both. The previously-dead `Env::empty` was removed.
+- `crates/lisp/src/k.rs` — `K::Letrec.cells` renamed `addrs:
+  Vec<Addr>`. Other variants unchanged.
+- `crates/lisp/src/step.rs` — letrec setup uses the new
+  `extend_placeholder` (now returning `Addr`); `K::Letrec`'s
+  apply step calls `env.store_handle().expect(...).set(addr, v)`.
+  The five transitions did not need new signatures — the store is
+  reachable from every `Env`, so `step` / `run` / `run_bounded`
+  signatures stayed identical.
+- `crates/lisp/src/lib.rs` — `Vm` gained `store: Rc<Store>` and
+  `store_weak()` (for the diagnostic test). `Vm::new` wires it
+  through `Env::with_globals`.
+- `crates/lisp/tests/eval.rs` — `letrec_cycle_persists_after_drop`
+  flipped to `letrec_does_not_leak`. New assertion: after Vm drop,
+  the `Weak<Store>` taken pre-drop fails to upgrade.
+
+All 121 workspace tests pass. WASM build clean. `just check`
+clean. No host crates required changes — everything funnels
+through `Vm`, whose external surface was preserved.
+
+What was *not* changed (preserved as separate decisions):
+- Globals stayed as `Rc<RefCell<HashMap<Sym, Rc<RefCell<Val>>>>>`
+  — not collapsed into the store. The ADR-015 `Weak` back-edge
+  pattern still applies end-to-end.
+- Persistent store representation — `Vec<Val>` ships; HAMT remains
+  a future decision if the snapshot/undo trigger pulls.
+- No `set!` primitive added — that's a separate ADR if/when
+  pulled.
+- `Vm::heap_summary()` not added — `Vm::store.len()` is
+  sufficient for ad-hoc diagnostics today.
 
