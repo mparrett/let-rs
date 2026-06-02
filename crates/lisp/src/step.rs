@@ -93,12 +93,15 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
         Expr::Letrec(bindings, body) => {
             // Allocate placeholders for all names, then start evaluating the first init
             // in the recursive environment. With no bindings, just eval the body.
+            // Post-ADR-023: placeholders live in the store; the frame just carries
+            // the `Addr`, so closures capturing this env can no longer Rc-reach back
+            // to their own cells.
             let mut env_rec = env.clone();
-            let mut cells = Vec::with_capacity(bindings.len());
+            let mut addrs = Vec::with_capacity(bindings.len());
             for (name, _) in bindings {
-                let (next_env, slot) = env_rec.extend_placeholder(name.clone());
+                let (next_env, addr) = env_rec.extend_placeholder(name.clone());
                 env_rec = next_env;
-                cells.push(slot);
+                addrs.push(addr);
             }
 
             if bindings.is_empty() {
@@ -111,7 +114,7 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
             let mut remaining: Vec<Rc<Expr>> = bindings.iter().map(|(_, e)| e.clone()).collect();
             let first = remaining.remove(0);
             let new_k = Rc::new(K::Letrec {
-                cells,
+                addrs,
                 next: 0,
                 remaining,
                 body: body.clone(),
@@ -175,14 +178,17 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
         }
 
         K::Letrec {
-            cells,
+            addrs,
             next,
             remaining,
             body,
             env,
             k: outer,
         } => {
-            *cells[*next].borrow_mut() = v;
+            let store = env
+                .store_handle()
+                .expect("store dropped during letrec patch");
+            store.set(addrs[*next], v);
             if remaining.is_empty() {
                 Ok(Step::Continue(State {
                     mode: Mode::Eval(body.clone(), env.clone()),
@@ -192,7 +198,7 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
                 let mut remaining = remaining.clone();
                 let next_expr = remaining.remove(0);
                 let new_k = Rc::new(K::Letrec {
-                    cells: cells.clone(),
+                    addrs: addrs.clone(),
                     next: next + 1,
                     remaining,
                     body: body.clone(),

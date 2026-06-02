@@ -677,32 +677,33 @@ fn prim_still_callable_in_lexical_scope() {
 }
 
 #[test]
-fn letrec_cycle_persists_after_drop() {
-    // ADR-021 diagnostic: documents the residual letrec Rc cycle.
-    // A letrec closure that references its own name forms
-    // `Frame → cell → Val::Clo → closure.env → Frame`. After every
-    // user-side strong handle drops, the cycle keeps the cell alive
-    // (leak). When the engine grows a real fix — closure conversion
-    // or Y-style desugaring or a Store-reified CESK upgrade — this
-    // assertion flips, and that flip is the regression signal.
+fn letrec_does_not_leak() {
+    // ADR-023 regression: the letrec cycle that ADR-021 pinned
+    // (Frame → cell → Val::Clo → closure.env → Frame) is dissolved
+    // by the CESK store. Frame slots are now `Addr` (Copy) indices
+    // into a Vm-owned `Store`; closures Rc-reach the env, which holds
+    // a `Weak<Store>`, so no closure can root its own store. When the
+    // Vm drops, the store drops in one shot — observable via the
+    // `Weak<Store>` taken before the Vm dropped.
     let mut vm = lisp::Vm::new();
+    let store_weak = vm.store_weak();
     let v = vm
         .eval_str("(letrec ((f (lambda () (f)))) f)")
         .unwrap();
-    // Reach into the returned closure's captured env for the "f" slot.
-    let weak = match &v {
-        lisp::Val::Clo { env, .. } => env
-            .weak_slot("f")
-            .expect("letrec frame should carry an `f` slot"),
-        other => panic!("expected letrec body to return a closure, got {other}"),
-    };
+    // Sanity: the letrec did allocate at least one slot.
+    let store_pre_drop = store_weak
+        .upgrade()
+        .expect("store should be alive while Vm is");
+    assert!(
+        !store_pre_drop.is_empty(),
+        "letrec should have allocated at least one store slot"
+    );
+    drop(store_pre_drop);
     drop(v);
     drop(vm);
     assert!(
-        weak.upgrade().is_some(),
-        "today: the cell.value → closure → env.frame → cell cycle \
-         keeps the slot alive even after every external strong \
-         handle drops. When this flips to is_none() the cycle has \
-         been broken — update or remove this assertion at that point."
+        store_weak.upgrade().is_none(),
+        "after Vm drop, the store must release. If this fires, some \
+         closure is rooting the store — the ADR-021 cycle has come back."
     );
 }

@@ -3,71 +3,73 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use crate::expr::Sym;
+use crate::store::{Addr, Store};
 use crate::val::Val;
 
 /// Shared table of top-level bindings, owned by `Vm`. Closures see it
 /// via `Env::globals` as a `Weak` back-edge so the cycle that would
 /// otherwise form — globals slot → closure → captured env → globals —
 /// stays open. See ADR-015 / issue_2.
+///
+/// Note: top-level bindings stayed as their own region across the
+/// ADR-023 CESK migration. Frame slots moved to the `Store`; globals
+/// kept their `Rc<RefCell<Val>>` cells so the ADR-015 Weak back-edge
+/// pattern still holds end-to-end without re-derivation.
 pub type Globals = Rc<RefCell<HashMap<Sym, Rc<RefCell<Val>>>>>;
 
 /// Immutable, structurally-shared linked frames for lexical bindings
-/// (`let`, `letrec`, closure params). Each slot is an `Rc<RefCell<Val>>`
-/// so `letrec` can allocate a placeholder frame, evaluate inits in it
-/// (closures capture the cell), and patch later. For non-recursive
-/// bindings the mutability is invisible — `extend` creates a fresh
-/// cell and nothing ever writes to it.
+/// (`let`, `letrec`, closure params). Each slot is an `Addr` into the
+/// Vm's `Store` (ADR-023). The store holds the value; frames just hold
+/// the index. `Addr` is `Copy`, so a closure that captures an env can
+/// no longer Rc-reach back to its own letrec cell — the cycle from
+/// ADR-021 dissolves by construction.
 ///
 /// `globals` is a `Weak` reference to the Vm's top-level table; any
-/// name not found in the frame chain falls back to it. Storing it as
-/// `Weak` keeps top-level closures from rooting their own globals
-/// table — dropping the Vm releases the table, which releases every
-/// closure stored in it.
+/// name not found in the frame chain falls back to it. `store` is the
+/// matching `Weak` for frame-slot resolution. Both `Weak` keeps any
+/// closure from rooting its own Vm; dropping the Vm releases the
+/// globals table and the store, which together release every closure.
 #[derive(Clone)]
 pub struct Env {
     frame: Option<Rc<Frame>>,
     globals: Weak<RefCell<HashMap<Sym, Rc<RefCell<Val>>>>>,
+    store: Weak<Store>,
 }
 
 struct Frame {
     name: Sym,
-    slot: Rc<RefCell<Val>>,
+    addr: Addr,
     parent: Option<Rc<Frame>>,
 }
 
 impl Env {
-    /// Env with no frames and no globals. Lookups against it can only
-    /// find what's in the (empty) frame chain. Used by tests that build
-    /// envs in isolation; production code goes through `with_globals`.
-    pub fn empty() -> Self {
-        Env {
-            frame: None,
-            globals: Weak::new(),
-        }
-    }
-
-    /// Env with no frames but a live back-edge to a globals table. The
-    /// `Weak` is upgraded on lookup miss; while the Vm holds the strong
-    /// ref it always succeeds.
-    pub fn with_globals(globals: &Globals) -> Self {
+    /// Env with no frames but a live back-edge to a globals table and
+    /// a store. The `Weak`s are upgraded on lookup; while the Vm holds
+    /// the strong refs they always succeed.
+    pub fn with_globals(globals: &Globals, store: &Rc<Store>) -> Self {
         Env {
             frame: None,
             globals: Rc::downgrade(globals),
+            store: Rc::downgrade(store),
         }
     }
 
+    /// Allocate `val` in the store and bind `name` to its addr.
     pub fn extend(&self, name: Sym, val: Val) -> Env {
-        self.extend_slot(name, Rc::new(RefCell::new(val)))
+        let store = self.store.upgrade().expect("store dropped before env");
+        let addr = store.alloc(val);
+        self.extend_addr(name, addr)
     }
 
-    pub fn extend_slot(&self, name: Sym, slot: Rc<RefCell<Val>>) -> Env {
+    fn extend_addr(&self, name: Sym, addr: Addr) -> Env {
         Env {
             frame: Some(Rc::new(Frame {
                 name,
-                slot,
+                addr,
                 parent: self.frame.clone(),
             })),
             globals: self.globals.clone(),
+            store: self.store.clone(),
         }
     }
 
@@ -82,20 +84,24 @@ impl Env {
         env
     }
 
-    /// Allocate a placeholder slot and bind `name` to it. Returns the cell so
-    /// the caller can patch it once the init expression has been evaluated.
-    /// The placeholder value should never be read before patching — if it is,
-    /// it leaks out as `#f`, which makes the bug observable rather than UB.
-    pub fn extend_placeholder(&self, name: Sym) -> (Env, Rc<RefCell<Val>>) {
-        let slot = Rc::new(RefCell::new(Val::Bool(false)));
-        (self.extend_slot(name, slot.clone()), slot)
+    /// Allocate a placeholder slot in the store and bind `name` to its
+    /// addr. Returns the addr so the caller (letrec setup, then
+    /// `K::Letrec` apply) can patch the store slot once the init
+    /// expression has been evaluated. The placeholder value should
+    /// never be read before patching — if it is, it leaks out as `#f`,
+    /// which makes the bug observable rather than UB.
+    pub fn extend_placeholder(&self, name: Sym) -> (Env, Addr) {
+        let store = self.store.upgrade().expect("store dropped before env");
+        let addr = store.alloc(Val::Bool(false));
+        (self.extend_addr(name, addr), addr)
     }
 
     pub fn lookup(&self, name: &str) -> Option<Val> {
         let mut cur = self.frame.as_deref();
         while let Some(f) = cur {
             if &*f.name == name {
-                return Some(f.slot.borrow().clone());
+                let store = self.store.upgrade()?;
+                return Some(store.get(f.addr));
             }
             cur = f.parent.as_deref();
         }
@@ -107,16 +113,22 @@ impl Env {
         table.get(name).map(|slot| slot.borrow().clone())
     }
 
-    /// Return a `Weak` handle to the lexical-scope slot for `name`, if
-    /// any. Walks frames only — does *not* fall through to globals.
-    /// Exposed for diagnostic tests that need to observe slot lifetime
-    /// across drops without extending it; see ADR-021's
-    /// `letrec_cycle_persists_after_drop`.
-    pub fn weak_slot(&self, name: &str) -> Option<Weak<RefCell<Val>>> {
+    /// Return the store handle this env is anchored to, if the owning
+    /// Vm is still alive. Used by `K::Letrec`'s patch step to write
+    /// the just-evaluated init into the placeholder slot.
+    pub fn store_handle(&self) -> Option<Rc<Store>> {
+        self.store.upgrade()
+    }
+
+    /// Return the frame-allocated `Addr` for `name`, if any. Walks
+    /// frames only — does *not* fall through to globals. Exposed for
+    /// diagnostic tests that need to observe slot identity without
+    /// holding the store value alive.
+    pub fn lookup_addr(&self, name: &str) -> Option<Addr> {
         let mut cur = self.frame.as_deref();
         while let Some(f) = cur {
             if &*f.name == name {
-                return Some(Rc::downgrade(&f.slot));
+                return Some(f.addr);
             }
             cur = f.parent.as_deref();
         }

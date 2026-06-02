@@ -26,7 +26,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 pub mod env;
 pub mod expr;
@@ -34,12 +34,14 @@ pub mod k;
 pub mod parse;
 pub mod prim;
 pub mod step;
+pub mod store;
 pub mod val;
 
 pub use env::{Env, Globals};
 pub use expr::{Expr, Sym};
 pub use parse::Datum;
 pub use step::{Step, run, run_bounded};
+pub use store::{Addr, Store};
 pub use val::Val;
 
 // Re-export so hosts wiring up state-capturing prims can write
@@ -64,6 +66,11 @@ pub struct Vm {
     /// this Vm collapses every closure stored here without leaks. See
     /// ADR-015.
     pub globals: Globals,
+    /// Lexical-binding heap (frame slots; `let`/`letrec`/lambda
+    /// params). The fourth CESK register from ADR-023. Owned by `Vm`
+    /// strong; reached by closures via `Env::store` as a `Weak`, so a
+    /// closure can't keep the store alive past its Vm.
+    pub store: Rc<Store>,
     macros: Rc<RefCell<HashMap<String, Macro>>>,
     /// Per-`eval_str` CEK step budget. `u64::MAX` (the default) is
     /// effectively unbounded — preserves day-one behavior. Hosts that
@@ -82,14 +89,23 @@ impl Vm {
     /// top (ADR-018).
     pub fn new() -> Self {
         let globals: Globals = Rc::new(RefCell::new(HashMap::new()));
+        let store: Rc<Store> = Rc::new(Store::new());
         prim::install_builtins(&globals);
-        let env = Env::with_globals(&globals);
+        let env = Env::with_globals(&globals, &store);
         Vm {
             env,
             globals,
+            store,
             macros: Rc::new(RefCell::new(HashMap::new())),
             step_budget: u64::MAX,
         }
+    }
+
+    /// `Weak` handle to the Vm's store. Exposed for ADR-023's
+    /// `letrec_does_not_leak` diagnostic, which asserts the store
+    /// drops with the Vm — proof that no closure rooted it.
+    pub fn store_weak(&self) -> Weak<Store> {
+        Rc::downgrade(&self.store)
     }
 
     /// Cap each `eval_str` invocation at `n` CEK steps. Calls that

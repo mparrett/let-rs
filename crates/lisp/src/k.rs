@@ -1,8 +1,8 @@
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::env::Env;
 use crate::expr::Expr;
+use crate::store::Addr;
 use crate::val::Val;
 
 /// A continuation — the "rest of the computation", reified as data.
@@ -31,11 +31,12 @@ pub enum K {
     },
 
     /// Letrec init evaluation in progress. The just-evaluated value gets written
-    /// to `cells[next]`; if `remaining` is empty we eval `body`, else the next
-    /// init. `env` already contains all the placeholder cells, so any closure
-    /// produced by an init captures the recursive environment.
+    /// to `addrs[next]` in the store; if `remaining` is empty we eval `body`,
+    /// else the next init. `env` already contains all the placeholder bindings,
+    /// so any closure produced by an init captures the recursive environment.
+    /// Post-ADR-023: `addrs` are `Copy` indices into the store, not Rc cells.
     Letrec {
-        cells: Vec<Rc<RefCell<Val>>>,
+        addrs: Vec<Addr>,
         next: usize,
         remaining: Vec<Rc<Expr>>,
         body: Rc<Expr>,
