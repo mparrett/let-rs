@@ -61,5 +61,5 @@ wasm-build:
     @ls -lh web/pkg/wasm_bg.wasm | awk '{print "  → web/pkg/wasm_bg.wasm:", $5}'
 
 wasm-serve: wasm-build
-    @echo "→ open http://localhost:8000"
-    python3 -m http.server -d web 8000
+    @echo "→ open http://localhost:7670/let-rs.html"
+    python3 -m http.server -d web 7670

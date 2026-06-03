@@ -178,7 +178,7 @@ just genes        # CLI codon-tape → creature card demo
 just curves       # CLI stroke-tape → L-system → ASCII canvas demo
 just check
 just wasm-build   # cargo build --target wasm32-unknown-unknown + wasm-bindgen
-just wasm-serve   # build + python3 -m http.server -d web 8000
+just wasm-serve   # build + python3 -m http.server -d web 7670 (per-project port; see key_facts.md)
 just bench        # criterion benches under crates/bench/ (core + demos)
 ```
 
