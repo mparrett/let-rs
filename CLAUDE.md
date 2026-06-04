@@ -21,8 +21,8 @@ Slices that have landed:
 - the CEK machine (5 transition rules) + the run loop
 - a "real lisp" feature set (closures, letrec, cons, quote, variadic prims,
   let/let*/cond, predicates, comparison chains)
-- procedural macros with quasiquote, plus a minimal host world and a spell DSL
-  demo end-to-end
+- procedural macros (sibling crate, ADR-024) with quasiquote, plus a minimal
+  host world and a spell DSL demo end-to-end
 - rune translation extracted to `crates/runes/` (zero-dep micro-crate)
 - WASM bridge (`crates/wasm/` + `web/`) — REPL + Spell Lab in the browser via
   `wasm-bindgen`, no COI / SAB required (see ADR-009)
@@ -59,11 +59,14 @@ file before anything else; the rest of the engine is decoration.
 extracted them to `crates/world/`. The engine no longer ships any
 host types.)
 - `parse.rs` — tokenize, `read` (→ Datum), `read_many` (→ Vec<Datum>),
-  `compile` (→ Expr), special forms, quasiquote compilation
-- `lib.rs` — `Vm`, top-level `define` / `defmacro` registration,
-  macro expansion, datum⇄val conversion. `eval_str` accepts a
-  sequence of top-level forms; returns the last expression's value
-  (ADR-014).
+  `compile` (→ Expr), special forms, quasiquote compilation. Parser-
+  level quasiquote (` `` `, `,`, `,@`) lives here as list-construction
+  syntax — works without macros installed.
+- `lib.rs` — `Vm`, top-level `define` registration. `eval_str` accepts
+  a sequence of top-level forms; returns the last expression's value
+  (ADR-014). The engine is macro-unaware: `defmacro` lives in the
+  sibling `macros` crate (ADR-024). Hosts that want macros wrap a
+  `Vm` in `macros::MacroVm`.
 
 The spell, gene, and curve DSL packs live in sibling crates
 (`crates/spells/`, `crates/genes/`, `crates/curves/`) as of ADR-016
@@ -129,9 +132,16 @@ Sibling crates:
   `render(&Turtle) -> String` for direct access. `install(vm, turtle)`
   wires all of it in one call. Depends only on `lisp`. Cast pipeline is
   `(draw! (grow axiom rules n))` then `(render!)`. See ADR-019.
+- `crates/macros/` — `defmacro` + procedural expansion + quasiquote-
+  with-macros. `Expander` struct owns the macro table; `MacroVm`
+  bundles `lisp::Vm` + `Expander` with a macro-aware `eval_str`.
+  Hosts that want macros wrap their `Vm` in `MacroVm`; hosts that
+  don't (the CLI demos) stay on the raw engine. Depends only on
+  `lisp`. See ADR-024.
 - `crates/wasm/` — JS-facing bridge (`wasm-bindgen` `cdylib`). Wraps
-  `lisp::Vm` + `World` + `Turtle`, installs all three DSL packs at
-  construction, exposes `new(width, height)`, `eval(src)`,
+  `macros::MacroVm` (which wraps `lisp::Vm`) + `World` + `Turtle`,
+  installs all three DSL packs at construction via
+  `inner.vm`, exposes `new(width, height)`, `eval(src)`,
   `cast(tape, x, y)`, `cast_genome(tape, seed)`, `cast_breed(a, b, seed)`,
   `cast_curve(axiom, rules_sexpr, iters)`, plus `grid()` / `log()` /
   `reset_world()`. Pinned to `wasm-bindgen =0.2.114` to match the

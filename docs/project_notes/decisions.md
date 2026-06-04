@@ -2067,3 +2067,129 @@ What was *not* changed (preserved as separate decisions):
 - `Vm::heap_summary()` not added — `Vm::store.len()` is
   sufficient for ad-hoc diagnostics today.
 
+## ADR-024: Macros extracted to sibling crate (2026-06-04)
+
+**Context**: A retrospective audit of "have we drifted from the
+original smallest-substrate thesis" (see day-one prelude in
+`web/let-rs.html`) flagged macros as the single largest drift.
+The `defmacro` + quasiquote-with-macros + procedural expansion
+machinery in `crates/lisp/src/lib.rs` was roughly half the size
+of the engine itself: the `Macro` struct, the `macros: Rc<RefCell<
+HashMap<…>>>` field on `Vm`, `try_register_defmacro`,
+`expand_all`, `expand_in_qq`, `expand_macro_call`, `val_to_datum`,
+plus the macro-aware branch inside `eval_str_inner`. Every host
+paid for macros even if it never registered one. The DSL packs
+(spells, genes, curves) don't use `defmacro` — only the user-
+facing REPL surfaces (web bridge + `examples/repl.rs`) do.
+
+This ADR follows the ADR-016/017/018 sibling-crate pattern: lift
+a feature out of the engine when its blast radius is bigger than
+its consumer footprint.
+
+**What stays in `lisp`**: parser-level quasiquote (` `` `, `,`,
+`,@`). These compile to list-construction expressions
+(`parse::compile_quasiquote_form`) and work without macros
+installed. The runtime tests `quasiquote_basics`,
+`quasiquote_splice`, and `quasiquote_nested_depth_preserved`
+verify that.
+
+**What moves to `crates/macros/`**:
+
+- `Macro` struct (closure + variadic flag)
+- `Expander` struct holding the `HashMap<String, Macro>` table
+- `expand_all`, `expand_in_qq`, `expand_macro_call`,
+  `try_register_defmacro` (all now `&mut Expander` methods
+  taking `&mut Vm` as a parameter)
+- `val_to_datum` (only used to round-trip macro return values)
+- New `MacroVm` convenience wrapper bundling `Vm` + `Expander`
+  with a macro-aware `eval_str(src)`
+
+**Decision**: Land the extraction. Default the engine to
+macro-unaware. Hosts opt in by wrapping a `Vm` in
+`macros::MacroVm` (or threading an `Expander` manually).
+
+**Migration sketch (concrete)**:
+
+1. New `crates/macros/` crate (depends on `lisp` only).
+2. `Vm::call_value` made `pub` (so the macros crate can invoke
+   macro closures); `Vm::env()` accessor added (so macros can
+   capture the root env for closures they register).
+3. `Vm` loses its `macros` field and all expansion methods.
+4. `eval_str_inner` drops the `try_register_defmacro` + `expand_all`
+   steps and just compiles each form directly. `eval_str`'s
+   atomic snapshot drops `saved_macros` (only globals now).
+5. `MacroVm::eval_str` parses, splits out `(defmacro …)` forms
+   (registers in the Expander) from the rest (expands them, then
+   serializes back through `Vm::eval_str`). The round-trip
+   through the reader is the price of going through the public
+   entry point; lossless for our Datum set (Num/Ratio/Bool/Sym/
+   List). MacroVm wraps both Vm-level and macros-table
+   atomicity.
+6. Existing macro tests (7) moved to `crates/macros/tests/`. A
+   new test pins the engine's macro-unawareness:
+   `defmacro_unknown_to_raw_vm` asserts `lisp::Vm::eval_str(
+   "(defmacro foo () 1)")` is an error.
+7. Consumers updated:
+   - **`wasm`** (web bridge / user-facing REPL): adds `macros`
+     dep, swaps `inner: lisp::Vm` → `inner: macros::MacroVm`.
+     Casts pass through MacroVm with macro expansion as a no-op
+     when no macros are present.
+   - **`examples/repl.rs`** (CLI REPL): swaps to MacroVm so
+     interactive `(defmacro …)` still works. Added as a dev-dep
+     loop (lisp dev-deps on macros, macros deps on lisp — Cargo
+     allows the loop because dev-deps don't participate in the
+     library's dep graph).
+   - **CLI examples** (`spells.rs`, `genes.rs`, `curves.rs`,
+     `world.rs`): unchanged. Their preludes are pure defines, and
+     they don't take user input that could contain `defmacro`.
+
+**Alternatives considered**:
+
+1. **Feature flag in lisp** (`#[cfg(feature = "macros")]`). Code
+   still lives in `lisp/`; just gated. Doesn't actually reduce
+   the engine's surface area or align with the sibling-crate
+   pattern. Rejected.
+2. **Trait/hook on `Vm`** so external code can inject an
+   expander. Adds extension points the engine doesn't otherwise
+   need. Heavier than the wrapping pattern that already works
+   for `world`/`spells`/`genes`/`curves`.
+3. **Status quo (keep macros in lisp)**. Concrete cost: ~250 net
+   lines in the engine for a feature half the consumers don't
+   use. The audit specifically called this out as drift.
+
+**Consequences**:
+- **+** `lisp` crate drops ~250 lines of macro-expansion
+  machinery; the engine's surface re-aligns with the "smallest
+  interesting substrate" thesis.
+- **+** Hosts that don't want macros stay on `lisp::Vm` with no
+  macro tax (no expander field, no per-`eval_str` walk to look
+  for macro calls).
+- **+** Future macro-system experiments (hygienic macros,
+  reader macros, a different expansion strategy) can live in
+  `crates/macros/` (or a sibling) without touching the engine.
+- **+** Pinned by the new `defmacro_unknown_to_raw_vm` test —
+  any regression that pulls macros back into `lisp` flips it.
+- **−** `MacroVm::eval_str` round-trips expanded datums through
+  the reader (serialize → parse → compile). Cheap for REPL
+  scale; could be replaced by exposing a `Vm::eval_datums`
+  entry point if it ever measures hot.
+- **−** Hosts that want macros + a `Vm` field need to reach the
+  inner engine via `macro_vm.vm` (`pub vm: Vm` on MacroVm).
+  Minor verbosity in `crates/wasm/src/lib.rs` (e.g.
+  `spells::install_with_world(&mut inner.vm, …)`).
+- **−** Loop in dev-deps: `lisp` dev-deps on `macros` for the
+  REPL example, and `macros` deps on `lisp`. Cargo handles
+  this because dev-deps don't enter the library's dep graph.
+  Documented in `crates/lisp/Cargo.toml`.
+
+**Deferred**:
+- A `Vm::eval_datums(forms)` entry point that would let
+  `MacroVm::eval_str` skip the serialize round-trip. Worth
+  doing only if a benchmark shows the round-trip is measurable.
+- Hygienic macros (gensym + renaming pass). Listed in the
+  let-rs.html "what comes after"; would live in `crates/macros/`
+  when picked up, with the choice between "hygienic by default"
+  and "opt-in via a separate macro form" still open.
+- Reader macros / custom dispatch. Out of scope; the parser is
+  in `lisp` and would need a hook for that.
+
