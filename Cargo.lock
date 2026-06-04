@@ -243,10 +243,18 @@ dependencies = [
  "codons",
  "curves",
  "genes",
+ "macros",
  "runes",
  "spells",
  "strokes",
  "world",
+]
+
+[[package]]
+name = "macros"
+version = "0.1.0"
+dependencies = [
+ "lisp",
 ]
 
 [[package]]
@@ -443,6 +451,7 @@ dependencies = [
  "curves",
  "genes",
  "lisp",
+ "macros",
  "runes",
  "spells",
  "strokes",

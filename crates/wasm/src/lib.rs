@@ -32,12 +32,15 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
 use curves::Turtle;
-use lisp::Vm as LispVm;
+use macros::MacroVm;
 use world::World;
 
 #[wasm_bindgen(js_name = "Vm")]
 pub struct WasmVm {
-    inner: LispVm,
+    /// Macro-aware Vm: bundles `lisp::Vm` + `macros::Expander`. Hosts
+    /// reach the inner lisp engine via `inner.vm` (e.g. for prim
+    /// registration, prelude installs, the step-budget setter).
+    inner: MacroVm,
     /// Host-owned world handle. The lisp engine no longer carries a
     /// `World` field (ADR-017); the bridge owns this Rc and shares a
     /// clone with the world prims via closure capture in
@@ -61,15 +64,15 @@ impl WasmVm {
             World::new(width, height).map_err(|e| JsValue::from_str(&e))?,
         ));
         let turtle = Rc::new(RefCell::new(Turtle::new()));
-        let mut inner = LispVm::new();
-        spells::install_with_world(&mut inner, world.clone());
-        genes::install(&mut inner);
-        curves::install(&mut inner, turtle.clone());
+        let mut inner = MacroVm::new();
+        spells::install_with_world(&mut inner.vm, world.clone());
+        genes::install(&mut inner.vm);
+        curves::install(&mut inner.vm, turtle.clone());
         // Default budget for browser hosts: 10M CEK steps. Tail-call test
         // currently uses ~1M; spells/genes runs are well under 100k. The
         // browser eval runs on the main thread, so an unbounded loop
         // hangs the page — this is the backstop.
-        inner.set_step_budget(10_000_000);
+        inner.vm.set_step_budget(10_000_000);
         Ok(WasmVm {
             inner,
             world,
@@ -82,7 +85,7 @@ impl WasmVm {
     /// Override the CEK step budget for subsequent evaluations.
     /// `u64::MAX` disables the gate.
     pub fn set_step_budget(&mut self, n: u64) {
-        self.inner.set_step_budget(n);
+        self.inner.vm.set_step_budget(n);
     }
 
     /// Evaluate arbitrary lisp source. On error, the returned `Result::Err`

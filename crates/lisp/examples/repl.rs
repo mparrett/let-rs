@@ -1,9 +1,11 @@
 use std::io::{self, BufRead, Write};
 
-use lisp::Vm;
+use macros::MacroVm;
 
 fn main() {
-    let mut vm = Vm::new();
+    // MacroVm wraps lisp::Vm + a macro expander so the REPL supports
+    // `defmacro` and quasiquote-with-macros (ADR-024).
+    let mut vm = MacroVm::new();
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut reader = stdin.lock();

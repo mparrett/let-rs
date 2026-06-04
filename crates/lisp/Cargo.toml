@@ -8,7 +8,10 @@ license.workspace = true
 workspace = true
 
 # Dev-only: example binaries consume DSL crates. The lisp crate itself
-# stays zero-deps — ADR-002 still holds.
+# stays zero-deps — ADR-002 still holds. The `macros` dev-dep is the
+# loop-back into the macros sibling crate (ADR-024) so the REPL example
+# can wrap a MacroVm and support `defmacro`. Cargo allows this loop
+# because dev-deps don't participate in the library's dep graph.
 [dev-dependencies]
 runes   = { path = "../runes" }
 codons  = { path = "../codons" }
@@ -17,6 +20,7 @@ spells  = { path = "../spells" }
 genes   = { path = "../genes" }
 curves  = { path = "../curves" }
 world   = { path = "../world" }
+macros  = { path = "../macros" }
 
 [[example]]
 name = "repl"
