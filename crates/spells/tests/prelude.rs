@@ -173,6 +173,40 @@ fn reset_mana_restores_max() {
 }
 
 #[test]
+fn duration_adds_to_cost() {
+    // duration 4 + bare fire → cost = 1 + 0 (power) + 0 (area) + 4
+    let mut vm = vm_with_world(5, 5);
+    let before = vm.eval_str("mana").unwrap();
+    assert_eq!(format!("{before}"), "10");
+    vm.eval_str(
+        "(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 \
+                  (thread (start) (list fire (duration 4))))))",
+    )
+    .unwrap();
+    // mana 10 → 10 - 5 = 5
+    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "5");
+}
+
+#[test]
+fn duration_overrides_power_for_lifetime() {
+    // ctx has both duration 2 and power 7. duration wins for lifetime
+    // (the world-apply! priority is duration > power > default). cost
+    // is power + duration + area + 1 = 7 + 2 + 0 + 1 = 10.
+    let (mut vm, world) = (|| {
+        let world = Rc::new(RefCell::new(World::new(5, 5).expect("dims fit")));
+        let mut vm = MacroVm::new();
+        spells::install_with_world(&mut vm, world.clone());
+        (vm, world)
+    })();
+    vm.eval_str(
+        "(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 \
+                  (thread (start) (list fire (power 7) (duration 2))))))",
+    )
+    .unwrap();
+    assert_eq!(world.borrow().lifetime_at(2, 2), Some(2));
+}
+
+#[test]
 fn spell_cost_formula() {
     let mut vm = mvm();
     // The reader doesn't parse dotted-pair literals — alist entries
@@ -197,6 +231,15 @@ fn spell_cost_formula() {
                 .unwrap()
         ),
         "6"
+    );
+    // Duration 4 alone → cost 5.
+    assert_eq!(
+        format!(
+            "{}",
+            vm.eval_str("(spell-cost (assoc-set 'duration 4 '()))")
+                .unwrap()
+        ),
+        "5"
     );
 }
 

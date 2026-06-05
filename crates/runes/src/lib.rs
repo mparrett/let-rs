@@ -23,8 +23,11 @@ pub const PLAIN: &[(char, &str)] = &[
 /// Parametrized runes: each maps to `n → ctx → ctx`. Consumes the
 /// immediately following numeral.
 pub const PARAM: &[(char, &str)] = &[
-    ('ᛞ', "area"),  // DAGAZ  — day, expansion
-    ('ᛟ', "power"), // OTHALA — inheritance, legacy
+    ('ᛞ', "area"),     // DAGAZ  — day, expansion
+    ('ᛟ', "power"),    // OTHALA — inheritance, legacy
+    ('ᛃ', "duration"), // JERA   — year, cycle, time. Sets tile lifetime
+                       // explicitly (ADR-027); without it, world-apply!
+                       // falls back to `power` then DEFAULT_LIFETIME.
 ];
 
 #[derive(Debug, Clone)]

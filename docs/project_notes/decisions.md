@@ -2560,6 +2560,14 @@ flagged as a magic number in the prim doc-comment.
   would let CLI demos animate, but the CLI demos are
   snapshot-oriented — no use case yet.
 
+**Postscript (2026-06-05)**: shortly after stage 4 shipped, the
+`ᛃ` (JERA) rune was added for explicit `duration` control.
+Lifetime selection in `world-apply!` is now `duration > power >
+DEFAULT_LIFETIME` — duration is the explicit knob, power keeps
+its pre-rune behavior as a fallback so every previous cast site
+works unchanged. The cost formula in ADR-028 picked up duration
+as another knob.
+
 ## ADR-028: Mana model — caster-side resource via `set!` (2026-06-05)
 
 **Context**: Stage 3 of the dynamic-spells arc. ADR-026 shipped
@@ -2689,4 +2697,12 @@ by tests, easy to retune.
   Way past the demo's current scope.
 - UI for the meter, including a visible "wait for mana" cue.
   That's stage 4 of the dynamic-spells arc.
+
+**Postscript (2026-06-05)**: stage 4 shipped, then `ᛃ` was
+added for explicit `duration`. Cost formula became
+`1 + power + area + duration` — every knob the user dials up
+on the tape costs them mana. This is the first cost knob that
+*doesn't* affect the cast radius (area widens the paint;
+power/duration both extend it in time). The deferred
+"spell-specific costs" bullet is one ADR-029 away.
 

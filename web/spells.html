@@ -35,6 +35,7 @@
           <button type="button" class="rune"        data-rune="ᛗ"  title="self">ᛗ</button>
           <button type="button" class="rune param"  data-rune="ᛞ "  title="area (followed by a number)">ᛞ</button>
           <button type="button" class="rune param"  data-rune="ᛟ "  title="power (followed by a number)">ᛟ</button>
+          <button type="button" class="rune param"  data-rune="ᛃ "  title="duration — sets tile lifetime in ticks (followed by a number)">ᛃ</button>
           <span class="palette-sep"></span>
           <button type="button" class="rune digit" data-rune="1">1</button>
           <button type="button" class="rune digit" data-rune="2">2</button>
@@ -90,6 +91,8 @@
             <li><code class="tape-example" data-tape="ᛇ ᛞ 2">ᛇ ᛞ 2</code> — 5×5 ice arena</li>
             <li><code class="tape-example" data-tape="ᛗ ᛇ">ᛗ ᛇ</code> — self-targeted ice (sets :target self)</li>
             <li><code class="tape-example" data-tape="ᛚ ᚦ ᛟ 5">ᛚ ᚦ ᛟ 5</code> — bolt + fire + power-5 (:shape and :power linger in ctx)</li>
+            <li><code class="tape-example" data-tape="ᚦ ᛃ 12">ᚦ ᛃ 12</code> — fire that lasts 12 ticks (duration overrides power for lifetime)</li>
+            <li><code class="tape-example" data-tape="ᛇ ᛞ 1 ᛃ 20">ᛇ ᛞ 1 ᛃ 20</code> — long-lived 3×3 ice arena</li>
           </ul>
         </details>
       </section>

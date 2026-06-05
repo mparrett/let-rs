@@ -65,27 +65,39 @@ fn world_size(_args: &[Val], w: &mut World) -> R {
 /// at the default 500ms interval (~2.5s for fire to fade). See ADR-027.
 const DEFAULT_LIFETIME: u8 = 5;
 
-/// `(world-apply! ctx)` — resolver: reads `element`, `tx`, `ty`, optional `area`
-/// and `power` from a ctx alist, paints a square neighborhood around (tx,ty)
-/// with the corresponding tile (each painted tile carries a decay countdown
-/// derived from `power`), and logs the cast. Returns the number of tiles
-/// painted.
+/// `(world-apply! ctx)` — resolver: reads `element`, `tx`, `ty`, optional
+/// `area`, `duration`, and `power` from a ctx alist, paints a square
+/// neighborhood around (tx,ty) with the corresponding tile (each painted
+/// tile carries a decay countdown), and logs the cast. Returns the number
+/// of tiles painted.
 ///
-/// Lifetime mapping (ADR-027): clamped to `u8` (0..=255). Missing `power`
-/// → `DEFAULT_LIFETIME`. Negative / non-numeric `power` → 0 (permanent,
-/// so the legacy "lifetime 0 = permanent" semantics still apply if a
-/// host wants them).
+/// Lifetime selection (ADR-027, refined by ᛃ duration rune): the explicit
+/// `duration` key wins if present; otherwise `power` falls back (the
+/// pre-duration behavior); otherwise `DEFAULT_LIFETIME`. The fallback
+/// chain keeps every previous cast site working unchanged while letting
+/// new casts separate cost-knobs from lifetime-knobs.
+///
+/// Each value is clamped to `u8` (0..=255). Negative / zero values mean
+/// "permanent" — useful for an opt-out and preserves the "lifetime 0 =
+/// permanent" convention.
 fn world_apply(args: &[Val], w: &mut World) -> R {
     let ctx = &args[0];
     let element = assoc_get(ctx, "element");
     let tx = assoc_get(ctx, "tx").and_then(as_num).unwrap_or(0);
     let ty = assoc_get(ctx, "ty").and_then(as_num).unwrap_or(0);
     let area = assoc_get(ctx, "area").and_then(as_num).unwrap_or(0).max(0);
-    let lifetime = match assoc_get(ctx, "power").and_then(as_num) {
-        Some(n) if n > 0 => n.min(u8::MAX as i64) as u8,
-        Some(_) => 0, // negative or zero power = permanent
-        None => DEFAULT_LIFETIME,
+    let lifetime_from = |key: &str| -> Option<u8> {
+        assoc_get(ctx, key).and_then(as_num).map(|n| {
+            if n > 0 {
+                n.min(u8::MAX as i64) as u8
+            } else {
+                0 // negative or zero = permanent
+            }
+        })
     };
+    let lifetime = lifetime_from("duration")
+        .or_else(|| lifetime_from("power"))
+        .unwrap_or(DEFAULT_LIFETIME);
 
     let tile = match element.as_ref() {
         Some(Val::Sym(s)) => {

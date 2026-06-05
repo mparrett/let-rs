@@ -140,6 +140,24 @@ fn world_tick_on_empty_world_returns_zero() {
 }
 
 #[test]
+fn world_apply_duration_takes_priority_over_power() {
+    // duration 2, power 9 → lifetime should be 2 (duration wins).
+    // Verifies the duration > power > default fallback chain (ADR-027
+    // refinement after the ᛃ rune landed).
+    let (mut vm, world) = vm_with_world_handle(3, 3);
+    vm.eval_str(
+        "(world-apply! \
+           (assoc-set 'tx 1 \
+             (assoc-set 'ty 1 \
+               (assoc-set 'duration 2 \
+                 (assoc-set 'power 9 \
+                   (assoc-set 'element 'fire '()))))))",
+    )
+    .unwrap();
+    assert_eq!(world.borrow().lifetime_at(1, 1), Some(2));
+}
+
+#[test]
 fn world_apply_with_zero_power_paints_permanently() {
     // power = 0 in ctx → lifetime 0 (permanent). Lets a caller opt out
     // of decay without rebuilding the model. Mostly an edge-case nicety
