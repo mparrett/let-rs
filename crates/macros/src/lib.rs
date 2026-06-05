@@ -323,13 +323,25 @@ impl Default for MacroVm {
     }
 }
 
-/// A small library of useful macros. Currently:
+/// A small library of useful macros:
 ///
 /// - `(begin a b ... last)` — evaluate each form in order; return the
 ///   value of `last`. Replaces the engine-side `(let ((_ a)) b)`
 ///   workaround pattern (ADR-019 deferred item — closed via this
 ///   macro rather than an engine special form, per ADR-024's
 ///   minimal-engine stance).
+/// - `(when c body...)` — `(if c (begin body...) #f)`.
+/// - `(unless c body...)` — `(if c #f (begin body...))`.
+/// - `(and a b ...)` — short-circuit conjunction. `(and)` → `#t`;
+///   `(and x)` → `x`; otherwise returns the last truthy value or `#f`
+///   on the first falsy.
+/// - `(or a b ...)` — short-circuit disjunction. `(or)` → `#f`;
+///   `(or x)` → `x`; otherwise returns the first truthy value or
+///   `#f` if all are falsy. Uses a `__or-val__` temp binding to
+///   avoid double-evaluating side-effecting args; the unhygienic
+///   name could collide if user code binds `__or-val__` and
+///   references it in a later `or` argument (vanishingly unlikely
+///   but documented).
 ///
 /// Opt-in: hosts that want it call [`install_stdlib`] explicitly, or
 /// construct via [`MacroVm::with_stdlib`].
@@ -338,6 +350,27 @@ pub const STDLIB: &str = r#"
       (if (null? (cdr args))
           (car args)
           `(let ((_ ,(car args))) (begin ,@(cdr args)))))
+
+    (defmacro when args
+      `(if ,(car args) (begin ,@(cdr args)) #f))
+
+    (defmacro unless args
+      `(if ,(car args) #f (begin ,@(cdr args))))
+
+    (defmacro and args
+      (if (null? args)
+          #t
+          (if (null? (cdr args))
+              (car args)
+              `(if ,(car args) (and ,@(cdr args)) #f))))
+
+    (defmacro or args
+      (if (null? args)
+          #f
+          (if (null? (cdr args))
+              (car args)
+              `(let ((__or-val__ ,(car args)))
+                 (if __or-val__ __or-val__ (or ,@(cdr args)))))))
 "#;
 
 /// Install [`STDLIB`] macros into `vm`'s expander. Mirrors the

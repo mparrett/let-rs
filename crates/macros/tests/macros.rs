@@ -172,3 +172,135 @@ fn stdlib_not_present_without_install() {
         "MacroVm::new should not have stdlib pre-installed: {r:?}"
     );
 }
+
+// ── when / unless ─────────────────────────────────────────────────
+
+#[test]
+fn stdlib_when_truthy_runs_body() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(when #t 42)").unwrap()), "42");
+    assert_eq!(
+        format!("{}", vm.eval_str("(when (= 1 1) 'yes)").unwrap()),
+        "yes"
+    );
+}
+
+#[test]
+fn stdlib_when_falsy_returns_false() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(when #f 42)").unwrap()), "#f");
+}
+
+#[test]
+fn stdlib_when_multi_body_sequences_via_begin() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(
+        format!("{}", vm.eval_str("(when #t 1 2 3)").unwrap()),
+        "3"
+    );
+}
+
+#[test]
+fn stdlib_unless_inverts_when() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(unless #f 42)").unwrap()), "42");
+    assert_eq!(format!("{}", vm.eval_str("(unless #t 42)").unwrap()), "#f");
+    assert_eq!(
+        format!("{}", vm.eval_str("(unless #f 1 2 3)").unwrap()),
+        "3"
+    );
+}
+
+// ── and / or ──────────────────────────────────────────────────────
+
+#[test]
+fn stdlib_and_empty_is_true() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(and)").unwrap()), "#t");
+}
+
+#[test]
+fn stdlib_and_single_arg_returns_value() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(and 5)").unwrap()), "5");
+    assert_eq!(format!("{}", vm.eval_str("(and #f)").unwrap()), "#f");
+}
+
+#[test]
+fn stdlib_and_returns_last_truthy_or_false() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(and 1 2 3)").unwrap()), "3");
+    assert_eq!(format!("{}", vm.eval_str("(and 1 #f 3)").unwrap()), "#f");
+    assert_eq!(
+        format!("{}", vm.eval_str("(and 1 2 'last)").unwrap()),
+        "last"
+    );
+}
+
+#[test]
+fn stdlib_and_short_circuits() {
+    let mut vm = MacroVm::with_stdlib();
+    let count = std::rc::Rc::new(std::cell::RefCell::new(0i64));
+    let count_clone = count.clone();
+    vm.vm
+        .register_prim("bump!", lisp::val::Arity::Exact(0), move |_| {
+            *count_clone.borrow_mut() += 1;
+            Ok(lisp::Val::Num(*count_clone.borrow()))
+        });
+    // The second arg is #f, so the third (bump!) must NOT run.
+    vm.eval_str("(and 1 #f (bump!))").unwrap();
+    assert_eq!(*count.borrow(), 0, "and should short-circuit on first #f");
+}
+
+#[test]
+fn stdlib_or_empty_is_false() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(or)").unwrap()), "#f");
+}
+
+#[test]
+fn stdlib_or_single_arg_returns_value() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(or 5)").unwrap()), "5");
+    assert_eq!(format!("{}", vm.eval_str("(or #f)").unwrap()), "#f");
+}
+
+#[test]
+fn stdlib_or_returns_first_truthy() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(or #f #f 3)").unwrap()), "3");
+    assert_eq!(format!("{}", vm.eval_str("(or 1 2 3)").unwrap()), "1");
+    assert_eq!(format!("{}", vm.eval_str("(or #f #f #f)").unwrap()), "#f");
+}
+
+#[test]
+fn stdlib_or_does_not_double_evaluate_args() {
+    // The `or` macro binds each arg to a temp before testing it, so
+    // side-effecting args run exactly once even when truthy.
+    let mut vm = MacroVm::with_stdlib();
+    let count = std::rc::Rc::new(std::cell::RefCell::new(0i64));
+    let count_clone = count.clone();
+    vm.vm
+        .register_prim("bump!", lisp::val::Arity::Exact(0), move |_| {
+            *count_clone.borrow_mut() += 1;
+            Ok(lisp::Val::Num(*count_clone.borrow()))
+        });
+    // First call returns 1 (truthy) and `or` should NOT re-run it.
+    vm.eval_str("(or (bump!) (bump!))").unwrap();
+    assert_eq!(*count.borrow(), 1, "or must evaluate its first arg exactly once");
+}
+
+#[test]
+fn stdlib_or_short_circuits() {
+    let mut vm = MacroVm::with_stdlib();
+    let count = std::rc::Rc::new(std::cell::RefCell::new(0i64));
+    let count_clone = count.clone();
+    vm.vm
+        .register_prim("bump!", lisp::val::Arity::Exact(0), move |_| {
+            *count_clone.borrow_mut() += 1;
+            Ok(lisp::Val::Num(*count_clone.borrow()))
+        });
+    // First arg is truthy, so (bump!) in tail must NOT run.
+    vm.eval_str("(or 1 (bump!))").unwrap();
+    assert_eq!(*count.borrow(), 0, "or should short-circuit on first truthy");
+}
