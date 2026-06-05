@@ -1417,6 +1417,197 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       </div>
     </section>
 
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">VIII</span>
+        <span class="mark">⊢</span>
+      </div>
+      <div class="body">
+        <h2>The vocabulary becomes a library
+          <span class="tag">— macros to a sibling crate, defspell ships, the expander grows up</span>
+        </h2>
+        <p>
+          Act IV ended on a promise: <code>defspell</code> itself
+          would eventually live in user code. Three acts later it
+          does — and getting there meant first asking a harder
+          question about the engine itself.
+        </p>
+
+        <p>
+          The audit started with a one-line observation. The macro
+          system was about half the engine, and most consumers never
+          registered a macro. Of the four DSL packs — runes, codons,
+          strokes, plus the host-side world — none used
+          <code>defmacro</code>. Only the user-facing REPLs (web
+          bridge, <code>examples/repl.rs</code>) did. Every other
+          host paid for the <code>Vm::macros</code> field, the
+          expansion pass, the snapshot restore, the
+          <code>val_to_datum</code> round-trip, and got nothing for
+          it. That's drift. The original thesis was
+          <em>smallest interesting substrate</em>; a substrate that
+          ships features half its consumers don't use isn't smallest
+          anymore.
+        </p>
+
+        <p>
+          ADR-024 made the cut. <code>crates/macros/</code> got the
+          <code>Macro</code> struct, the <code>Expander</code> with
+          its <code>HashMap&lt;String, Macro&gt;</code> table, the
+          four walks (<code>expand_all</code>,
+          <code>expand_in_qq</code>, <code>expand_macro_call</code>,
+          <code>try_register_defmacro</code>), and
+          <code>val_to_datum</code>. A new <code>MacroVm</code>
+          wrapper bundles a <code>lisp::Vm</code> with an
+          <code>Expander</code> and offers a macro-aware
+          <code>eval_str</code>. The engine itself reverted to
+          macro-unaware — its <code>eval_str_inner</code> now just
+          compiles each form. A pinning test
+          (<code>defmacro_unknown_to_raw_vm</code>) asserts a raw
+          <code>lisp::Vm</code> rejects <code>(defmacro …)</code>;
+          any regression that pulls macros back into
+          <code>lisp</code> flips it.
+        </p>
+
+        <p>
+          Parser-level quasiquote stayed in <code>lisp/parse</code> —
+          backtick, comma, comma-at compile to list-construction
+          expressions and work without macros installed. What moved
+          is the <em>expansion pass</em>, not the syntax. The parser
+          still reads <code>`(1 ,x 3)</code> as a runtime call to
+          <code>list</code>; the macros crate is what walks a datum
+          tree looking for macro calls inside it.
+        </p>
+
+        <p>
+          Once the macros crate was its own thing, a small standard
+          library wrote itself. <code>install_stdlib</code> registers
+          five macros — <code>begin</code>, <code>when</code>,
+          <code>unless</code>, <code>and</code>, <code>or</code> —
+          written in lisp inside a <code>const STDLIB: &amp;str</code>.
+          <code>begin</code> in particular closes a ticket that had
+          been open since ADR-019: the standing
+          <code>(let ((_ a)) b)</code> sequencing workaround. The
+          engine never grew a <code>begin</code> special form — the
+          macro is enough, and putting it in the macros crate rather
+          than the parser honored ADR-019's deferred-then-rejected
+          decision exactly. Hosts opt in:
+          <code>MacroVm::with_stdlib()</code>, or
+          <code>install_stdlib(&amp;mut vm)</code> on a plain
+          <code>MacroVm::new()</code>. A pinning test
+          (<code>stdlib_not_present_without_install</code>) keeps the
+          opt-in discipline honest.
+        </p>
+
+        <h3 class="subact">defspell, as promised</h3>
+        <p>
+          With the substrate in place, the rune prelude was the
+          natural first adopter. The old prelude was nine
+          repetitions of two shapes — four constant ctx-setters
+          (<code>fire</code>/<code>ice</code>/<code>bolt</code>/<code>self</code>)
+          and two parametric ones
+          (<code>area</code>/<code>power</code>):
+        </p>
+
+        <div class="boxed code-wrap" data-label="the old prelude · before ADR-025">
+        <pre class="code"><span class="vio">(define fire  (lambda (ctx) (assoc-set 'element 'fire ctx)))</span>
+<span class="vio">(define ice   (lambda (ctx) (assoc-set 'element 'ice  ctx)))</span>
+<span class="vio">(define bolt  (lambda (ctx) (assoc-set 'shape   'bolt ctx)))</span>
+<span class="vio">(define self  (lambda (ctx) (assoc-set 'target  'self ctx)))</span>
+<span class="vio">(define area  (lambda (n) (lambda (ctx) (assoc-set 'area  n ctx))))</span>
+<span class="vio">(define power (lambda (n) (lambda (ctx) (assoc-set 'power n ctx))))</span></pre>
+        </div>
+
+        <p>
+          Two shapes, repeated. ADR-025 ships what Act IV named:
+        </p>
+
+        <div class="boxed code-wrap" data-label="the new prelude · crates/spells/src/lib.rs">
+        <pre class="code"><span class="hl">(defmacro defspell (name key val)</span>
+  <span class="hl">`(define ,name (lambda (ctx) (assoc-set ',key ',val ctx))))</span>
+
+<span class="hl">(defmacro defparam (name key)</span>
+  <span class="hl">`(define ,name (lambda (n) (lambda (ctx) (assoc-set ',key n ctx)))))</span>
+
+<span class="vio">(defspell fire element fire)</span>
+<span class="vio">(defspell ice  element ice)</span>
+<span class="vio">(defspell bolt shape   bolt)</span>
+<span class="vio">(defspell self target  self)</span>
+<span class="vio">(defparam area  area)</span>
+<span class="vio">(defparam power power)</span></pre>
+        </div>
+
+        <p>
+          The two macros are spell-DSL-specific — the
+          <code>assoc-set</code> call shape is the spell ctx
+          convention, not a general lisp pattern — so they live in
+          the spells prelude rather than the macros stdlib. Adding a
+          new rune that stamps a constant key into ctx is now one
+          line. The shape that had been a repeated incantation is
+          the macro; the macro is the vocabulary; the vocabulary is
+          a library. That's the loop Act IV named and Act VIII
+          closes.
+        </p>
+
+        <h3 class="subact">A bug that surfaced exactly when it
+        should have</h3>
+        <p>
+          The adoption surfaced something the original macros crate
+          hadn't noticed because nothing exercised it. The
+          <code>Expander</code> had a guardrail — "<code>define</code>
+          at any list head is an error" — meant to catch the
+          <code>(let ((x 1)) (define y 2))</code> mistake. That rule
+          was correct in expression position. It was also correct at
+          top level <em>by accident</em>: no MacroVm consumer had
+          ever installed a prelude through it. The genes and curves
+          preludes went through the raw <code>lisp::Vm</code>
+          directly, and the web REPL evaluated user expressions, not
+          defines.
+        </p>
+
+        <p>
+          <code>defspell</code> changed that. A top-level
+          <code>(defspell fire element fire)</code> expands to
+          <code>(define fire (lambda (ctx) (assoc-set 'element 'fire ctx)))</code>,
+          and the recursive call into <code>expand_all</code> on the
+          expansion hit the guardrail. The first install of the
+          spells prelude under MacroVm returned
+          <em>define only valid at top level</em> — which was both
+          wrong (the define <em>was</em> at top level) and right
+          (the expander had no concept of top-level position).
+        </p>
+
+        <p>
+          The fix split the entry point in two.
+          <code>expand_top_level</code> handles the outermost call
+          from <code>MacroVm::eval_str_inner</code>: it keeps a
+          top-level <code>(define name body)</code> intact,
+          recursively expands the body forms (where the
+          no-nested-define rule still applies), and — for macro
+          calls — re-enters at top level after expansion so a macro
+          whose result is a define is allowed.
+          <code>expand_all</code> continues to reject defines in
+          expression position. Three regression tests pin all three
+          cases: top-level <code>(define …)</code>, a macro whose
+          expansion is a top-level <code>(define …)</code>, and the
+          inverse — <code>(let ((x 1)) (define y 2))</code> still
+          errors.
+        </p>
+
+        <p class="lift">
+          The engine is smaller, the vocabulary is a library, and
+          the expander is honest about what "top level" means. Act
+          IV promised a substrate where the spell DSL's syntax was a
+          library, not a fork of the parser; Act VIII ships the
+          proof. The natural next adopters —
+          <code>defcodon</code> for the genes prelude,
+          <code>defstroke</code> for curves — are obvious from here.
+          Neither is urgent. The pattern is real now; the rest is
+          paperwork.
+        </p>
+      </div>
+    </section>
+
     <div class="coda">
       <h3>What comes after</h3>
       <p>
@@ -1431,12 +1622,21 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           (line, column) in the tokenizer; propagate through compile +
           eval. Visible win in the Spell Lab and Gene Lab when a user
           mistypes.</li>
-        <li><strong>A real spell library.</strong> <code>defspell</code>
-          as a macro that registers under a rune table; element
-          conflict resolution as a strategy passed to the resolver;
-          the &quot;fork into two effects&quot; behavior the design has been
-          hinting at since day one. The substrate's ready; this is
-          host-side modelling work.</li>
+        <li><strong>A real spell library.</strong>
+          <code>defspell</code> as a macro shipped with ADR-025
+          (see Act VIII), but the host-side modelling is still
+          ahead — registering vocabulary under a rune table,
+          element conflict resolution as a strategy passed to the
+          resolver, the &quot;fork into two effects&quot; behavior
+          the design has been hinting at since day one. The
+          substrate's ready; what remains is host-side rules, not
+          syntax.</li>
+        <li><strong>The second adopter.</strong>
+          <code>defcodon</code> for the genes prelude or
+          <code>defstroke</code> for curves. Same pattern as
+          <code>defspell</code>; mostly mechanical. Neither is
+          urgent — but each one closes the "is the macros stdlib
+          load-bearing?" question one DSL further.</li>
         <li><strong>Hygienic macros, or not.</strong> An honest pass at
           gensym + a renaming scheme; or a deliberate decision that
           unhygienic procedural macros are fine for this codebase and
@@ -1478,12 +1678,21 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         vocabulary. And then, on 2026-06-02, the
         <code>letrec</code> Rc cycle that ADR-021 pinned dissolved
         via ADR-023 — the engine became CESK, a store joined the
-        three registers, and frame slots became
-        <code>Copy</code> addresses. None of the remaining items
-        are large; all of them are interesting; most of them are
-        independent. The hard parts are done — the language is
-        itself, three DSLs proved it, and the substrate grew the
-        register it needed to carry whatever comes next.
+        three registers, and frame slots became <code>Copy</code>
+        addresses. ADR-024 (2026-06-04) followed: macros lifted to
+        a sibling crate, the engine reverted to macro-unaware, and
+        a small <code>install_stdlib</code> shipped
+        <code>begin</code> / <code>when</code> / <code>unless</code>
+        / <code>and</code> / <code>or</code> on top. Then ADR-025
+        (2026-06-05): the spell prelude became the first DSL to
+        adopt the stdlib pattern via <code>defspell</code> /
+        <code>defparam</code>, which surfaced and fixed a latent
+        top-level / expression-position confusion in the expander.
+        None of the remaining items are large; all of them are
+        interesting; most of them are independent. The hard parts
+        are done — the language is itself, three DSLs proved it,
+        the substrate grew the register it needed, and macros
+        found their crate.
       </p>
     </div>
 
@@ -1541,7 +1750,7 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
     // heading (or the act glyph) to toggle; per-section state persists
     // in localStorage.
     (function () {
-      var STORAGE_KEY = 'let-rs.collapsible-state.v2';
+      var STORAGE_KEY = 'let-rs.collapsible-state.v3';
 
       function loadState() {
         try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
