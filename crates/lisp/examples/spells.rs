@@ -3,11 +3,14 @@
 //! The rune translation lives in `crates/runes/`; the spell prelude lives
 //! in `crates/spells/` (shared with the WASM bridge — ADR-010, ADR-016).
 //! This example only owns the per-cast wrapper.
+//!
+//! As of ADR-025 the spell prelude uses `defspell`/`defparam` macros, so
+//! the host is a `macros::MacroVm` rather than a raw `lisp::Vm`.
 
-use lisp::Vm;
+use macros::MacroVm;
 use runes::tape_to_sexpr;
 
-fn cast(vm: &mut Vm, tape: &str) {
+fn cast(vm: &mut MacroVm, tape: &str) {
     println!("tape:   {tape}");
     let list = match tape_to_sexpr(tape) {
         Ok(s) => s,
@@ -25,7 +28,7 @@ fn cast(vm: &mut Vm, tape: &str) {
 }
 
 fn main() {
-    let mut vm = Vm::new();
+    let mut vm = MacroVm::new();
     spells::install(&mut vm);
     println!("let-rs spell demo\n================\n");
 

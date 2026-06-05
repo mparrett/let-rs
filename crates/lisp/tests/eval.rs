@@ -532,11 +532,11 @@ fn dropping_vm_releases_top_level_closures() {
     // back-edge with a `Weak`. After the Vm is dropped, no strong ref
     // path keeps a prelude cell alive — `Weak::upgrade` returns None.
     use std::rc::Rc;
-    let mut vm = lisp::Vm::new();
-    spells::install(&mut vm);
+    let mut mvm = macros::MacroVm::new();
+    spells::install(&mut mvm);
     // Grab a weak handle to one of the installed closure cells.
     let weak = {
-        let table = vm.globals.borrow();
+        let table = mvm.vm.globals.borrow();
         let cell = table.get("fire").expect("spells prelude defines fire");
         Rc::downgrade(cell)
     };
@@ -544,7 +544,7 @@ fn dropping_vm_releases_top_level_closures() {
         weak.upgrade().is_some(),
         "sanity: cell is live while Vm is alive"
     );
-    drop(vm);
+    drop(mvm);
     assert!(
         weak.upgrade().is_none(),
         "dropping the Vm should release every prelude closure cell"

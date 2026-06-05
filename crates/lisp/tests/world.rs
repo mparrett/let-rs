@@ -5,12 +5,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lisp::Vm;
+use macros::MacroVm;
 use world::World;
 
-fn vm_with_world(w: u32, h: u32) -> Vm {
+fn vm_with_world(w: u32, h: u32) -> MacroVm {
     let world = Rc::new(RefCell::new(World::new(w, h).expect("dims fit")));
-    let mut vm = Vm::new();
+    let mut vm = MacroVm::new();
     spells::install_with_world(&mut vm, world);
     vm
 }

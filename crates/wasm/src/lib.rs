@@ -65,7 +65,7 @@ impl WasmVm {
         ));
         let turtle = Rc::new(RefCell::new(Turtle::new()));
         let mut inner = MacroVm::with_stdlib();
-        spells::install_with_world(&mut inner.vm, world.clone());
+        spells::install_with_world(&mut inner, world.clone());
         genes::install(&mut inner.vm);
         curves::install(&mut inner.vm, turtle.clone());
         // Default budget for browser hosts: 10M CEK steps. Tail-call test

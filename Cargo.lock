@@ -37,6 +37,7 @@ dependencies = [
  "criterion",
  "genes",
  "lisp",
+ "macros",
  "runes",
  "spells",
  "world",
@@ -398,6 +399,7 @@ name = "spells"
 version = "0.1.0"
 dependencies = [
  "lisp",
+ "macros",
  "world",
 ]
 

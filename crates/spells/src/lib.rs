@@ -6,6 +6,15 @@
 //! mirrors the genes refactor in ADR-011). Subsequently extracted from
 //! the `lisp` crate into its own sibling crate (ADR-016).
 //!
+//! As of ADR-025 the prelude registers two local macros (`defspell` for
+//! constant ctx-setters, `defparam` for parametric ones) and uses them
+//! to define the rune vocabulary. `install` therefore takes a
+//! `&mut MacroVm` rather than a raw `&mut Vm`; consumers that previously
+//! threaded a raw `Vm` wrap it in `macros::MacroVm` first. This is the
+//! first DSL pack to adopt the macros stdlib pattern — the proof that
+//! ADR-024's extraction pulls its weight in real prelude code, not just
+//! at the REPL.
+//!
 //! The `start` closure is intentionally zero-arg. Coord seeding for the
 //! WASM bridge happens at the call site via `(assoc-set 'tx … (assoc-set
 //! 'ty … (thread (start) …)))`. Keeping coord data out of the prelude
@@ -14,30 +23,45 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lisp::Vm;
+use macros::MacroVm;
 use world::World;
 
-/// The spell prelude as a sequence of top-level `(define …)` forms.
-/// Install once with `spells::install(vm)` and every subsequent
-/// `vm.eval_str(body)` sees the vocabulary.
+/// The spell prelude as a sequence of top-level forms. `defspell`/
+/// `defparam` are defined first, then used to expand the rune
+/// vocabulary into nine one-liners. Install once with
+/// `spells::install(mvm)` and every subsequent `mvm.eval_str(body)`
+/// sees the vocabulary.
+///
+/// Adding a new rune that maps to a constant ctx setter: append
+/// `(defspell NAME KEY VAL)`. Parametric (closes over a number arg):
+/// `(defparam NAME KEY)`. Anything fancier (multi-key, conditional)
+/// still wants a hand-written `(define …)`.
 pub const PRELUDE_DEFINES: &str = r#"
 (define assoc-set (lambda (k v ctx) (cons (cons k v) ctx)))
 (define thread    (lambda (ctx fs)
                     (if (null? fs) ctx
                         (thread ((car fs) ctx) (cdr fs)))))
 (define start     (lambda () '()))
-(define fire      (lambda (ctx) (assoc-set 'element 'fire ctx)))
-(define ice       (lambda (ctx) (assoc-set 'element 'ice ctx)))
-(define bolt      (lambda (ctx) (assoc-set 'shape   'bolt ctx)))
-(define self      (lambda (ctx) (assoc-set 'target  'self ctx)))
-(define area      (lambda (n)   (lambda (ctx) (assoc-set 'area  n ctx))))
-(define power     (lambda (n)   (lambda (ctx) (assoc-set 'power n ctx))))
+
+(defmacro defspell (name key val)
+  `(define ,name (lambda (ctx) (assoc-set ',key ',val ctx))))
+
+(defmacro defparam (name key)
+  `(define ,name (lambda (n) (lambda (ctx) (assoc-set ',key n ctx)))))
+
+(defspell fire element fire)
+(defspell ice  element ice)
+(defspell bolt shape   bolt)
+(defspell self target  self)
+(defparam area  area)
+(defparam power power)
 "#;
 
-/// Install the spell prelude into `vm`. Idempotent in effect — a later
-/// install shadows earlier defines of the same name.
-pub fn install(vm: &mut Vm) {
-    vm.eval_str(PRELUDE_DEFINES)
+/// Install the spell prelude into `mvm`. Idempotent in effect — a later
+/// install shadows earlier defines of the same name (and re-registers
+/// the local macros, which is a no-op for behavior).
+pub fn install(mvm: &mut MacroVm) {
+    mvm.eval_str(PRELUDE_DEFINES)
         .expect("spells prelude failed to install");
 }
 
@@ -45,7 +69,7 @@ pub fn install(vm: &mut Vm) {
 /// resolve a finished ctx against `world` (`world-apply!` and friends).
 /// Both `examples/spells.rs` and the WASM bridge want exactly this
 /// wiring; one helper saves the two-line duplication.
-pub fn install_with_world(vm: &mut Vm, world: Rc<RefCell<World>>) {
-    install(vm);
-    world::world_prim::install(vm, world);
+pub fn install_with_world(mvm: &mut MacroVm, world: Rc<RefCell<World>>) {
+    install(mvm);
+    world::world_prim::install(&mut mvm.vm, world);
 }

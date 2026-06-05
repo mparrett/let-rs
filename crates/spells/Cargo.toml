@@ -8,5 +8,6 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-lisp  = { path = "../lisp" }
-world = { path = "../world" }
+lisp   = { path = "../lisp" }
+macros = { path = "../macros" }
+world  = { path = "../world" }
