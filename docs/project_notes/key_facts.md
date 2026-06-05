@@ -8,7 +8,7 @@
 - Core `lisp` crate: zero dependencies — keep it that way.
 - `runes`, `codons`, `strokes` crates: zero deps.
 - `world`, `genes`, `curves`, `macros` crates: depend only on `lisp`.
-- `spells` crate: depends on `lisp` + `world` (the `install_with_world` helper combines both installs).
+- `spells` crate: depends on `lisp` + `macros` + `world` (the prelude uses defspell/defparam macros — ADR-025 — and the `install_with_world` helper combines the prelude + world installs).
 - `wasm` crate: `wasm-bindgen` (=0.2.114 pinned to match CLI), `console_error_panic_hook`, plus `macros` (for the user-facing REPL). Justified by ADR-002's "lisp stays platform-independent" caveat.
 
 ## WASM toolchain
@@ -58,9 +58,10 @@ let-rs/
 │   │   ├── src/lib.rs         codon table, tape_to_sexpr
 │   │   ├── tests/lex.rs       6 tests
 │   │   └── Cargo.toml
-│   ├── spells/                rune prelude + install/install_with_world (ADR-016)
-│   │   ├── src/lib.rs         PRELUDE_DEFINES, install, install_with_world
-│   │   └── Cargo.toml         deps: lisp, world
+│   ├── spells/                rune prelude + install/install_with_world (ADR-016, ADR-025)
+│   │   ├── src/lib.rs         PRELUDE_DEFINES (defspell/defparam macros), install, install_with_world
+│   │   ├── tests/prelude.rs   5 tests
+│   │   └── Cargo.toml         deps: lisp, macros, world
 │   ├── genes/                 genome prelude + express!/mutate!/breed!/render (ADR-016)
 │   │   ├── src/lib.rs         PRELUDE_DEFINES, install, seeded, render_creature
 │   │   └── Cargo.toml         deps: lisp
@@ -69,7 +70,7 @@ let-rs/
 │   │   └── Cargo.toml         deps: lisp
 │   ├── bench/                 criterion benches (core + demos)
 │   │   ├── benches/{core,demos}.rs
-│   │   └── Cargo.toml         deps: lisp, runes, codons, spells, genes, world
+│   │   └── Cargo.toml         deps: lisp, macros, runes, codons, spells, genes, world
 │   └── wasm/                  JS-facing bridge — wasm-bindgen cdylib
 │       ├── src/lib.rs         WasmVm wrapper, owns world handle
 │       └── Cargo.toml

@@ -109,14 +109,18 @@ Sibling crates:
   `world-apply!`). Hosts wire it in via `world::world_prim::install(&mut
   vm, world.clone())`. Sibling to runes/codons; engine has no awareness.
   See ADR-017, ADR-018.
-- `crates/spells/` — rune prelude as `PRELUDE_DEFINES` (sequence of
-  top-level `(define …)` forms) + `install(vm)` that installs them
-  into the Vm env once, plus `install_with_world(vm, world)` that does
-  both halves at once. Depends on `lisp` and `world`. Consumers
-  (`examples/spells.rs`, WASM bridge) call `spells::install_with_world`
-  at startup; each cast then evaluates just the body. Coord seeding
-  still happens at the call site via `assoc-set`. See ADR-010, ADR-014,
-  ADR-016, ADR-018.
+- `crates/spells/` — rune prelude as `PRELUDE_DEFINES`. As of
+  ADR-025 the prelude registers two local macros (`defspell` for
+  constant ctx-setters, `defparam` for parametric ones) and uses
+  them to define the rune vocabulary in nine one-liners. `install`
+  therefore takes `&mut MacroVm` rather than `&mut Vm`, and
+  `install_with_world(mvm, world)` wires both the prelude and the
+  world prims. Depends on `lisp`, `macros`, and `world`. First DSL
+  pack to adopt the macros stdlib pattern. Consumers
+  (`examples/spells.rs`, WASM bridge) wrap a `MacroVm` and call
+  `install_with_world` at startup; each cast then evaluates just
+  the body. Coord seeding still happens at the call site via
+  `assoc-set`. See ADR-010, ADR-014, ADR-016, ADR-018, ADR-025.
 - `crates/genes/` — genome vocabulary: `PRELUDE_DEFINES`
   (seed-independent half) + `install(vm)` (registers prims + installs
   defines) + `seeded(seed, body)` (per-cast wrapper that re-binds the
@@ -194,10 +198,12 @@ just bench        # criterion benches under crates/bench/ (core + demos)
 
 Rust 1.93+, edition 2024. The core `lisp` crate stays zero-deps —
 keep it that way. `runes`, `codons`, and `strokes` are zero-deps too.
-`world`, `spells`, `genes`, and `curves` depend only on `lisp` (and
-`spells` also depends on `world` for the `install_with_world` helper).
-`wasm` may take deps (`wasm-bindgen`, `console_error_panic_hook`); this
-is allowed by ADR-002's "lisp stays platform-independent" caveat.
+`world`, `genes`, and `curves` depend only on `lisp`. `spells`
+depends on `lisp`, `macros` (for the defspell/defparam macros baked
+into its prelude — ADR-025), and `world` (for the
+`install_with_world` helper). `wasm` may take deps (`wasm-bindgen`,
+`console_error_panic_hook`); this is allowed by ADR-002's "lisp
+stays platform-independent" caveat.
 
 WASM build requires three tools installed once:
 
@@ -231,8 +237,11 @@ ships a larger bundle.
 - Adding a new rune: edit `crates/runes/src/lib.rs` — both the CLI demo
   and the WASM bridge see it automatically. If the new rune needs a
   matching primitive, also extend the spell prelude in
-  `crates/spells/src/lib.rs` (`PRELUDE_DEFINES`) — both consumers
-  import from there, so one edit is enough.
+  `crates/spells/src/lib.rs` (`PRELUDE_DEFINES`). Constant ctx
+  setters use `(defspell NAME KEY VAL)`; parametric setters use
+  `(defparam NAME KEY)`; anything else still wants a hand-written
+  `(define …)`. Both CLI and WASM consumers import from there, so
+  one edit is enough. See ADR-025.
 - Adding a new codon: edit `crates/codons/src/lib.rs`. If the codon
   introduces a new trait, also extend the genome prelude
   (`PRELUDE_DEFINES`) and the `TRAITS` classification table in

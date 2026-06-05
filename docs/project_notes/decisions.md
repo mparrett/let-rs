@@ -2199,3 +2199,132 @@ macro-unaware. Hosts opt in by wrapping a `Vm` in
 - Reader macros / custom dispatch. Out of scope; the parser is
   in `lisp` and would need a hook for that.
 
+## ADR-025: Spells prelude adopts `defspell`/`defparam` macros (2026-06-05)
+
+**Context**: After ADR-024 lifted macros to a sibling crate, the
+macros stdlib (`install_stdlib` → `begin`/`when`/`unless`/`and`/
+`or`) was sitting ready for a concrete consumer. The DSL packs
+(spells/genes/curves) still targeted raw `lisp::Vm` with hand-
+rolled `(define …)` preludes. The rune prelude in particular was
+nine repetitions of the same shape:
+
+```
+(define fire (lambda (ctx) (assoc-set 'element 'fire ctx)))
+(define ice  (lambda (ctx) (assoc-set 'element 'ice  ctx)))
+...
+(define area  (lambda (n) (lambda (ctx) (assoc-set 'area  n ctx))))
+(define power (lambda (n) (lambda (ctx) (assoc-set 'power n ctx))))
+```
+
+Two clear shapes: constant ctx setters and parametric (closes
+over a number). Perfect macro fodder, and the ADR-024 narrative
+needed a real consumer to prove the extraction earns its keep.
+
+**Decision**: Adopt `MacroVm` as the spells host. Register two
+local macros at the head of the prelude:
+
+```
+(defmacro defspell (name key val)
+  `(define ,name (lambda (ctx) (assoc-set ',key ',val ctx))))
+
+(defmacro defparam (name key)
+  `(define ,name (lambda (n) (lambda (ctx) (assoc-set ',key n ctx)))))
+```
+
+Then expand the rune vocabulary into nine one-liners
+(`(defspell fire element fire)` etc). The two macros live inside
+the spells prelude rather than the macros stdlib because their
+shape is spell-DSL-specific (the assoc-set call shape is the spell
+ctx convention, not a general lisp pattern).
+
+`spells::install` and `spells::install_with_world` now take
+`&mut MacroVm` instead of `&mut Vm`. Consumers (`examples/
+spells.rs`, `crates/lisp/tests/world.rs`, `crates/lisp/tests/
+eval.rs`'s leak test, `crates/bench/benches/demos.rs`, the WASM
+bridge) all switched from `Vm::new()` to `MacroVm::new()`.
+
+**Alternatives considered**:
+
+1. **Host-side spell macros, keep prelude as raw defines.** Add
+   a separate `spells::install_macros(mvm)` and keep
+   `spells::install(vm)` for raw Vm. Hosts call both. Lighter
+   coupling but defeats the demonstration — the *prelude itself*
+   has to use defspell for the win to be visible in the source.
+2. **Compile-time macro expansion (codegen).** A build script
+   that runs the macros over a small DSL and emits expanded
+   defines as Rust string constants. Bypasses MacroVm entirely
+   but adds a build-time dependency and means the runtime
+   doesn't actually exercise the macros.
+3. **Status quo (hand-roll defines).** Cheap, but the macros
+   stdlib stays "potential energy" forever. ADR-024 doesn't
+   pay rent.
+
+**Migration sketch (concrete)**:
+
+1. `crates/spells/Cargo.toml` gains `macros = { path = "../
+   macros" }` dep.
+2. `crates/spells/src/lib.rs` PRELUDE_DEFINES rewritten with
+   defspell/defparam; `install(&mut MacroVm)` and
+   `install_with_world(&mut MacroVm, world)`. The world prims
+   install still goes through the inner `mvm.vm`.
+3. WASM bridge: change `spells::install_with_world(&mut inner.vm,
+   …)` to `spells::install_with_world(&mut inner, …)`. Single
+   token edit; the bridge already used `MacroVm::with_stdlib()`.
+4. `examples/spells.rs`: `Vm::new()` → `MacroVm::new()`; `cast`
+   signature updated.
+5. `crates/lisp/tests/world.rs`, `crates/lisp/tests/eval.rs`
+   (leak test), `crates/bench/benches/demos.rs`: same treatment.
+   Bench Cargo gains `macros` dep.
+6. New tests in `crates/spells/tests/prelude.rs` pin the
+   defspell/defparam expansion shape end-to-end (`fire`/`ice`/
+   `area` semantics, install_with_world wires world-apply).
+
+**Latent bug surfaced** (and fixed): `Expander::expand_all`
+unconditionally rejected `(define …)` at any list head. This was
+correct for nested positions but wrong at top level — and the
+recursive expansion of a top-level macro that produced `(define
+…)` (which is exactly what defspell does) also hit it. Fix: split
+into `expand_top_level` (allows define, re-enters at top level
+after macro expansion) and `expand_all` (continues to forbid
+define). Two new tests in `crates/macros/tests/macros.rs` pin
+both top-level `(define …)` and macro-produced top-level
+`(define …)`, plus the inverse — `(let ((x 1)) (define y 2))`
+still errors.
+
+**Consequences**:
+- **+** ADR-024's extraction now has a real consumer: the spells
+  prelude is the first DSL pack to actually use the macros
+  stdlib pattern. The interlude has content.
+- **+** Adding a new constant rune is a one-liner: `(defspell
+  NAME KEY VAL)`. Parametric: `(defparam NAME KEY)`. Anything
+  fancier still wants a hand-written `(define …)`.
+- **+** The expander's top-level handling is now correct in
+  general — any macro that expands to `(define …)` works.
+  Opens the door for similar `defcodon`/`defgene` patterns in
+  the genes prelude.
+- **−** `spells` crate now depends on `macros`. Was lisp+world
+  only; now adds the third edge. Acceptable — the dependency
+  matches the actual runtime requirement.
+- **−** Host code that wanted a raw `Vm` + spells prelude no
+  longer compiles unchanged; must wrap in `MacroVm`. One-line
+  fix at each call site (five total in this repo).
+- **−** Spells prelude install cost goes up slightly (MacroVm's
+  per-form expand_top_level pass runs across the prelude). At
+  install-once-per-session scale this is irrelevant; the bench
+  hot path (`bench_cast_spell`) doesn't change because casts
+  run through `eval_str` on the body, not the prelude.
+
+**Deferred**:
+- `defcodon` / `defgene` analogues for the genes prelude. Same
+  shape; would let the genes crate drop the `Rc<RefCell<i64>>`
+  seed plumbing's outer scaffolding (the inner mutate closures
+  still need lexical scope). 1-2 hours; mostly mechanical.
+- A `defstroke` for curves. Less obvious payoff because strokes
+  are quoted symbols that `draw!` dispatches on — no closure
+  to abstract. Probably stays as the stroke→symbol table.
+- Hygiene. The `__or-val__` caveat in `macros::STDLIB` is the
+  baseline concern; defspell/defparam shadow `n` and `ctx`
+  inside their lambdas, which collides with user-bound `n` /
+  `ctx` only inside the lambda body — vanishingly unlikely but
+  worth noting.
+
