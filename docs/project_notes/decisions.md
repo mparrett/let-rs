@@ -2560,3 +2560,133 @@ flagged as a magic number in the prim doc-comment.
   would let CLI demos animate, but the CLI demos are
   snapshot-oriented — no use case yet.
 
+## ADR-028: Mana model — caster-side resource via `set!` (2026-06-05)
+
+**Context**: Stage 3 of the dynamic-spells arc. ADR-026 shipped
+`set!`; ADR-027 added tile decay + `(world-tick!)`. Both pieces
+were inert without a consumer that uses persistent state to
+constrain casting. The mana model is the consumer: a small
+budget the caster spends to cast and regenerates on tick. It
+closes the loop — cast → spend → wait → recast — that turns the
+spell lab from a one-shot painter into a small game.
+
+**Decision**: The mana model lives in the spells prelude (not
+the engine, not the world). The spell DSL owns its resource
+model the same way it owns the rune vocabulary. Three globals
+plus three wrappers:
+
+- `max-mana = 10` — the cap
+- `mana = max-mana` — the current value
+- `assoc-or` — helper: `(assoc-or k ctx default)` returns the
+  value at key `k` in `ctx` or `default` if missing
+- `spell-cost` — `(+ 1 (assoc-or 'power ctx 0) (assoc-or 'area ctx 0))`
+- `cast!` — mana-gated wrapper around `world-apply!`: refuses
+  on shortfall (logs `mana-short`, returns 0), decrements mana
+  + paints on success
+- `tick!` — wrapper around `world-tick!`: advances world decay,
+  then regens one point of mana (capped at `max-mana`)
+- `reset-mana!` — restore mana to `max-mana`; called by the
+  WASM bridge's `reset_world`
+
+The WASM bridge swaps its `cast` from `world-apply!` to `cast!`,
+adds `tick()`, `mana()`, `max_mana()` accessors, and calls
+`(reset-mana!)` inside `reset_world`. CLI examples and the
+`crates/lisp/tests/world.rs` integration tests continue to call
+`world-apply!` directly — they're testing the world prim, not
+the mana flow, and the bypass keeps those concerns separable.
+
+**Implementation sketch**:
+
+```
+(define cast!
+  (lambda (ctx)
+    (let ((cost (spell-cost ctx)))
+      (if (< mana cost)
+          (let ((_ (world-log! 'mana-short cost mana))) 0)
+          (let ((_ (set! mana (- mana cost))))
+            (world-apply! ctx))))))
+
+(define tick!
+  (lambda ()
+    (let ((reverted (world-tick!)))
+      (let ((_ (if (< mana max-mana)
+                   (set! mana (+ mana 1))
+                   #f)))
+        reverted))))
+```
+
+About 30 lines added to `crates/spells/src/lib.rs::PRELUDE_DEFINES`;
+~40 lines added to the WASM bridge (mostly accessors); 10 tests
+in `crates/spells/tests/prelude.rs`.
+
+**Alternatives considered**:
+
+1. **Mana lives in a Rust-side `Caster` struct + prims.** Mirrors
+   the world: a host-mutable resource exposed as `(caster-mana)`,
+   `(caster-spend! n)`. Pushes complexity into the host; doesn't
+   exercise `set!`. Worse: makes the mana cap a Rust constant
+   instead of a configurable global a host or user can rebind.
+2. **Mana embedded in `ctx`.** Thread mana through the spell
+   pipeline as an alist key. Pure functional, no `set!` needed.
+   But then every cast site has to read-write the value, and the
+   bridge can't expose a stable mana state — the value lives
+   inside the threaded ctx that gets thrown away after each cast.
+   The "small mutable globals" shape matches what mana actually
+   is.
+3. **Per-spell cooldowns instead of a unified budget.** More
+   game-like, but a much larger design space (which spells share
+   cooldowns? how long? do they decay?). Mana is one number; the
+   demo doesn't yet earn the complexity.
+
+**Why a fresh `assoc-or` helper instead of just `assoc-get`**:
+`assoc-get` returns `Val::Nil` on miss, and `Val::Nil` is truthy
+in the engine (only `Val::Bool(false)` is falsy). `(if (assoc-get
+…) …)` wouldn't catch the "key absent" case. `assoc-or` makes the
+default explicit and keeps the cost formula readable. Worth
+exposing in the prelude because power/area are both naturally
+absent in many ctx shapes.
+
+**Cost formula choice (`1 + power + area`)**: every cast costs at
+least 1 mana, so even a bare `(fire)` draws down the budget.
+Power and area add to it linearly so heavier spells feel
+heavier. Not tuned beyond "playable" — the constants are pinned
+by tests, easy to retune.
+
+**Consequences**:
+- **+** First place in the codebase where `set!` does real work
+  beyond a counter test. ADR-026 has a consumer.
+- **+** First place where `world-tick!` does real work beyond
+  tile decay. ADR-027 has a consumer.
+- **+** The spell DSL grew a resource model without the engine
+  growing a `Resource` concept. The pattern generalizes — a
+  health pool, a turn counter, anything caster-side can layer in
+  the same way.
+- **+** Mana is a regular lisp global. A user can rebind
+  `max-mana` from the REPL (`(set! max-mana 25)`) and the next
+  `reset-mana!` picks it up. Live retuning.
+- **−** The `cast!` wrapper sits between every cast site and the
+  world prim. CLI demos that called `world-apply!` directly
+  (examples/world.rs) bypass mana. Acceptable — they're
+  demonstrating the world layer, not the DSL flow.
+- **−** Log format now includes `mana-short` entries on
+  refused casts. Anything parsing the log would need to handle
+  three event shapes (cast, mana-short, tick-revert).
+- **−** Two ways to mutate the world from the bridge:
+  `world-apply!` (raw, no mana) and `cast!` (mana-gated). The
+  bridge uses cast!; tests use the raw prim where appropriate.
+  Mostly a docs concern.
+
+**Deferred**:
+- Mana regen rate other than 1-per-tick. Trivial: change the
+  `(+ mana 1)` constant or expose a `mana-regen` global.
+- Spell-specific costs (fire cheap, lightning expensive). Needs
+  a cost table keyed by element. A natural follow-on to
+  defspell — `(defspell fire element fire 1)` could pin the
+  element AND the cost in one form. Pulls when a real spell
+  library distinguishes elements by cost.
+- A "channel-cost" pattern where holding the spell drains mana
+  over time. Needs a per-frame hook and a separate state model.
+  Way past the demo's current scope.
+- UI for the meter, including a visible "wait for mana" cue.
+  That's stage 4 of the dynamic-spells arc.
+

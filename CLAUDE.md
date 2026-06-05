@@ -115,15 +115,18 @@ Sibling crates:
 - `crates/spells/` — rune prelude as `PRELUDE_DEFINES`. As of
   ADR-025 the prelude registers two local macros (`defspell` for
   constant ctx-setters, `defparam` for parametric ones) and uses
-  them to define the rune vocabulary in nine one-liners. `install`
-  therefore takes `&mut MacroVm` rather than `&mut Vm`, and
-  `install_with_world(mvm, world)` wires both the prelude and the
-  world prims. Depends on `lisp`, `macros`, and `world`. First DSL
-  pack to adopt the macros stdlib pattern. Consumers
+  them to define the rune vocabulary in nine one-liners. ADR-028
+  added the mana model: caster-side globals (`max-mana`, `mana`)
+  with `cast!` / `tick!` / `reset-mana!` wrappers that gate
+  `world-apply!` and `world-tick!`. `install` takes `&mut MacroVm`;
+  `install_with_world(mvm, world)` wires the prelude + the world
+  prims. Depends on `lisp`, `macros`, and `world`. First DSL pack
+  to adopt the macros stdlib pattern. Consumers
   (`examples/spells.rs`, WASM bridge) wrap a `MacroVm` and call
-  `install_with_world` at startup; each cast then evaluates just
-  the body. Coord seeding still happens at the call site via
-  `assoc-set`. See ADR-010, ADR-014, ADR-016, ADR-018, ADR-025.
+  `install_with_world` at startup. The WASM bridge calls `(cast!
+  …)` and `(tick!)`; CLI demos that want raw world prims call
+  `world-apply!` directly. See ADR-010, ADR-014, ADR-016, ADR-018,
+  ADR-025, ADR-028.
 - `crates/genes/` — genome vocabulary: `PRELUDE_DEFINES`
   (seed-independent half) + `install(vm)` (registers prims + installs
   defines) + `seeded(seed, body)` (per-cast wrapper that re-binds the
