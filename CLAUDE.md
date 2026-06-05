@@ -225,7 +225,9 @@ ships a larger bundle.
 ## Conventions
 
 - Special forms (`lambda`, `if`, `quote`, `letrec`, `let`, `let*`, `cond`,
-  `quasiquote`) live in `parse.rs`. Everything else can be a macro.
+  `quasiquote`, `set!`) live in `parse.rs`. Everything else can be a macro.
+  `set!` (ADR-026) is the only effecting form — everything else is
+  expression-pure.
 - Host prims are registered via `vm.register_prim(name, arity, |args|
   …)`. The callback is wrapped in `Rc<dyn Fn>` so it can capture host
   state (`Rc<RefCell<World>>`, an `Rc<RefCell<Counter>>`, whatever).

@@ -2328,3 +2328,120 @@ still errors.
   `ctx` only inside the lambda body — vanishingly unlikely but
   worth noting.
 
+## ADR-026: `set!` — first-class mutation (2026-06-05)
+
+**Context**: Stage 1 of the "dynamic spells" arc. The CESK store
+landed in ADR-023 specifically so frame slots could be mutated
+without rewinding the env shape; what was missing was a syntactic
+form to do it. ADR-007 (numeric tower), ADR-014 (installable
+preludes), and ADR-019 (the standing `(let ((_ a)) b)` sequencing
+workaround) all assumed a purely-functional surface. With CESK in
+place and a stages plan for a more game-like spell demo (decay,
+mana, caster-side state), the engine needed `set!` to make
+caster-side state expressible in lisp rather than threaded
+through every call.
+
+**Decision**: Add `(set! name val)` as a parse-level special
+form. The form evaluates `val` in the current env, then writes
+the result into the slot `name` resolves to — frame slot (via the
+store) or globals cell. Returns the new value. Unbound names
+error. Lexical scoping rules apply: an inner `let` shadowing the
+outer binding receives the mutation; the outer slot stays intact.
+
+**Implementation sketch**:
+
+- `Expr::SetBang(Sym, Rc<Expr>)` in `expr.rs`.
+- `K::SetBang { name: Sym, env: Env, k: Rc<K> }` in `k.rs`. We
+  capture the *env* at the set! site rather than resolving the
+  addr up front so set! behaves like `Var` for forward
+  references — the same rules that let mutual top-level defines
+  work apply here.
+- `parse.rs::compile_set_bang` — recognized via the existing
+  special-form dispatch alongside `lambda`/`if`/`let`/etc.
+- `Env::set(&self, name, val) -> Result<(), String>` — walks the
+  frame chain, writing through `store.set(addr, val)` on hit;
+  falls through to the globals `Rc<RefCell<Val>>` cell; errors
+  on miss with `unbound variable: NAME`.
+- Two new arms in `step.rs`: `Expr::SetBang` pushes
+  `K::SetBang`, evals the val; `K::SetBang` writes via
+  `env.set`, returns the just-evaluated value.
+- `macros::Expander::expand_all` learns about set! the same way
+  it knows about lambda: leave items[1] (the name) alone, expand
+  items[2] (the value) normally. Without this, a macro with the
+  same name as the target binding would silently rewrite the
+  reference.
+
+About 60 lines across the engine; tests double that.
+
+**Return-value choice**: returns the new value (Common Lisp
+style), not unspecified (R7RS style). Two reasons: (1) it's
+useful in tail position where the caller wants the value anyway
+— `(lambda () (set! n (+ n 1)) n)` reduces to `(lambda () (set!
+n (+ n 1)))`; (2) it surfaces the value as a first-class result,
+which the test suite leans on (the engine has no `begin` — that's
+a macro in the sibling crate — so `(let ((_ side)) body)` is the
+sequencing pattern, and set!'s return value is what makes the
+underscore-bind read naturally).
+
+**Globals via `Rc<RefCell<Val>>`, not via the store**: the store
+is for frame slots. Globals stayed in `Rc<RefCell<Val>>` across
+the CESK migration (ADR-023) so the ADR-015 Weak back-edge
+pattern still worked, and that decision pays off here — `set!`'s
+globals write path is one `borrow_mut`, no store routing.
+
+**Alternatives considered**:
+
+1. **Box mutation in user code** (`(define box (lambda () (let
+   ((cell '()))(lambda (op v) (if (eq? op 'get) cell (set!
+   cell v)))))`)). Doesn't work — needs `set!` already. The base
+   case has to live in the engine.
+2. **`(set-cell! cell v)` prim taking a manually-Rc'd cell type
+   as a new `Val` variant.** Hides mutation in a host type;
+   pushes complexity into both the engine (new variant) and the
+   host (`Cell` constructor prim). Worse than just adding the
+   form.
+3. **Defer until a host needs it.** Two hosts named it
+   simultaneously: the planned mana meter (stage 3) needs
+   caster-side state, and the dev log's Act VII coda listed
+   "set! is now five lines" as a substrate property. Stage 1 of
+   the staged plan landed here.
+
+**Consequences**:
+- **+** Closure-over-let-binding counters now compose: the
+  classic `(let ((n 0)) (lambda () (set! n (+ n 1)) n))` pattern
+  works. Tests pin three repeated calls returning `1`/`2`/`3`.
+- **+** The CESK store proves its weight beyond just dissolving
+  the letrec leak — the mutation path is short specifically
+  because `Addr` indices into a mutable `Vec<Val>` were always
+  the right shape.
+- **+** Unblocks stages 2-4 of the dynamic-spells arc: tile
+  decay (host-mutable, doesn't need set! but coexists with it),
+  mana meter (does need set!), UI wiring.
+- **+** Parser-level discipline: `set!` joins the same special-
+  form list as `lambda`/`if`/`let`/`letrec`. The form is rare
+  enough in idiomatic lisp that this isn't a syntax sprawl.
+- **−** Reasoning about effects now requires tracking what's
+  mutable. Functional purity by convention; the substrate no
+  longer enforces it. The DSL packs (spells/genes/curves) don't
+  use `set!` today and probably shouldn't — their preludes are
+  meant to be pure pipelines.
+- **−** Hygiene exposure widens. A macro that expands to
+  `(set! x …)` mutates the caller's `x`, with no rename pass to
+  prevent collision. Documented in the macros crate; not fixed.
+- **−** The `(let ((_ x)) y)` sequencing pattern persists in
+  engine tests because lisp/tests/* can't use the macros crate's
+  `begin`. Acceptable — these tests already used the pattern.
+
+**Deferred**:
+- `set-car!` / `set-cdr!` for in-place cons mutation. The store
+  doesn't reach into Val structure; this would be a separate
+  decision (and probably needs a new addressing scheme inside
+  Cons). Not pulled by any consumer yet.
+- An `unset!` / `unbind` form. Not requested; the store has no
+  reclamation today (ADR-023), so a frame-slot unbind would be
+  cheap to express but doesn't free anything.
+- A `parameterize` / dynamic binding form. Distinct from `set!`
+  (block-scoped, push/pop on entry/exit); CESK makes both
+  expressible. Pull when a consumer wants thread-locals or
+  per-cast overrides.
+
