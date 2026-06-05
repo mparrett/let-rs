@@ -56,9 +56,9 @@ pub const PRELUDE_DEFINES: &str = r#"
 (defspell ice  element ice)
 (defspell bolt shape   bolt)
 (defspell self target  self)
-(defparam area     area)
-(defparam power    power)
-(defparam duration duration)
+(defparam area       area)
+(defparam power      power)
+(defparam aftershock aftershock)
 
 ;; ── mana model (ADR-028) ──────────────────────────────────────────
 ;; Caster-side resource: cast! draws it down, tick! regenerates.
@@ -86,9 +86,9 @@ pub const PRELUDE_DEFINES: &str = r#"
 (define spell-cost
   (lambda (ctx)
     (+ 1
-       (assoc-or 'power    ctx 0)
-       (assoc-or 'area     ctx 0)
-       (assoc-or 'duration ctx 0))))
+       (assoc-or 'power      ctx 0)
+       (assoc-or 'area       ctx 0)
+       (assoc-or 'aftershock ctx 0))))
 
 (define cast!
   (lambda (ctx)

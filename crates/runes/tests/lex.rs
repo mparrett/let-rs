@@ -58,12 +58,13 @@ fn whitespace_between_runes_is_optional() {
 }
 
 #[test]
-fn duration_rune_pairs_with_number() {
-    // ᛃ JERA — duration. Parametrized like area/power; the immediately
-    // following numeral becomes its arg.
-    assert_eq!(tape_to_sexpr("ᛃ 7").unwrap(), "(list (duration 7))");
+fn aftershock_rune_pairs_with_number() {
+    // ᛃ JERA — aftershock. Parametrized like area/power; the immediately
+    // following numeral becomes its arg (ticks until the delayed
+    // re-cast fires).
+    assert_eq!(tape_to_sexpr("ᛃ 7").unwrap(), "(list (aftershock 7))");
     assert_eq!(
-        tape_to_sexpr("ᚦ ᛃ 12 ᛞ 1").unwrap(),
-        "(list fire (duration 12) (area 1))"
+        tape_to_sexpr("ᚦ ᛃ 3 ᛞ 1").unwrap(),
+        "(list fire (aftershock 3) (area 1))"
     );
 }

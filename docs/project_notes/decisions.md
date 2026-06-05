@@ -2560,13 +2560,13 @@ flagged as a magic number in the prim doc-comment.
   would let CLI demos animate, but the CLI demos are
   snapshot-oriented — no use case yet.
 
-**Postscript (2026-06-05)**: shortly after stage 4 shipped, the
-`ᛃ` (JERA) rune was added for explicit `duration` control.
-Lifetime selection in `world-apply!` is now `duration > power >
-DEFAULT_LIFETIME` — duration is the explicit knob, power keeps
-its pre-rune behavior as a fallback so every previous cast site
-works unchanged. The cost formula in ADR-028 picked up duration
-as another knob.
+**Postscript (2026-06-05)**: a brief detour added `duration` as
+a separate ctx key, splitting it from `power` (which had
+double-dutied as lifetime + cost). The user pushed back: the
+implicit power→lifetime coupling was the *intent*, just
+under-documented. ADR-029 reverts the split — `power` is the
+lifetime knob and the cost knob, by design — and gives the
+ᛃ rune the more interesting job of scheduling aftershocks.
 
 ## ADR-028: Mana model — caster-side resource via `set!` (2026-06-05)
 
@@ -2698,11 +2698,152 @@ by tests, easy to retune.
 - UI for the meter, including a visible "wait for mana" cue.
   That's stage 4 of the dynamic-spells arc.
 
-**Postscript (2026-06-05)**: stage 4 shipped, then `ᛃ` was
-added for explicit `duration`. Cost formula became
-`1 + power + area + duration` — every knob the user dials up
-on the tape costs them mana. This is the first cost knob that
-*doesn't* affect the cast radius (area widens the paint;
-power/duration both extend it in time). The deferred
-"spell-specific costs" bullet is one ADR-029 away.
+**Postscript (2026-06-05)**: stage 4 shipped. A brief `duration`
+detour was rolled back (see ADR-027 postscript); ᛃ JERA now
+schedules aftershocks (ADR-029). Cost formula stabilized at
+`1 + power + area + aftershock` — every knob on the tape costs
+mana, including the "fire again later" knob.
+
+## ADR-029: Aftershock — scheduled effects via the ᛃ rune (2026-06-05)
+
+**Context**: After stage 4 of the dynamic-spells arc landed, an
+exploratory commit added `duration` as a new ctx key separate from
+`power`, surfacing an implicit coupling that had been there since
+ADR-027 (where `power` quietly drove tile lifetime). The user
+pushed back: the coupling was *intent*, not accident — `power`
+*should* mean "how long does this linger" because that's the
+spell-DSL meaning of the rune. The `duration` split was reverted.
+But the ᛃ JERA rune was already in the codebase, and JERA's
+thematic meaning — year, cycle, harvest, "seed now reap later" —
+fits scheduled effects more naturally than redundant lifetime.
+
+**Decision**: ᛃ becomes `aftershock`. A non-zero `aftershock` in
+ctx schedules a delayed re-cast of the same effect: the immediate
+paint happens normally, plus a `PendingCast` lands on the world
+with `countdown = aftershock`. On each `world-tick!`, every
+pending entry decrements; when an entry hits zero it fires —
+the world re-paints the same area + element + lifetime at the
+same target. The aftershock pays no extra mana at fire time;
+its cost is folded into `spell-cost` at cast time.
+
+Chains are bounded: a `PendingCast` does NOT carry its own
+aftershock count, so the re-strike can't itself spawn another
+aftershock. This is a deliberate choice — recursive scheduling
+would make `(ᚦ ᛃ 1)` a permanent ignition. Bounded gives the
+mechanic predictable cost.
+
+**Implementation sketch**:
+
+```rust
+pub struct PendingCast {
+    countdown: u8,
+    tile: Tile,
+    tx: i64,
+    ty: i64,
+    area: i64,
+    lifetime: u8,
+}
+
+impl World {
+    pending: Vec<PendingCast>,
+    pub fn paint_area(...) -> u32 { ... }      // refactored out of world_apply
+    pub fn schedule_aftershock(cast: PendingCast) { ... }
+    pub fn tick(&mut self) -> u32 {
+        // 1. decay tiles (ADR-027)
+        // 2. decrement pendings; collect those at countdown 0
+        // 3. for each fired entry: paint_area, log
+        // return revert count
+    }
+    pub fn pending_count(&self) -> usize { ... }   // diagnostic
+}
+```
+
+Two non-obvious bits:
+
+- The "decrement-then-collect-then-fire" split exists so
+  `paint_area` can take `&mut self` after the drain on
+  `self.pending` releases its borrow. The naive single-loop
+  version doesn't compile.
+- `world-tick!`'s return type stays `Val::Num(reverted)` — same
+  as before ADR-029. Aftershocks surface through the grid + log
+  entries instead. A change to a (reverted, fired) pair would
+  break the existing `world-tick!` tests for marginal value.
+
+**Cost formula**: `spell-cost = 1 + power + area + aftershock`.
+Same shape as the earlier `duration` cost; `aftershock` slots
+into the same position. Long-delayed aftershocks cost more — a
+deliberate weight on the "delayed second strike" knob.
+
+**Alternatives considered**:
+
+1. **Single-tile re-paint** instead of area re-cast. The
+   aftershock would only refresh the center tile, not replay the
+   full area. Simpler model (no area in PendingCast); thinner
+   mechanic. Rejected — "delayed second strike" reads as the
+   same effect happening again, not as a smolder.
+2. **Spread / infect** as the ᛃ mechanic (fire infects a random
+   neighbor cell each tick for N ticks). Considered alongside
+   aftershock; rejected for now because randomness pulls in a
+   seeded-RNG design question that hasn't been pushed by any
+   other consumer.
+3. **Intensity** (visual brightness only). Considered; rejected
+   as too cosmetic — doesn't earn a rune slot.
+4. **Lisp-side aftershock queue**. The pending list could live
+   in a lisp global, manipulated via `set!` and walked by
+   `tick!`. Would exercise more of the post-ADR-026 substrate.
+   Rejected because the data is fundamentally world state
+   (positions, lifetimes); pushing it through lisp's value model
+   on every tick is a lot of round-tripping for no gain.
+5. **Recursive aftershocks** (an aftershock can itself spawn
+   another). Rejected — `(ᚦ ᛃ 1)` would burn forever and the
+   mana cost was paid only once.
+
+**Consequences**:
+- **+** First substrate feature with *scheduled* effects.
+  Opens the door to other "things that happen later" — a
+  pre-telegraphed enemy attack, a charged-up spell, a slow
+  decay curve that's not just linear. The pattern generalizes
+  the same way `PendingCast` generalizes.
+- **+** The ᛃ rune now does something visually obvious in the
+  lab — cast `(ᚦ ᛃ 3)`, watch the tile fade, watch it
+  reignite three ticks later. The mechanic reads at first
+  glance.
+- **+** JERA's thematic meaning lines up with the mechanic
+  ("seed now reap later"). The naming choice from the brief
+  duration detour pays off.
+- **+** Mana cost includes aftershock, so the rune costs
+  the caster up front — a real choice, not a free time-extension.
+- **+** Chain termination is enforced structurally (the
+  PendingCast doesn't carry aftershock), so future contributors
+  can't accidentally introduce infinite-loop spells.
+- **−** Pending casts persist across world resets *only* if the
+  bridge's `reset_world` doesn't wipe them. The current bridge
+  calls `World::new(w, h)` which constructs a fresh world with
+  an empty `pending` Vec — so resets do clear them. Worth
+  noting explicitly because a future "reset tiles but not
+  pendings" mode would be confusing.
+- **−** The log format gained a third event shape: `aftershock
+  fire at (x,y) → N tiles`, alongside `cast` and `tick → N
+  reverted`. The bridge's UI surfaces all three textually
+  via `vm.log()`.
+- **−** `world-tick!`'s revert count is no longer the full
+  picture of what changed this tick — aftershocks that fire
+  paint tiles that the count doesn't include. Tests + UI now
+  rely on the grid+log being the source of truth, not the
+  return value. Acceptable; documented in the prim doc-comment.
+
+**Deferred**:
+- **Multi-strike aftershocks** (`ᛃ 3 × 4` = strikes 3 ticks
+  apart, four times). Different parametrization; not pulled.
+- **Aftershock with a different target** (cast at (tx, ty),
+  re-strike at (tx + dx, ty + dy)). Would need additional ctx
+  keys for offset. Game-ish but adds a knob without a use case.
+- **A `pending` UI indicator** in the lab ("3 aftershocks
+  queued"). `pending_count()` exposes the data; the meter
+  pattern from ADR-028 generalizes. Pull when the cast
+  sequence feels noisy.
+- **Save/restore of pending state** alongside any future
+  CESK-store snapshot feature. The PendingCast Vec is plain
+  data and trivially serializable; ties in with the deferred
+  "persistent store / undo" item from ADR-023.
 

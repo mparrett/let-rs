@@ -47,6 +47,23 @@ impl Tile {
     }
 }
 
+/// A cast scheduled to fire on a future tick. Aftershock effect from
+/// the `ᛃ` rune (ADR-029): the caller pays the mana cost up front,
+/// the world reschedules the same area-paint to land later. The
+/// pending cast carries everything `paint_area` needs to replay the
+/// effect (element, target, area, lifetime); it does NOT carry its
+/// own aftershock count, so an aftershock cannot itself spawn another
+/// aftershock — chains terminate after exactly one re-strike.
+#[derive(Debug, Clone)]
+pub struct PendingCast {
+    pub countdown: u8,
+    pub tile: Tile,
+    pub tx: i64,
+    pub ty: i64,
+    pub area: i64,
+    pub lifetime: u8,
+}
+
 #[derive(Debug)]
 pub struct World {
     pub width: u32,
@@ -57,6 +74,11 @@ pub struct World {
     /// separately so the `Tile` enum stays simple — most callers
     /// (rendering, tile_at) don't care about lifetime. See ADR-027.
     lifetimes: Vec<u8>,
+    /// Scheduled aftershocks (ADR-029). Each `world-tick!` decrements
+    /// every entry; entries that hit zero fire (paint the area) and
+    /// drop out. Limited to scheduled-at-cast-time only — re-strikes
+    /// don't recursively spawn more.
+    pending: Vec<PendingCast>,
     pub log: Vec<String>,
 }
 
@@ -80,6 +102,7 @@ impl World {
             height,
             tiles: vec![Tile::Floor; n],
             lifetimes: vec![0; n],
+            pending: Vec::new(),
             log: Vec::new(),
         })
     }
@@ -132,11 +155,52 @@ impl World {
         }
     }
 
-    /// Advance the world by one tick: every tile with a positive
-    /// lifetime has its lifetime decremented, and any tile whose
-    /// lifetime hits zero this tick reverts to Floor. Returns the
-    /// number of tiles that reverted. Permanent tiles (lifetime 0
-    /// before tick) are untouched.
+    /// Paint a square neighborhood of radius `area` around `(tx, ty)`
+    /// with `tile` + `lifetime`. Clamps to the grid intersection so an
+    /// `area` past the world bounds is cheap. Returns the count of
+    /// tiles actually painted. Shared between the immediate-cast path
+    /// (world-apply!) and the aftershock fire path (tick).
+    pub fn paint_area(&mut self, tile: Tile, tx: i64, ty: i64, area: i64, lifetime: u8) -> u32 {
+        if self.width == 0 || self.height == 0 {
+            return 0;
+        }
+        let area = area.max(0);
+        let w_max = (self.width - 1) as i64;
+        let h_max = (self.height - 1) as i64;
+        let x_lo = tx.saturating_sub(area).max(0);
+        let x_hi = tx.saturating_add(area).min(w_max);
+        let y_lo = ty.saturating_sub(area).max(0);
+        let y_hi = ty.saturating_add(area).min(h_max);
+        if x_lo > x_hi || y_lo > y_hi {
+            return 0;
+        }
+        let mut painted = 0u32;
+        for y in y_lo..=y_hi {
+            for x in x_lo..=x_hi {
+                if self.set_tile_with_lifetime(x as u32, y as u32, tile, lifetime) {
+                    painted += 1;
+                }
+            }
+        }
+        painted
+    }
+
+    /// Schedule a delayed re-cast (ADR-029 aftershock). Called by
+    /// `world-apply!` when ctx carries an `aftershock` > 0. The same
+    /// `area` and `lifetime` ride along so the fire replays the
+    /// original effect, not a different one.
+    pub fn schedule_aftershock(&mut self, cast: PendingCast) {
+        self.pending.push(cast);
+    }
+
+    /// Advance the world by one tick:
+    ///  1. Every tile with a positive lifetime decrements; tiles
+    ///     that hit zero revert to Floor (ADR-027).
+    ///  2. Every pending aftershock decrements; entries that hit
+    ///     zero fire (`paint_area`) and drop out (ADR-029).
+    /// Returns the number of tiles that reverted (kept this shape
+    /// for back-compat with the world-tick! prim — fired aftershocks
+    /// show up via grid changes + log entries instead).
     pub fn tick(&mut self) -> u32 {
         let mut reverted = 0u32;
         for i in 0..self.tiles.len() {
@@ -148,7 +212,38 @@ impl World {
                 }
             }
         }
+        // Pending aftershocks: decrement first, then split into
+        // "fires this tick" vs "still pending" so paint_area can
+        // take its own &mut self after the pending borrow is done.
+        let mut fired_now = Vec::new();
+        let mut still_pending = Vec::with_capacity(self.pending.len());
+        for mut p in self.pending.drain(..) {
+            if p.countdown > 0 {
+                p.countdown -= 1;
+            }
+            if p.countdown == 0 {
+                fired_now.push(p);
+            } else {
+                still_pending.push(p);
+            }
+        }
+        self.pending = still_pending;
+        for p in fired_now {
+            let painted = self.paint_area(p.tile, p.tx, p.ty, p.area, p.lifetime);
+            self.log.push(format!(
+                "aftershock {} at ({},{}) → {painted} tiles",
+                p.tile.as_sym(),
+                p.tx,
+                p.ty
+            ));
+        }
         reverted
+    }
+
+    /// Number of pending aftershocks. Useful for tests + a future UI
+    /// indicator ("3 aftershocks queued").
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
     }
 
     pub fn log_event(&mut self, msg: String) {

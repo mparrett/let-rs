@@ -4,7 +4,7 @@ use std::rc::Rc;
 use lisp::Vm;
 use lisp::val::{Arity, Val};
 
-use crate::{Tile, World};
+use crate::{PendingCast, Tile, World};
 
 type R = Result<Val, String>;
 type WorldPrimFn = fn(&[Val], &mut World) -> R;
@@ -65,39 +65,39 @@ fn world_size(_args: &[Val], w: &mut World) -> R {
 /// at the default 500ms interval (~2.5s for fire to fade). See ADR-027.
 const DEFAULT_LIFETIME: u8 = 5;
 
-/// `(world-apply! ctx)` — resolver: reads `element`, `tx`, `ty`, optional
-/// `area`, `duration`, and `power` from a ctx alist, paints a square
-/// neighborhood around (tx,ty) with the corresponding tile (each painted
-/// tile carries a decay countdown), and logs the cast. Returns the number
-/// of tiles painted.
+/// `(world-apply! ctx)` — resolver: reads `element`, `tx`, `ty`, and
+/// optional `area`, `power`, `aftershock` from a ctx alist; paints a
+/// square neighborhood around `(tx, ty)` with the corresponding tile;
+/// optionally schedules a delayed re-cast; logs the event. Returns the
+/// number of tiles painted on the immediate cast (aftershock fires
+/// later via `world-tick!`).
 ///
-/// Lifetime selection (ADR-027, refined by ᛃ duration rune): the explicit
-/// `duration` key wins if present; otherwise `power` falls back (the
-/// pre-duration behavior); otherwise `DEFAULT_LIFETIME`. The fallback
-/// chain keeps every previous cast site working unchanged while letting
-/// new casts separate cost-knobs from lifetime-knobs.
+/// Lifetime is taken from `power` (ADR-027 + 2026-06-05 refinement).
+/// Missing `power` → `DEFAULT_LIFETIME`. Negative / zero `power` →
+/// permanent (the "lifetime 0 = permanent" convention). The `power`
+/// rune means "how long does the effect linger" — it doubles as the
+/// duration knob and as a mana-cost component (the spells prelude
+/// folds it into `spell-cost`).
 ///
-/// Each value is clamped to `u8` (0..=255). Negative / zero values mean
-/// "permanent" — useful for an opt-out and preserves the "lifetime 0 =
-/// permanent" convention.
+/// `aftershock` (ADR-029) — if positive, the world schedules a
+/// `PendingCast` that re-paints the same area + lifetime after that
+/// many ticks. The aftershock pays no extra mana at fire time (the
+/// up-front mana cost already absorbed it via `spell-cost`).
 fn world_apply(args: &[Val], w: &mut World) -> R {
     let ctx = &args[0];
     let element = assoc_get(ctx, "element");
     let tx = assoc_get(ctx, "tx").and_then(as_num).unwrap_or(0);
     let ty = assoc_get(ctx, "ty").and_then(as_num).unwrap_or(0);
     let area = assoc_get(ctx, "area").and_then(as_num).unwrap_or(0).max(0);
-    let lifetime_from = |key: &str| -> Option<u8> {
-        assoc_get(ctx, key).and_then(as_num).map(|n| {
-            if n > 0 {
-                n.min(u8::MAX as i64) as u8
-            } else {
-                0 // negative or zero = permanent
-            }
-        })
+    let lifetime = match assoc_get(ctx, "power").and_then(as_num) {
+        Some(n) if n > 0 => n.min(u8::MAX as i64) as u8,
+        Some(_) => 0, // negative or zero power = permanent
+        None => DEFAULT_LIFETIME,
     };
-    let lifetime = lifetime_from("duration")
-        .or_else(|| lifetime_from("power"))
-        .unwrap_or(DEFAULT_LIFETIME);
+    let aftershock = match assoc_get(ctx, "aftershock").and_then(as_num) {
+        Some(n) if n > 0 => n.min(u8::MAX as i64) as u8,
+        _ => 0,
+    };
 
     let tile = match element.as_ref() {
         Some(Val::Sym(s)) => {
@@ -111,35 +111,29 @@ fn world_apply(args: &[Val], w: &mut World) -> R {
         None => return Err("world-apply!: ctx has no 'element".into()),
     };
 
-    // Clamp the paint region to the grid intersection. Pre-fix a tape
-    // like `ᚦ ᛞ 1000000000` drove ~4e18 iterations on a 7×5 grid; now
-    // we only walk the actual rectangle that lands inside the world.
-    // Saturating arithmetic on i64 lets `area = i64::MAX` survive without
-    // overflowing the bounds computation.
-    let mut painted = 0i64;
-    if w.width > 0 && w.height > 0 {
-        let w_max = (w.width - 1) as i64;
-        let h_max = (w.height - 1) as i64;
-        let x_lo = tx.saturating_sub(area).max(0);
-        let x_hi = tx.saturating_add(area).min(w_max);
-        let y_lo = ty.saturating_sub(area).max(0);
-        let y_hi = ty.saturating_add(area).min(h_max);
-        if x_lo <= x_hi && y_lo <= y_hi {
-            for y in y_lo..=y_hi {
-                for x in x_lo..=x_hi {
-                    if w.set_tile_with_lifetime(x as u32, y as u32, tile, lifetime) {
-                        painted += 1;
-                    }
-                }
-            }
-        }
+    let painted = w.paint_area(tile, tx, ty, area, lifetime);
+
+    if aftershock > 0 {
+        w.schedule_aftershock(PendingCast {
+            countdown: aftershock,
+            tile,
+            tx,
+            ty,
+            area,
+            lifetime,
+        });
     }
 
+    let suffix = if aftershock > 0 {
+        format!(" +aftershock@{aftershock}")
+    } else {
+        String::new()
+    };
     w.log_event(format!(
-        "cast {} at ({tx},{ty}) area={area} life={lifetime} → {painted} tiles",
+        "cast {} at ({tx},{ty}) area={area} life={lifetime} → {painted} tiles{suffix}",
         tile.as_sym()
     ));
-    Ok(Val::Num(painted))
+    Ok(Val::Num(painted as i64))
 }
 
 /// `(world-tick!)` — advance the world by one tick. Every tile with a

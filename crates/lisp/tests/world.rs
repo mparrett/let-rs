@@ -140,21 +140,89 @@ fn world_tick_on_empty_world_returns_zero() {
 }
 
 #[test]
-fn world_apply_duration_takes_priority_over_power() {
-    // duration 2, power 9 → lifetime should be 2 (duration wins).
-    // Verifies the duration > power > default fallback chain (ADR-027
-    // refinement after the ᛃ rune landed).
+fn world_apply_schedules_aftershock_pending() {
+    // ctx has aftershock 3 → a PendingCast lands on the world and the
+    // immediate cast paints normally. Verifies the schedule path
+    // (ADR-029) without yet ticking.
+    let (mut vm, world) = vm_with_world_handle(5, 5);
+    assert_eq!(world.borrow().pending_count(), 0);
+    vm.eval_str(
+        "(world-apply! \
+           (assoc-set 'tx 2 \
+             (assoc-set 'ty 2 \
+               (assoc-set 'aftershock 3 \
+                 (assoc-set 'element 'fire '())))))",
+    )
+    .unwrap();
+    assert_eq!(world.borrow().pending_count(), 1);
+    // Immediate paint still happened.
+    assert_eq!(
+        format!("{}", world.borrow().tile_at(2, 2).unwrap().as_sym()),
+        "fire"
+    );
+}
+
+#[test]
+fn aftershock_fires_on_correct_tick() {
+    // Cast with aftershock 3 + power 1. Tile decays in 1 tick → floor.
+    // Two more ticks → aftershock fires, re-paints fire at the same
+    // tile, life resets to whatever the original cast had (here 1).
+    let (mut vm, world) = vm_with_world_handle(5, 5);
+    vm.eval_str(
+        "(world-apply! \
+           (assoc-set 'tx 2 \
+             (assoc-set 'ty 2 \
+               (assoc-set 'power 1 \
+                 (assoc-set 'aftershock 3 \
+                   (assoc-set 'element 'fire '()))))))",
+    )
+    .unwrap();
+    // Tick 1: tile decays.
+    vm.eval_str("(world-tick!)").unwrap();
+    assert_eq!(
+        format!("{}", world.borrow().tile_at(2, 2).unwrap().as_sym()),
+        "floor"
+    );
+    assert_eq!(world.borrow().pending_count(), 1);
+    // Tick 2: pending still counting down.
+    vm.eval_str("(world-tick!)").unwrap();
+    assert_eq!(
+        format!("{}", world.borrow().tile_at(2, 2).unwrap().as_sym()),
+        "floor"
+    );
+    assert_eq!(world.borrow().pending_count(), 1);
+    // Tick 3: aftershock fires, fire reappears.
+    vm.eval_str("(world-tick!)").unwrap();
+    assert_eq!(
+        format!("{}", world.borrow().tile_at(2, 2).unwrap().as_sym()),
+        "fire"
+    );
+    assert_eq!(world.borrow().pending_count(), 0);
+}
+
+#[test]
+fn aftershock_does_not_recursively_schedule() {
+    // Aftershock 1 fires after one tick. The fire paint should NOT
+    // schedule another aftershock — chains terminate after exactly
+    // one re-strike (the PendingCast doesn't carry an aftershock
+    // count of its own).
     let (mut vm, world) = vm_with_world_handle(3, 3);
     vm.eval_str(
         "(world-apply! \
            (assoc-set 'tx 1 \
              (assoc-set 'ty 1 \
-               (assoc-set 'duration 2 \
-                 (assoc-set 'power 9 \
-                   (assoc-set 'element 'fire '()))))))",
+               (assoc-set 'aftershock 1 \
+                 (assoc-set 'element 'fire '())))))",
     )
     .unwrap();
-    assert_eq!(world.borrow().lifetime_at(1, 1), Some(2));
+    assert_eq!(world.borrow().pending_count(), 1);
+    vm.eval_str("(world-tick!)").unwrap();
+    assert_eq!(world.borrow().pending_count(), 0);
+    // Tick a bunch more — pending stays at 0.
+    for _ in 0..10 {
+        vm.eval_str("(world-tick!)").unwrap();
+    }
+    assert_eq!(world.borrow().pending_count(), 0);
 }
 
 #[test]

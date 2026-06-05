@@ -23,11 +23,13 @@ pub const PLAIN: &[(char, &str)] = &[
 /// Parametrized runes: each maps to `n → ctx → ctx`. Consumes the
 /// immediately following numeral.
 pub const PARAM: &[(char, &str)] = &[
-    ('ᛞ', "area"),     // DAGAZ  — day, expansion
-    ('ᛟ', "power"),    // OTHALA — inheritance, legacy
-    ('ᛃ', "duration"), // JERA   — year, cycle, time. Sets tile lifetime
-                       // explicitly (ADR-027); without it, world-apply!
-                       // falls back to `power` then DEFAULT_LIFETIME.
+    ('ᛞ', "area"),       // DAGAZ  — day, expansion. Square neighborhood radius.
+    ('ᛟ', "power"),      // OTHALA — inheritance, legacy. Drives tile lifetime
+                         //          (how long the painted effect lingers).
+    ('ᛃ', "aftershock"), // JERA   — year, cycle, harvest. Schedules a delayed
+                         //          re-cast of the same effect: the spell fires
+                         //          now AND fires again N ticks later (once).
+                         //          Seed now, reap later. Adds to mana cost.
 ];
 
 #[derive(Debug, Clone)]
