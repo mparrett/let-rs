@@ -28,9 +28,12 @@ use world::World;
 
 /// The spell prelude as a sequence of top-level forms. `defspell`/
 /// `defparam` are defined first, then used to expand the rune
-/// vocabulary into nine one-liners. Install once with
-/// `spells::install(mvm)` and every subsequent `mvm.eval_str(body)`
-/// sees the vocabulary.
+/// vocabulary into nine one-liners. The mana model (ADR-028) sits
+/// at the end — a caster-side resource, drawn down by `cast!`,
+/// regen'd by `tick!`.
+///
+/// Install once with `spells::install(mvm)` and every subsequent
+/// `mvm.eval_str(body)` sees the vocabulary.
 ///
 /// Adding a new rune that maps to a constant ctx setter: append
 /// `(defspell NAME KEY VAL)`. Parametric (closes over a number arg):
@@ -55,6 +58,53 @@ pub const PRELUDE_DEFINES: &str = r#"
 (defspell self target  self)
 (defparam area  area)
 (defparam power power)
+
+;; ── mana model (ADR-028) ──────────────────────────────────────────
+;; Caster-side resource: cast! draws it down, tick! regenerates.
+;; Lives in the spells prelude (not the engine, not the world) — the
+;; spell DSL owns its resource model.
+;;
+;; `cast!` is the mana-gated entry. Wraps `world-apply!`: computes
+;; cost = 1 + power + area; on shortfall, logs and returns 0
+;; (no paint, no mana spent); on success, decrements mana and
+;; delegates to world-apply!.
+;;
+;; `tick!` is the temporal entry. Wraps `world-tick!`: advances
+;; world decay, then regens one point of mana (capped at max-mana).
+;; UI hosts on a setInterval call `(tick!)` rather than
+;; `(world-tick!)` directly so the two halves stay in sync.
+
+(define max-mana 10)
+(define mana     max-mana)
+
+(define assoc-or
+  (lambda (k ctx default)
+    (let ((v (assoc-get k ctx)))
+      (if (null? v) default v))))
+
+(define spell-cost
+  (lambda (ctx)
+    (+ 1 (assoc-or 'power ctx 0) (assoc-or 'area ctx 0))))
+
+(define cast!
+  (lambda (ctx)
+    (let ((cost (spell-cost ctx)))
+      (if (< mana cost)
+          (let ((_ (world-log! 'mana-short cost mana))) 0)
+          (let ((_ (set! mana (- mana cost))))
+            (world-apply! ctx))))))
+
+(define tick!
+  (lambda ()
+    (let ((reverted (world-tick!)))
+      (let ((_ (if (< mana max-mana)
+                   (set! mana (+ mana 1))
+                   #f)))
+        reverted))))
+
+(define reset-mana!
+  (lambda ()
+    (set! mana max-mana)))
 "#;
 
 /// Install the spell prelude into `mvm`. Idempotent in effect — a later

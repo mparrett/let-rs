@@ -97,9 +97,13 @@ impl WasmVm {
             .map_err(|e| JsValue::from_str(&e))
     }
 
-    /// Translate a rune tape and cast at `(x, y)`. Returns the latest log
-    /// entry written by `world-apply!`, or an empty string if none. Errors
-    /// (unknown rune, lex failure, eval failure) throw to JS.
+    /// Translate a rune tape and cast at `(x, y)`. Routes through
+    /// `cast!` (the mana-gated wrapper from the spells prelude, ADR-028)
+    /// rather than calling `world-apply!` directly — so a cast that
+    /// exceeds the current mana budget logs a `mana-short` event,
+    /// returns 0, and doesn't paint. Returns the latest log entry
+    /// (mana-short, cast, or empty if none). Errors (unknown rune,
+    /// lex failure, eval failure) throw to JS.
     pub fn cast(&mut self, tape: &str, x: i64, y: i64) -> Result<String, JsValue> {
         let list_expr =
             runes::tape_to_sexpr(tape).map_err(|e| JsValue::from_str(&format!("rune: {e}")))?;
@@ -107,7 +111,7 @@ impl WasmVm {
         // inside the shared prelude — keeps `start` zero-arg and identical
         // across CLI + WASM consumers. See ADR-010.
         let src = format!(
-            "(world-apply! \
+            "(cast! \
                (assoc-set 'tx {x} \
                  (assoc-set 'ty {y} \
                    (thread (start) {list_expr}))))"
@@ -121,6 +125,43 @@ impl WasmVm {
         Ok(log.last().cloned().unwrap_or_default())
     }
 
+    /// Advance the world by one tick via the spells prelude's `tick!`
+    /// wrapper (ADR-027 decay + ADR-028 mana regen). The lab UI is
+    /// expected to call this on a setInterval. Returns the number of
+    /// tiles that decayed this tick (0+ as a string for JS).
+    pub fn tick(&mut self) -> Result<String, JsValue> {
+        self.inner
+            .eval_str("(tick!)")
+            .map(|v| format!("{v}"))
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    /// Current mana value, as an i32 for the UI meter. The mana model
+    /// lives in lisp (ADR-028); this is just a thin accessor.
+    pub fn mana(&mut self) -> i32 {
+        self.inner
+            .eval_str("mana")
+            .ok()
+            .and_then(|v| match v {
+                lisp::Val::Num(n) => i32::try_from(n).ok(),
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+
+    /// Mana cap. Read once at startup; doesn't change unless the host
+    /// rewrites `max-mana` from lisp.
+    pub fn max_mana(&mut self) -> i32 {
+        self.inner
+            .eval_str("max-mana")
+            .ok()
+            .and_then(|v| match v {
+                lisp::Val::Num(n) => i32::try_from(n).ok(),
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+
     /// Newline-joined ASCII render of the world grid.
     pub fn grid(&self) -> String {
         format!("{}", self.world.borrow())
@@ -131,13 +172,16 @@ impl WasmVm {
         self.world.borrow().log.join("\n")
     }
 
-    /// Replace the world with a fresh empty one of the same dimensions.
-    /// Does *not* reset the interpreter env (the preludes were installed
-    /// at construction and stay valid).
+    /// Replace the world with a fresh empty one of the same dimensions
+    /// AND restore mana to its max (ADR-028). The interpreter env is
+    /// preserved — preludes were installed at construction.
     pub fn reset_world(&mut self) {
         // Dims were validated at construction, so this can't fail.
         *self.world.borrow_mut() =
             World::new(self.width, self.height).expect("dims validated at construction");
+        // Best-effort: reset-mana! is defined by the spells prelude;
+        // if a future bridge drops that prelude, this no-ops cleanly.
+        let _ = self.inner.eval_str("(reset-mana!)");
     }
 
     /// Translate two codon tapes into parent genomes, breed them via
