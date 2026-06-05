@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::env::Env;
-use crate::expr::Expr;
+use crate::expr::{Expr, Sym};
 use crate::store::Addr;
 use crate::val::Val;
 
@@ -40,6 +40,19 @@ pub enum K {
         next: usize,
         remaining: Vec<Rc<Expr>>,
         body: Rc<Expr>,
+        env: Env,
+        k: Rc<K>,
+    },
+
+    /// Set! mutation: evaluating the val expression of `(set! name
+    /// val)`. The just-evaluated value is written into whatever slot
+    /// `name` resolves to — frame addr in the store, or globals cell.
+    /// `env` is the env at the set! site; we look the name up there
+    /// rather than capturing the slot up front so the form behaves
+    /// like a `Var` reference — the same forward-reference rules
+    /// apply.
+    SetBang {
+        name: Sym,
         env: Env,
         k: Rc<K>,
     },

@@ -114,6 +114,16 @@ impl Expander {
                 }
                 return Ok(Datum::List(out));
             }
+            // set!: don't macro-expand the name slot (it's a binding
+            // reference, like the head of a `define` or a let pair).
+            // The value position gets normal expression-level expansion.
+            if name_str == "set!" && items.len() == 3 {
+                return Ok(Datum::List(vec![
+                    items[0].clone(),
+                    items[1].clone(),
+                    self.expand_all(vm, items[2].clone())?,
+                ]));
+            }
             // Let-family: don't macro-expand binding-name positions.
             if matches!(name_str, "let" | "let*" | "letrec") && items.len() >= 3 {
                 let bindings_out = match &items[1] {

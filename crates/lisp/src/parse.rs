@@ -202,6 +202,7 @@ pub fn compile(d: &Datum) -> Result<Expr, String> {
                     "let*" => return compile_let_star(&items[1..]),
                     "letrec" => return compile_letrec(&items[1..]),
                     "cond" => return compile_cond(&items[1..]),
+                    "set!" => return compile_set_bang(&items[1..]),
                     "unquote" | "unquote-splicing" => {
                         return Err(format!("{head} outside of quasiquote"));
                     }
@@ -318,6 +319,18 @@ fn split_bindings(rest: &[Datum], form: &str) -> Result<(Vec<Sym>, Vec<Expr>, Ex
     }
     let body = compile(&rest[1])?;
     Ok((names, inits, body))
+}
+
+fn compile_set_bang(rest: &[Datum]) -> Result<Expr, String> {
+    if rest.len() != 2 {
+        return Err("set!: expected (set! name val)".into());
+    }
+    let name = match &rest[0] {
+        Datum::Sym(s) => s.clone(),
+        _ => return Err("set!: name must be a symbol".into()),
+    };
+    let val = compile(&rest[1])?;
+    Ok(Expr::SetBang(name, Rc::new(val)))
 }
 
 fn compile_cond(rest: &[Datum]) -> Result<Expr, String> {

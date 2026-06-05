@@ -134,4 +134,35 @@ impl Env {
         }
         None
     }
+
+    /// Mutate the binding for `name`. Walks frames first (writing into
+    /// the store slot via `Addr`), then falls through to the globals
+    /// table on miss. Errors if `name` is unbound. Used by
+    /// `(set! name val)`.
+    pub fn set(&self, name: &str, val: Val) -> Result<(), String> {
+        let mut cur = self.frame.as_deref();
+        while let Some(f) = cur {
+            if &*f.name == name {
+                let store = self
+                    .store
+                    .upgrade()
+                    .ok_or_else(|| "set!: store dropped before assignment".to_string())?;
+                store.set(f.addr, val);
+                return Ok(());
+            }
+            cur = f.parent.as_deref();
+        }
+        let globals = self
+            .globals
+            .upgrade()
+            .ok_or_else(|| "set!: globals dropped before assignment".to_string())?;
+        let table = globals.borrow();
+        match table.get(name) {
+            Some(slot) => {
+                *slot.borrow_mut() = val;
+                Ok(())
+            }
+            None => Err(format!("set!: unbound variable: {name}")),
+        }
+    }
 }

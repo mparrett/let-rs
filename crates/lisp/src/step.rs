@@ -90,6 +90,17 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
                 k: new_k,
             }))
         }
+        Expr::SetBang(name, val) => {
+            let new_k = Rc::new(K::SetBang {
+                name: name.clone(),
+                env: env.clone(),
+                k,
+            });
+            Ok(Step::Continue(State {
+                mode: Mode::Eval(val.clone(), env),
+                k: new_k,
+            }))
+        }
         Expr::Letrec(bindings, body) => {
             // Allocate placeholders for all names, then start evaluating the first init
             // in the recursive environment. With no bindings, just eval the body.
@@ -173,6 +184,14 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
             };
             Ok(Step::Continue(State {
                 mode: Mode::Eval(branch, env.clone()),
+                k: outer.clone(),
+            }))
+        }
+
+        K::SetBang { name, env, k: outer } => {
+            env.set(name, v.clone())?;
+            Ok(Step::Continue(State {
+                mode: Mode::Apply(v),
                 k: outer.clone(),
             }))
         }

@@ -19,4 +19,10 @@ pub enum Expr {
     /// Init expressions are evaluated left-to-right; each result is patched into
     /// the binding's pre-allocated cell before the next init runs.
     Letrec(Vec<(Sym, Rc<Expr>)>, Rc<Expr>),
+    /// `(set! name val)`. Evaluates `val`, then mutates the slot
+    /// `name` is bound to — frame slot via the store, or the globals
+    /// table cell. Errors at apply time if `name` is unbound. The
+    /// CESK store (ADR-023) makes this cheap: frame slots are
+    /// already mutable cells, we just need a write path.
+    SetBang(Sym, Rc<Expr>),
 }

@@ -617,3 +617,93 @@ fn letrec_does_not_leak() {
          closure is rooting the store — the ADR-021 cycle has come back."
     );
 }
+
+// ── set! (ADR-026) ────────────────────────────────────────────────
+
+// Engine-level tests can't use `begin` (it lives in the macros crate)
+// so sequencing happens via the `(let ((_ side-effect)) body)` pattern
+// that was the standing workaround before ADR-024 shipped begin as a
+// macro. set! returns the new value, which is also frequently the
+// easiest observation point.
+
+#[test]
+fn set_bang_returns_new_value() {
+    // (set! x 42) evaluates val, writes, returns val. The let body is
+    // the set! expression itself, so the test observes the return.
+    assert_eq!(eval("(let ((x 1)) (set! x 42))"), "42");
+}
+
+#[test]
+fn set_bang_mutates_let_binding() {
+    // (let ((_ (set! x 5))) x) — _ binds the set! return value (5);
+    // the body then reads x, which has been written. Observes that the
+    // store slot for x was actually mutated, not just shadowed.
+    assert_eq!(eval("(let ((x 1)) (let ((_ (set! x 5))) x))"), "5");
+}
+
+#[test]
+fn set_bang_mutates_global() {
+    // No frame binding — frame walk falls through to the globals table.
+    assert_eq!(evals(&["(define x 1)", "(set! x 99)", "x"]), "99");
+}
+
+#[test]
+fn set_bang_unbound_errors() {
+    let mut vm = Vm::new();
+    let r = vm.eval_str("(set! nope 5)");
+    assert!(
+        matches!(&r, Err(e) if e.contains("unbound") && e.contains("nope")),
+        "expected unbound error, got {r:?}"
+    );
+}
+
+#[test]
+fn set_bang_inside_closure_persists_across_calls() {
+    // The classic counter: a closure over a let binding that mutates
+    // itself. Pre-set!, the only way to get a counter was to thread
+    // the value through every call.
+    let mut vm = Vm::new();
+    vm.eval_str(
+        "(define counter \
+           (let ((n 0)) \
+             (lambda () (let ((_ (set! n (+ n 1)))) n))))",
+    )
+    .unwrap();
+    assert_eq!(format!("{}", vm.eval_str("(counter)").unwrap()), "1");
+    assert_eq!(format!("{}", vm.eval_str("(counter)").unwrap()), "2");
+    assert_eq!(format!("{}", vm.eval_str("(counter)").unwrap()), "3");
+}
+
+#[test]
+fn set_bang_lexical_scoping_inner_shadows() {
+    // An inner let shadows the outer x; set! inside hits the inner
+    // slot, leaving the outer slot intact.
+    assert_eq!(
+        eval(
+            "(let ((x 1)) \
+               (let ((_ (let ((x 10)) (set! x 99)))) \
+                 x))"
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn set_bang_evaluates_value_in_current_env() {
+    // The value position is a normal expression. The reference to x in
+    // (* x 2) resolves against the env at the set! site, including the
+    // about-to-be-mutated binding.
+    assert_eq!(
+        eval("(let ((x 7)) (let ((_ (set! x (* x 2)))) x))"),
+        "14"
+    );
+}
+
+#[test]
+fn set_bang_malformed_errors() {
+    let mut vm = Vm::new();
+    assert!(vm.eval_str("(set!)").is_err());
+    assert!(vm.eval_str("(set! x)").is_err());
+    assert!(vm.eval_str("(set! 5 10)").is_err());
+    assert!(vm.eval_str("(set! x 1 2)").is_err());
+}

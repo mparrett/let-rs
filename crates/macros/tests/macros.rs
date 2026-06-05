@@ -121,6 +121,26 @@ fn macro_expanding_to_define_works_at_top_level() {
 }
 
 #[test]
+fn set_bang_name_position_not_macro_expanded() {
+    // (set! NAME val) — NAME is a binding reference, not an
+    // expression. If the expander treated it as one and the name
+    // happened to match a macro, we'd silently rewrite the binding
+    // reference. Pin the rule: items[1] of set! is left alone, but
+    // items[2] (the value expr) is expanded normally.
+    let mut vm = mv();
+    // Register a macro named `target` that, if it ever fires in the
+    // set! name slot, would expand to a non-symbol form and blow up.
+    vm.eval_str("(defmacro target () 'expanded)").unwrap();
+    // (set! target …) at parse time: name is the literal symbol
+    // `target`. The expander must not treat it as a macro call.
+    // We won't actually run set! on it (target isn't defined as a
+    // variable); just confirm expansion doesn't error before parse.
+    vm.eval_str("(define target 7)").unwrap();
+    vm.eval_str("(set! target (+ target 1))").unwrap();
+    assert_eq!(format!("{}", vm.eval_str("target").unwrap()), "8");
+}
+
+#[test]
 fn nested_define_still_rejected() {
     // The fix is surgical: top-level define is OK, but nested define
     // inside expressions (let body, lambda body, etc.) still errors.
