@@ -65,8 +65,9 @@ let-rs/
 │   ├── genes/                 genome prelude + express!/mutate!/breed!/render (ADR-016)
 │   │   ├── src/lib.rs         PRELUDE_DEFINES, install, seeded, render_creature
 │   │   └── Cargo.toml         deps: lisp
-│   ├── world/                 tile grid + 5 world prims (ADR-018)
-│   │   ├── src/lib.rs         Tile, World, pub mod world_prim
+│   ├── world/                 tile grid + 6 world prims (ADR-018, ADR-027)
+│   │   ├── src/lib.rs         Tile, World (with per-cell lifetime), pub mod world_prim
+│   │   ├── tests/decay.rs     7 tests (ADR-027)
 │   │   └── Cargo.toml         deps: lisp
 │   ├── bench/                 criterion benches (core + demos)
 │   │   ├── benches/{core,demos}.rs

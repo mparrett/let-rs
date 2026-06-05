@@ -104,11 +104,14 @@ Sibling crates:
   is *quoted symbols* (not function calls) so the curves prelude's
   pure-lisp `grow` can rewrite the tape before `draw!` interprets it.
   See ADR-019.
-- `crates/world/` — `World` (tile grid + event log) and the 5 world
-  prims (`world-tile`, `world-set-tile!`, `world-log!`, `world-size`,
-  `world-apply!`). Hosts wire it in via `world::world_prim::install(&mut
-  vm, world.clone())`. Sibling to runes/codons; engine has no awareness.
-  See ADR-017, ADR-018.
+- `crates/world/` — `World` (tile grid + per-cell lifetime + event
+  log) and the 6 world prims (`world-tile`, `world-set-tile!`,
+  `world-log!`, `world-size`, `world-apply!`, `world-tick!`). Hosts
+  wire it in via `world::world_prim::install(&mut vm,
+  world.clone())`. Sibling to runes/codons; engine has no
+  awareness. `world-apply!` writes per-tile lifetime from ctx
+  `power` (default 5); `(world-tick!)` decrements + reverts at
+  zero (ADR-027). See ADR-017, ADR-018, ADR-027.
 - `crates/spells/` — rune prelude as `PRELUDE_DEFINES`. As of
   ADR-025 the prelude registers two local macros (`defspell` for
   constant ctx-setters, `defparam` for parametric ones) and uses

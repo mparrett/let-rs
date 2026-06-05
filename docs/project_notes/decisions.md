@@ -2445,3 +2445,118 @@ globals write path is one `borrow_mut`, no store routing.
   expressible. Pull when a consumer wants thread-locals or
   per-cast overrides.
 
+## ADR-027: Tile decay — finite-lifetime painted tiles (2026-06-05)
+
+**Context**: Stage 2 of the dynamic-spells arc. After ADR-026
+shipped `set!`, the next visible step toward "game" was making
+the world feel temporal — tiles that fade rather than persist
+forever. The spells demo's central interaction (paint tiles, see
+them stay) is a static snapshot. Decay turns it into a small
+loop: cast, watch, recast.
+
+**Decision**: Every tile carries a `u8` lifetime stored in a
+parallel `lifetimes: Vec<u8>` on `World`. Lifetime `0` means
+permanent (the legacy `set_tile` path stays unchanged).
+`world-apply!` writes lifetime from ctx `power` (default 5 when
+absent). A new `(world-tick!)` prim decrements every positive
+lifetime by 1 and reverts tiles to `Floor` when their lifetime
+hits zero, returning the count of reverted tiles.
+
+The decay model is a host concern, not an engine concern — it
+lives entirely in `crates/world/`. The lisp engine doesn't know
+about lifetimes; from its perspective, `world-apply!` and
+`world-tick!` are opaque effecting prims like every other host
+prim.
+
+**Implementation sketch**:
+
+- `World.lifetimes: Vec<u8>` parallel to `tiles`.
+- `World::set_tile_with_lifetime(x, y, t, lifetime)` paints with
+  a finite life; the legacy `set_tile` writes `lifetime = 0`
+  (permanent), preserving behavior for `world-set-tile!` callers
+  that paint walls etc.
+- `World::tick(&mut self) -> u32` decrements each positive
+  lifetime; tiles that hit zero this tick revert to Floor and
+  add to the returned count.
+- `World::lifetime_at(x, y) -> Option<u8>` for tests and any
+  future renderer that wants to colorize by remaining life.
+- `world-apply!` in `world_prim.rs` reads ctx `power`:
+  - `power > 0` → clamp to `u8::MAX`, use as lifetime
+  - `power <= 0` → 0 (permanent — opt-out)
+  - missing → `DEFAULT_LIFETIME` (currently `5`)
+- `world-tick!`: zero-arg prim, returns `Val::Num(reverted)`,
+  logs `tick → N reverted` when N > 0.
+
+**Choice of u8**: lifetimes top out at 255 ticks — well within
+the demo's needs (a 500ms tick gives ~2 minutes at max). Keeps
+the parallel `Vec<u8>` small and `Copy`, and bounds the cast at
+the lisp/Rust boundary cleanly. If a host wants longer-lived
+tiles, the cap moves to u16 — straightforward but premature.
+
+**Permanent-as-zero**: lifetime `0` doubles as "permanent" so
+the existing `set_tile` path (used by `world-set-tile!` for
+direct wall painting) doesn't need to change. Alternative was
+`Option<u8>` which is the same byte-count but adds a None branch
+to every iteration of `tick`. The `0 = permanent` convention is
+fine because Floor itself doesn't decay to anything visible, so
+"a Floor tile with lifetime 5" would be a no-op anyway.
+
+**Default lifetime (5)**: arbitrary but pinned by a test
+(`world_apply_without_power_uses_default_lifetime`). Five ticks
+× 500ms tick interval = 2.5s of visible fire — long enough to
+read, short enough that a recast resets it. Tuneable later;
+flagged as a magic number in the prim doc-comment.
+
+**Alternatives considered**:
+
+1. **`Tile` enum carries lifetime.** `Tile::Fire { lifetime: u8 }`.
+   Every match site grows a destructure; the `Copy` enum stays
+   small but no longer trivially equatable; `from_sym` and
+   `glyph` need to thread lifetimes that are irrelevant for
+   their purposes. Lifetime is a cell property, not a tile-kind
+   property — separating them in storage matches that.
+2. **Wall-clock decay** (`Instant`-stamped tiles, decay = now -
+   stamp). Web hosts don't easily reach `Instant`; the demo's
+   "tick" feels more like a turn anyway. A clock-driven decay is
+   fine for an action game; turn/tick fits the spell-cast model.
+3. **Defer until a use case shows up.** That use case is the
+   labs UI calling `world-tick!` on an interval. Same answer.
+
+**Consequences**:
+- **+** The spell lab becomes a loop: cast → watch decay →
+  cast again. First time the demo has temporal behavior.
+- **+** Sets up stage 3 cleanly: a mana meter that regens on
+  `world-tick!` reuses the same tick the decay model fires on.
+  One global tick, two effects.
+- **+** Decay is testable without touching lisp at all
+  (`crates/world/tests/decay.rs` — 7 unit tests).
+  Integration through lisp covered by 5 more in
+  `crates/lisp/tests/world.rs`.
+- **+** `Vec<u8>` parallel to `Vec<Tile>` has negligible memory
+  cost (8x8 grid = 64 bytes); `tick` walks the slab linearly
+  with no branching past the `> 0` check.
+- **−** The world log format changed: `cast fire at (1,1) area=0
+  → 1 tiles` is now `cast fire at (1,1) area=0 life=5 → 1
+  tiles`. Anything parsing log strings would break; the only
+  consumer parsing them today is the eyeball.
+- **−** `world-apply!` now writes both tile + lifetime; the
+  effect surface grew. Still one prim from the lisp side.
+- **−** Adding decay slightly complicates the "the substrate is
+  pure" framing — the world struct now has time, in a sense.
+  Honest tradeoff: the demo needs time to feel alive.
+
+**Deferred**:
+- Tile-kind-specific decay rates (fire decays faster than ice,
+  walls don't decay at all). Trivial extension; not pulled.
+- Visual decay (lighter glyph as lifetime drops). The current
+  `glyph()` is a single char per tile kind. A `glyph_with_life`
+  variant or a small ASCII gradient is a UI move, not a model
+  move.
+- Tile interactions (fire on ice → steam → floor; water on
+  fire → extinguish). The interesting "spell composition over
+  time" game move. Distinct from decay; layers on top.
+- Auto-tick. Hosts call `world-tick!` directly today (the lab
+  UI will set up a JS `setInterval`). A Rust-side tick loop
+  would let CLI demos animate, but the CLI demos are
+  snapshot-oriented — no use case yet.
+
