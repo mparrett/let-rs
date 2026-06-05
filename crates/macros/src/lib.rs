@@ -258,6 +258,14 @@ impl MacroVm {
         }
     }
 
+    /// Construct a MacroVm with [`STDLIB`] already installed.
+    /// Equivalent to `Self::new()` + [`install_stdlib`].
+    pub fn with_stdlib() -> Self {
+        let mut vm = Self::new();
+        install_stdlib(&mut vm).expect("STDLIB should always install cleanly");
+        vm
+    }
+
     /// Macro-aware `eval_str`. Forms are expanded, then handled in
     /// document order:
     ///
@@ -313,6 +321,29 @@ impl Default for MacroVm {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// A small library of useful macros. Currently:
+///
+/// - `(begin a b ... last)` — evaluate each form in order; return the
+///   value of `last`. Replaces the engine-side `(let ((_ a)) b)`
+///   workaround pattern (ADR-019 deferred item — closed via this
+///   macro rather than an engine special form, per ADR-024's
+///   minimal-engine stance).
+///
+/// Opt-in: hosts that want it call [`install_stdlib`] explicitly, or
+/// construct via [`MacroVm::with_stdlib`].
+pub const STDLIB: &str = r#"
+    (defmacro begin args
+      (if (null? (cdr args))
+          (car args)
+          `(let ((_ ,(car args))) (begin ,@(cdr args)))))
+"#;
+
+/// Install [`STDLIB`] macros into `vm`'s expander. Mirrors the
+/// `spells::install` / `world::world_prim::install` pattern.
+pub fn install_stdlib(vm: &mut MacroVm) -> Result<(), String> {
+    vm.eval_str(STDLIB).map(|_| ())
 }
 
 fn val_to_datum(v: &Val) -> Result<Datum, String> {

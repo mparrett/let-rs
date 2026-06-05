@@ -1321,9 +1321,15 @@ the actual bbox of visited cells at render time.
 - **`docs/let-rs.html` narrative refresh** to add curves alongside
   spells/genes (the ADR-018 deferral covered the host-state edits;
   this is an additive pass).
-- **`begin` as an engine special form.** Tracked as a follow-up if
+- ~~**`begin` as an engine special form.** Tracked as a follow-up if
   any later DSL pack also wants imperative sequencing; not worth a
-  one-off engine change for this demo.
+  one-off engine change for this demo.~~ **DONE 2026-06-05 as a
+  macro, not an engine form.** Shipped in `macros::install_stdlib`
+  (ADR-024 made macros a sibling crate, so adding stdlib macros
+  doesn't grow the engine). The WASM bridge's `cast_curve` now uses
+  `(begin (reset!) (draw! …) (render!))` directly. The original
+  "engine special form" rejection still stands — the macro path
+  honored the ADR-019 reasoning.
 - **Generalize the turtle to a configurable angle / N-direction
   table.** Out of scope until a second turtle-shaped host appears,
   same "promote on second consumer" rule.

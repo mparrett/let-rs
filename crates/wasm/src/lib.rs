@@ -64,7 +64,7 @@ impl WasmVm {
             World::new(width, height).map_err(|e| JsValue::from_str(&e))?,
         ));
         let turtle = Rc::new(RefCell::new(Turtle::new()));
-        let mut inner = MacroVm::new();
+        let mut inner = MacroVm::with_stdlib();
         spells::install_with_world(&mut inner.vm, world.clone());
         genes::install(&mut inner.vm);
         curves::install(&mut inner.vm, turtle.clone());
@@ -198,12 +198,15 @@ impl WasmVm {
             rules_sexpr
         };
         // Each cast resets the turtle so successive casts don't pile on
-        // the same canvas. `let ((_ …))` is the project's standing
-        // workaround for the missing `begin` (see ADR-019).
+        // the same canvas. `begin` comes from `macros::install_stdlib`
+        // (registered in `new()` via `MacroVm::with_stdlib`); it
+        // expands to the `(let ((_ …)) …)` sequencing chain that was
+        // the standing workaround before ADR-024's macros crate gave
+        // us a place to put it.
         let src = format!(
-            "(let ((_ (reset!))) \
-               (let ((_ (draw! (grow {axiom_list} '{rules} {iters})))) \
-                 (render!)))"
+            "(begin (reset!) \
+                    (draw! (grow {axiom_list} '{rules} {iters})) \
+                    (render!))"
         );
         self.inner
             .eval_str(&src)

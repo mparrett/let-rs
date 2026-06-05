@@ -112,3 +112,63 @@ fn defmacro_unknown_to_raw_vm() {
         "lisp::Vm should reject defmacro forms post-ADR-024: {r:?}"
     );
 }
+
+#[test]
+fn stdlib_begin_returns_last_value() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(begin 1 2 3)").unwrap()), "3");
+    assert_eq!(
+        format!("{}", vm.eval_str("(begin (+ 1 1) (* 2 3) 'final)").unwrap()),
+        "final"
+    );
+}
+
+#[test]
+fn stdlib_begin_single_arg_passes_through() {
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(format!("{}", vm.eval_str("(begin 42)").unwrap()), "42");
+    assert_eq!(
+        format!("{}", vm.eval_str("(begin (+ 1 2))").unwrap()),
+        "3"
+    );
+}
+
+#[test]
+fn stdlib_begin_evaluates_in_order() {
+    // Side-effecting evaluation order: register a counter prim, use it
+    // inside (begin a b c), and check that a runs before b before c.
+    let mut vm = MacroVm::with_stdlib();
+    let order = std::rc::Rc::new(std::cell::RefCell::new(Vec::<i64>::new()));
+    let order_clone = order.clone();
+    vm.vm.register_prim("note!", lisp::val::Arity::Exact(1), move |args| {
+        if let lisp::Val::Num(n) = &args[0] {
+            order_clone.borrow_mut().push(*n);
+            Ok(lisp::Val::Num(*n))
+        } else {
+            Err("note!: expected num".into())
+        }
+    });
+    vm.eval_str("(begin (note! 1) (note! 2) (note! 3))").unwrap();
+    assert_eq!(*order.borrow(), vec![1, 2, 3]);
+}
+
+#[test]
+fn stdlib_install_idempotent() {
+    // Calling install_stdlib twice shouldn't break — the second
+    // defmacro just overwrites the first identical registration.
+    let mut vm = MacroVm::new();
+    macros::install_stdlib(&mut vm).unwrap();
+    macros::install_stdlib(&mut vm).unwrap();
+    assert_eq!(format!("{}", vm.eval_str("(begin 1 2)").unwrap()), "2");
+}
+
+#[test]
+fn stdlib_not_present_without_install() {
+    // A plain MacroVm::new() does NOT have begin — it's opt-in.
+    let mut vm = MacroVm::new();
+    let r = vm.eval_str("(begin 1 2)");
+    assert!(
+        r.is_err(),
+        "MacroVm::new should not have stdlib pre-installed: {r:?}"
+    );
+}
