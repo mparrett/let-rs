@@ -50,6 +50,43 @@ impl Expander {
         }
     }
 
+    /// Top-level expansion entry point. Differs from [`expand_all`] in
+    /// two ways: `(define name body…)` is allowed (its body forms get
+    /// expanded but the define itself stays as the top-level head), and
+    /// a macro call whose expansion is itself a `(define …)` form is
+    /// re-processed at top level rather than rejected. Macros like
+    /// `defspell` (which expand to `(define name (lambda …))`) need
+    /// this — otherwise the expander's invariant "no nested define"
+    /// would forbid the expansion even at the top of an `eval_str`
+    /// batch.
+    pub fn expand_top_level(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, String> {
+        if let Datum::List(items) = &d
+            && !items.is_empty()
+            && let Datum::Sym(head) = &items[0]
+        {
+            let name_str = &**head;
+            // (define name body...) at top level: keep the define form
+            // intact, but recursively expand the body forms (which sit
+            // at expression position, so the no-nested-define rule
+            // applies inside them).
+            if name_str == "define" && items.len() >= 3 {
+                let mut out = vec![items[0].clone(), items[1].clone()];
+                for i in &items[2..] {
+                    out.push(self.expand_all(vm, i.clone())?);
+                }
+                return Ok(Datum::List(out));
+            }
+            // Top-level macro call: expand once, then re-enter at top
+            // level so a macro that expands to `(define …)` is allowed.
+            let mac = self.macros.get(name_str).cloned();
+            if let Some(m) = mac {
+                let expansion = self.expand_macro_call(vm, &m, &items[1..])?;
+                return self.expand_top_level(vm, expansion);
+            }
+        }
+        self.expand_all(vm, d)
+    }
+
     /// Recursively expand macro calls inside `d`. Returns the expanded
     /// datum (or `d` unchanged if no macros apply).
     pub fn expand_all(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, String> {
@@ -298,7 +335,7 @@ impl MacroVm {
             if self.expander.try_register_defmacro(&mut self.vm, &datum)? {
                 continue;
             }
-            remaining.push(self.expander.expand_all(&mut self.vm, datum)?);
+            remaining.push(self.expander.expand_top_level(&mut self.vm, datum)?);
         }
 
         // Hand the expanded datums to lisp::Vm by stringifying them.

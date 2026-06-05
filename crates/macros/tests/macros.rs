@@ -94,6 +94,42 @@ fn macro_calls_macro() {
 }
 
 #[test]
+fn top_level_define_allowed_through_macro_vm() {
+    // Pre-ADR-025 this failed: the expander rejected `define` at any
+    // list head, including top level. The fix adds `expand_top_level`
+    // which keeps the define form intact while still expanding its
+    // body. Tests this stays fixed.
+    let mut vm = mv();
+    vm.eval_str("(define x 7)").expect("top-level define");
+    assert_eq!(format!("{}", vm.eval_str("x").unwrap()), "7");
+}
+
+#[test]
+fn macro_expanding_to_define_works_at_top_level() {
+    // The defspell-style case: a macro whose expansion is itself a
+    // `(define …)` form. Before the fix, the recursive expand_all
+    // after macro expansion rejected the define. After the fix, the
+    // expansion goes through `expand_top_level` and the define is
+    // honored.
+    let mut vm = mv();
+    vm.eval_str(
+        "(defmacro defconst (name val) `(define ,name ,val))",
+    )
+    .unwrap();
+    vm.eval_str("(defconst answer 42)").unwrap();
+    assert_eq!(format!("{}", vm.eval_str("answer").unwrap()), "42");
+}
+
+#[test]
+fn nested_define_still_rejected() {
+    // The fix is surgical: top-level define is OK, but nested define
+    // inside expressions (let body, lambda body, etc.) still errors.
+    let mut vm = mv();
+    let r = vm.eval_str("(let ((x 1)) (define y 2))");
+    assert!(r.is_err(), "nested define should error: {r:?}");
+}
+
+#[test]
 fn macro_defmacro_only_top_level() {
     let mut vm = mv();
     let r = vm.eval_str("(let ((x 1)) (defmacro foo args 'bar))");
