@@ -1,28 +1,65 @@
 // let-rs · web · Spell Lab
 //
-// Rune palette → tape, cast → world. Seeds with a small fire-then-ice
-// cast so visitors land on a rendered grid rather than a blank one.
+// Rune palette → tape → (cast! ...). The world ticks on a
+// setInterval, decaying tiles and regenerating mana. Casts that
+// exceed the current budget refuse (logged as `mana-short`); casts
+// that succeed paint tiles with finite lifetime that the tick loop
+// reaps.
+//
+// History note: pre-ADR-026/027/028, this file simulated decay in
+// JS (a Chebyshev-ring fade after a 2s hold) and reset the world
+// before every cast so the painted pattern wouldn't accumulate.
+// Both pieces went away once the engine grew real tile decay
+// (ADR-027) and a mana model (ADR-028) — the world is the source
+// of truth now; this script just drives the tick and reads the
+// state back.
 
 import { vm, $ } from './common.js';
 
-const tapeEl = $('#tape');
-const xEl    = $('#x');
-const yEl    = $('#y');
-const gridEl = $('#grid');
-const logEl  = $('#log');
+const tapeEl    = $('#tape');
+const xEl       = $('#x');
+const yEl       = $('#y');
+const gridEl    = $('#grid');
+const logEl     = $('#log');
+const meterEl   = $('#mana-meter');
+const pipsEl    = $('#mana-pips');
+const manaCurEl = $('#mana-cur');
+const manaMaxEl = $('#mana-max');
 
 // Map the ASCII glyphs the Rust World::Display emits onto the color
 // classes the legend uses. Anything outside this set passes through.
 const GLYPH_CLASS = { '.': 'g-floor', '*': 'g-fire', 'o': 'g-ice', '#': 'g-wall' };
 
-// Build the grid as persistent per-cell <span>s so the dissipation
-// animation can mutate them in place — using innerHTML on every
-// frame would replace the elements wholesale and CSS transitions
-// would never fire. Each span carries its (x, y) so the dissipation
-// can group cells by Chebyshev ring around the cast center.
-// Newlines stay as raw text nodes inside the <pre> to preserve
-// layout.
-const refresh = () => {
+// Read max-mana once at startup. The pip count is fixed (it's a UI
+// concern, not a model one); if `(set! max-mana N)` ever fires from
+// the REPL we'll surface the count via the trailing numeric without
+// rebuilding the pip row.
+const MAX_MANA = vm.max_mana();
+const LOW_MANA_THRESHOLD = Math.max(1, Math.floor(MAX_MANA * 0.25));
+
+// Build the pip row once.
+const pips = [];
+for (let i = 0; i < MAX_MANA; i++) {
+  const pip = document.createElement('span');
+  pip.className = 'pip';
+  pipsEl.appendChild(pip);
+  pips.push(pip);
+}
+manaMaxEl.textContent = String(MAX_MANA);
+
+const refreshMana = () => {
+  const cur = vm.mana();
+  manaCurEl.textContent = String(cur);
+  for (let i = 0; i < pips.length; i++) {
+    pips[i].classList.toggle('lit', i < cur);
+  }
+  meterEl.classList.toggle('low', cur > 0 && cur <= LOW_MANA_THRESHOLD);
+};
+
+// Build the grid as persistent per-cell <span>s so opacity / color
+// transitions in CSS can fire when tiles change. Newlines stay as
+// raw text nodes inside the <pre> to preserve layout.
+const refreshGrid = () => {
   gridEl.textContent = '';
   let x = 0, y = 0;
   for (const ch of vm.grid()) {
@@ -44,6 +81,11 @@ const refresh = () => {
   logEl.textContent = vm.log();
 };
 
+const refresh = () => {
+  refreshGrid();
+  refreshMana();
+};
+
 // Rune palette → append to tape input. Not calling tapeEl.focus() on
 // purpose — programmatic focus pops mobile keyboards, the opposite of
 // what we want when the user is composing via the palette buttons.
@@ -53,64 +95,6 @@ document.querySelectorAll('.rune').forEach((btn) => {
 });
 
 $('#clear-tape').addEventListener('click', () => { tapeEl.value = ''; });
-
-// Dissipation animation: after a successful cast, hold the painted
-// grid briefly so the eye can land on the effect, then shrink the
-// spell back to its center — outermost Chebyshev ring around the
-// cast (cx, cy) flips to floor first, then the next ring in, and
-// so on down to the center cell. Each ring fades together (with a
-// small per-cell jitter so it doesn't snap in lockstep).
-//
-// This is purely visual cleanup; the underlying World was already
-// reset at the start of the cast (see the cast button handler), so
-// the animation doesn't need to call `vm.reset_world` at the end.
-// That decoupling means a cast interrupting an in-flight animation
-// always lands on a clean grid, even if the previous animation
-// never completed.
-//
-// `castToken` is the abort handle: every cast bumps it, every
-// scheduled timer checks it. A new cast mid-dissipation cancels the
-// in-flight animation cleanly. The per-cell DOM persistence (set up
-// by refresh()) is what makes the CSS opacity transition actually
-// fire — replacing innerHTML each tick would destroy the elements
-// before the browser could animate them.
-let castToken = 0;
-const HOLD_MS     = 2000; // pause after cast before dissipation begins —
-                          // long enough for the eye to read the painted
-                          // pattern before it starts to retreat
-const RING_STEP   = 180;  // ms between consecutive rings
-const RING_JITTER =  60;  // ms randomization within a ring
-const FADE_MS     = 220;  // per-cell opacity transition each direction
-
-const dissipate = (cx, cy) => {
-  const myToken = ++castToken;
-  setTimeout(() => {
-    if (myToken !== castToken) return;
-    const cells = Array.from(gridEl.querySelectorAll('span'))
-      .filter((s) => s.textContent !== '.')
-      .map((span) => {
-        const x = Number(span.dataset.x);
-        const y = Number(span.dataset.y);
-        return { span, ring: Math.max(Math.abs(x - cx), Math.abs(y - cy)) };
-      });
-    if (cells.length === 0) return;
-    const maxRing = cells.reduce((m, c) => Math.max(m, c.ring), 0);
-    cells.forEach(({ span, ring }) => {
-      // Outermost ring fires at delay 0, innermost at maxRing * step.
-      const delay = (maxRing - ring) * RING_STEP + Math.random() * RING_JITTER;
-      setTimeout(() => {
-        if (myToken !== castToken) return;
-        span.style.opacity = '0.12';
-        setTimeout(() => {
-          if (myToken !== castToken) return;
-          span.textContent = '.';
-          span.className = 'g-floor';
-          span.style.opacity = '1';
-        }, FADE_MS);
-      }, delay);
-    });
-  }, HOLD_MS);
-};
 
 $('#cast-btn').addEventListener('click', () => {
   const tape = tapeEl.value;
@@ -122,13 +106,11 @@ $('#cast-btn').addEventListener('click', () => {
     logEl.textContent = '⚠ x and y must be integers\n' + vm.log();
     return;
   }
-  // Reset the world *before* the cast so every cast lands on a fresh
-  // grid — guarantees the user sees just this spell's effect rather
-  // than it layered on top of whatever the previous cast painted (or
-  // the page-load seed). Pre-fix, the only `vm.reset_world` call sat
-  // at the end of the dissipation chain and got dropped any time the
-  // user cast again within ~1.5 s, so effects piled up indefinitely.
-  vm.reset_world();
+  // No pre-cast reset — the world accumulates. Tiles painted on
+  // previous casts that are still within their lifetime stay until
+  // they decay. A `(cast! …)` that's refused for mana logs a
+  // `mana-short` event and paints nothing; both outcomes are
+  // visible via the refresh.
   try {
     vm.cast(tape, x, y);
   } catch (e) {
@@ -137,16 +119,12 @@ $('#cast-btn').addEventListener('click', () => {
     return;
   }
   refresh();
-  // Convert BigInt → Number for ring math. The grid is at most a few
-  // hundred cells on each axis, well within Number's safe range.
-  dissipate(Number(x), Number(y));
 });
 
 $('#reset-btn').addEventListener('click', () => {
-  // Cancel any in-flight dissipation so it can't fire vm.reset_world()
-  // a second time mid-render and clobber a fresh state the user just
-  // wanted reset directly.
-  castToken++;
+  // Resets world tiles + mana (the bridge calls reset-mana! after
+  // rebuilding the world). The tick loop keeps running — the next
+  // tick fires on schedule.
   vm.reset_world();
   refresh();
 });
@@ -160,10 +138,41 @@ document.querySelectorAll('.tape-example').forEach((el) => {
   });
 });
 
-// Seed cast so visitors land on a rendered grid. Deliberately NOT
-// followed by dissipate() — the page-load state should hold visible
-// until the user does something, rather than evaporating before they
-// can read what's on screen.
+// Tick loop. Drives both halves of the temporal model: tile decay
+// (ADR-027) reverts expired tiles to floor; mana regen (ADR-028)
+// adds one point per tick up to the cap. 600ms feels alive without
+// being twitchy — at default lifetime 5, a painted tile takes
+// ~3 seconds to fade.
+const TICK_MS = 600;
+const interval = setInterval(() => {
+  try {
+    vm.tick();
+  } catch (e) {
+    // A tick failure is recoverable (the next tick will retry); log
+    // it once and don't stop the loop.
+    console.warn('tick failed:', e);
+  }
+  refresh();
+}, TICK_MS);
+
+// If the tab is hidden, pause ticking to avoid silent mana regen +
+// log entries piling up while the user isn't looking. (`visibilitychange`
+// is one of the rare events fast enough that we can react without a
+// debounce.)
+window.addEventListener('visibilitychange', () => {
+  // Easy path: clear + restart. Avoids cumulative drift from a long
+  // hidden window suddenly catching up.
+  if (document.hidden) {
+    clearInterval(interval);
+  }
+  // We don't restart on visible — the user reloading or interacting
+  // is the natural recovery. Keeping things simple matters more than
+  // perfect symmetry here.
+});
+
+// Seed cast so visitors land on a rendered grid. The tick loop will
+// fade it shortly; that's the point — the demo's central feature is
+// that the world has time.
 try {
   vm.cast('ᚦ ᛞ 3 ᛇ', 3n, 2n);
 } catch (e) {

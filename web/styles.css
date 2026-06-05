@@ -237,10 +237,60 @@ input[type="text"] { letter-spacing: 0.05em; font-size: 16px; }
   white-space: pre;
   overflow-x: auto;
 }
-/* Per-cell opacity transition so the dissipation animation in
-   spells.js (ring shrink after a cast) actually fades — without
-   this, setting span.style.opacity snaps instantly. */
-.grid span { transition: opacity 220ms ease; }
+/* Tile cells fade in/out gently when decay reverts them or a cast
+   paints over them. The engine's tick model (ADR-027) does the
+   bookkeeping; this transition is just so the visual change reads
+   as a fade rather than a snap. */
+.grid span { transition: opacity 220ms ease, color 220ms ease; }
+
+/* Mana meter — caster-side resource (ADR-028). A row of plum pips
+   sits above the grid; lit pips show current mana, dim pips show
+   the deficit. Numeric label trails for precision when the
+   eyeball-count gets ambiguous. Lives directly under the action
+   row so the cost of a cast is visible while composing the tape. */
+.mana-meter {
+  display: flex; align-items: center; gap: 12px;
+  margin: 6px 0 10px;
+  font-size: 11px;
+  color: var(--ink-dust);
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+}
+.mana-label {
+  min-width: 3.5em;
+}
+.mana-pips {
+  display: flex; gap: 3px;
+  flex: 1;
+}
+.mana-pips .pip {
+  flex: 1;
+  height: 8px;
+  border-radius: 1px;
+  background: rgba(176, 124, 176, 0.10); /* plum @ 10% */
+  border: 1px solid rgba(176, 124, 176, 0.18);
+  transition: background 180ms ease, border-color 180ms ease;
+}
+.mana-pips .pip.lit {
+  background: var(--plum);
+  border-color: var(--plum);
+}
+/* Low-mana warning tone: when the lit count drops to ~20% the
+   remaining pips shift toward copper so the eye picks it up. */
+.mana-meter.low .mana-pips .pip.lit {
+  background: var(--copper);
+  border-color: var(--copper);
+}
+.mana-meter.low .mana-label,
+.mana-meter.low .mana-count {
+  color: var(--copper);
+}
+.mana-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+  min-width: 3em;
+  text-align: right;
+}
 
 .legend {
   display: flex; flex-wrap: wrap; gap: 14px;

@@ -20,7 +20,7 @@
         <span>runes → ctx → painted tiles</span>
       </div>
       <h1>Spell <span class="sigil">Lab</span></h1>
-      <p class="sub">Unicode runes compile to s-expressions that thread a context through a pipeline of primitives, then a resolver paints tiles on a 7×5 grid.</p>
+      <p class="sub">Unicode runes compile to s-expressions that thread a context through a pipeline of primitives, then a resolver paints tiles on a 7×5 grid. The world ticks: tiles decay, mana regens.</p>
     </header>
 
     <div class="cols">
@@ -62,6 +62,12 @@
           </label>
           <button type="button" class="action primary" id="cast-btn">cast</button>
           <button type="button" class="action subdued" id="reset-btn">reset</button>
+        </div>
+
+        <div class="mana-meter" id="mana-meter" aria-live="polite" aria-label="caster mana">
+          <span class="mana-label">mana</span>
+          <div class="mana-pips" id="mana-pips"></div>
+          <span class="mana-count"><span id="mana-cur">10</span>/<span id="mana-max">10</span></span>
         </div>
 
         <pre class="grid" id="grid"></pre>
