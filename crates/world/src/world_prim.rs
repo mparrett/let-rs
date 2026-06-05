@@ -60,15 +60,32 @@ fn world_size(_args: &[Val], w: &mut World) -> R {
     ))
 }
 
+/// Default lifetime for painted tiles when ctx doesn't carry an explicit
+/// `power`. Five ticks gives the lab UI a visible-but-brief decay window
+/// at the default 500ms interval (~2.5s for fire to fade). See ADR-027.
+const DEFAULT_LIFETIME: u8 = 5;
+
 /// `(world-apply! ctx)` — resolver: reads `element`, `tx`, `ty`, optional `area`
-/// from a ctx alist, paints a square neighborhood around (tx,ty) with the
-/// corresponding tile, and logs the cast. Returns the number of tiles painted.
+/// and `power` from a ctx alist, paints a square neighborhood around (tx,ty)
+/// with the corresponding tile (each painted tile carries a decay countdown
+/// derived from `power`), and logs the cast. Returns the number of tiles
+/// painted.
+///
+/// Lifetime mapping (ADR-027): clamped to `u8` (0..=255). Missing `power`
+/// → `DEFAULT_LIFETIME`. Negative / non-numeric `power` → 0 (permanent,
+/// so the legacy "lifetime 0 = permanent" semantics still apply if a
+/// host wants them).
 fn world_apply(args: &[Val], w: &mut World) -> R {
     let ctx = &args[0];
     let element = assoc_get(ctx, "element");
     let tx = assoc_get(ctx, "tx").and_then(as_num).unwrap_or(0);
     let ty = assoc_get(ctx, "ty").and_then(as_num).unwrap_or(0);
     let area = assoc_get(ctx, "area").and_then(as_num).unwrap_or(0).max(0);
+    let lifetime = match assoc_get(ctx, "power").and_then(as_num) {
+        Some(n) if n > 0 => n.min(u8::MAX as i64) as u8,
+        Some(_) => 0, // negative or zero power = permanent
+        None => DEFAULT_LIFETIME,
+    };
 
     let tile = match element.as_ref() {
         Some(Val::Sym(s)) => {
@@ -98,7 +115,7 @@ fn world_apply(args: &[Val], w: &mut World) -> R {
         if x_lo <= x_hi && y_lo <= y_hi {
             for y in y_lo..=y_hi {
                 for x in x_lo..=x_hi {
-                    if w.set_tile(x as u32, y as u32, tile) {
+                    if w.set_tile_with_lifetime(x as u32, y as u32, tile, lifetime) {
                         painted += 1;
                     }
                 }
@@ -107,10 +124,22 @@ fn world_apply(args: &[Val], w: &mut World) -> R {
     }
 
     w.log_event(format!(
-        "cast {} at ({tx},{ty}) area={area} → {painted} tiles",
+        "cast {} at ({tx},{ty}) area={area} life={lifetime} → {painted} tiles",
         tile.as_sym()
     ));
     Ok(Val::Num(painted))
+}
+
+/// `(world-tick!)` — advance the world by one tick. Every tile with a
+/// positive lifetime decrements; tiles that hit zero revert to Floor.
+/// Returns the number of tiles that reverted this tick. Permanent
+/// tiles (lifetime 0) are untouched. No args.
+fn world_tick(_args: &[Val], w: &mut World) -> R {
+    let reverted = w.tick();
+    if reverted > 0 {
+        w.log_event(format!("tick → {reverted} reverted"));
+    }
+    Ok(Val::Num(reverted as i64))
 }
 
 fn assoc_get(ctx: &Val, key: &str) -> Option<Val> {
@@ -144,6 +173,7 @@ pub const WORLD_PRIMS: &[(&str, Arity, WorldPrimFn)] = &[
     ("world-log!", Arity::AtLeast(1), world_log),
     ("world-size", Arity::Exact(0), world_size),
     ("world-apply!", Arity::Exact(1), world_apply),
+    ("world-tick!", Arity::Exact(0), world_tick),
 ];
 
 /// Register every entry in [`WORLD_PRIMS`] as a state-capturing closure

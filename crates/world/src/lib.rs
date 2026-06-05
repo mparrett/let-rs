@@ -52,6 +52,11 @@ pub struct World {
     pub width: u32,
     pub height: u32,
     tiles: Vec<Tile>,
+    /// Parallel to `tiles`. `0` = permanent (never decays); positive =
+    /// ticks remaining before the tile reverts to Floor. Stored
+    /// separately so the `Tile` enum stays simple — most callers
+    /// (rendering, tile_at) don't care about lifetime. See ADR-027.
+    lifetimes: Vec<u8>,
     pub log: Vec<String>,
 }
 
@@ -69,10 +74,12 @@ impl World {
             .checked_mul(height as u64)
             .filter(|&n| n <= isize::MAX as u64)
             .ok_or_else(|| format!("World::new: {width}×{height} exceeds addressable cells"))?;
+        let n = total as usize;
         Ok(World {
             width,
             height,
-            tiles: vec![Tile::Floor; total as usize],
+            tiles: vec![Tile::Floor; n],
+            lifetimes: vec![0; n],
             log: Vec::new(),
         })
     }
@@ -94,14 +101,54 @@ impl World {
         self.idx(x, y).map(|i| self.tiles[i])
     }
 
+    pub fn lifetime_at(&self, x: u32, y: u32) -> Option<u8> {
+        self.idx(x, y).map(|i| self.lifetimes[i])
+    }
+
     pub fn set_tile(&mut self, x: u32, y: u32, t: Tile) -> bool {
         match self.idx(x, y) {
             Some(i) => {
                 self.tiles[i] = t;
+                self.lifetimes[i] = 0;
                 true
             }
             None => false,
         }
+    }
+
+    /// Paint a tile with a finite lifetime. `lifetime = 0` is treated
+    /// as permanent (matches `set_tile`); positive values count down
+    /// on each `tick`, reverting to Floor at zero. Used by
+    /// `world-apply!` to make Fire/Ice decay; `world-set-tile!`
+    /// continues to paint permanently for tape-painted walls.
+    pub fn set_tile_with_lifetime(&mut self, x: u32, y: u32, t: Tile, lifetime: u8) -> bool {
+        match self.idx(x, y) {
+            Some(i) => {
+                self.tiles[i] = t;
+                self.lifetimes[i] = lifetime;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Advance the world by one tick: every tile with a positive
+    /// lifetime has its lifetime decremented, and any tile whose
+    /// lifetime hits zero this tick reverts to Floor. Returns the
+    /// number of tiles that reverted. Permanent tiles (lifetime 0
+    /// before tick) are untouched.
+    pub fn tick(&mut self) -> u32 {
+        let mut reverted = 0u32;
+        for i in 0..self.tiles.len() {
+            if self.lifetimes[i] > 0 {
+                self.lifetimes[i] -= 1;
+                if self.lifetimes[i] == 0 {
+                    self.tiles[i] = Tile::Floor;
+                    reverted += 1;
+                }
+            }
+        }
+        reverted
     }
 
     pub fn log_event(&mut self, msg: String) {
