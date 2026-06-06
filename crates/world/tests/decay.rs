@@ -91,3 +91,17 @@ fn lifetime_at_out_of_bounds_is_none() {
     let w = w(2, 2);
     assert_eq!(w.lifetime_at(5, 5), None);
 }
+
+#[test]
+fn tile_sym_roundtrip_covers_alchemy_tiles() {
+    // Sanity: every Tile variant has matching from_sym/as_sym arms.
+    // Added when ADR-030 introduced earth/water/mud/lava — the
+    // alchemy mechanic depends on Tile::from_sym recognizing the
+    // mixed symbol names emitted by the spells prelude.
+    for name in [
+        "floor", "wall", "fire", "ice", "earth", "water", "mud", "lava",
+    ] {
+        let t = Tile::from_sym(name).unwrap_or_else(|| panic!("missing from_sym arm: {name}"));
+        assert_eq!(t.as_sym(), name);
+    }
+}

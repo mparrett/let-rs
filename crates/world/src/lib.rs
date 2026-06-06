@@ -15,6 +15,10 @@ pub enum Tile {
     Wall,
     Fire,
     Ice,
+    Earth,
+    Water,
+    Mud,
+    Lava,
 }
 
 impl Tile {
@@ -24,6 +28,10 @@ impl Tile {
             Tile::Wall => '#',
             Tile::Fire => '*',
             Tile::Ice => 'o',
+            Tile::Earth => '%',
+            Tile::Water => '~',
+            Tile::Mud => '&',
+            Tile::Lava => '^',
         }
     }
 
@@ -33,6 +41,10 @@ impl Tile {
             "wall" => Some(Tile::Wall),
             "fire" => Some(Tile::Fire),
             "ice" => Some(Tile::Ice),
+            "earth" => Some(Tile::Earth),
+            "water" => Some(Tile::Water),
+            "mud" => Some(Tile::Mud),
+            "lava" => Some(Tile::Lava),
             _ => None,
         }
     }
@@ -43,6 +55,10 @@ impl Tile {
             Tile::Wall => "wall",
             Tile::Fire => "fire",
             Tile::Ice => "ice",
+            Tile::Earth => "earth",
+            Tile::Water => "water",
+            Tile::Mud => "mud",
+            Tile::Lava => "lava",
         }
     }
 }
