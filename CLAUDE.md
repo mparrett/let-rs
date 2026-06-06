@@ -247,9 +247,15 @@ ships a larger bundle.
   matching primitive, also extend the spell prelude in
   `crates/spells/src/lib.rs` (`PRELUDE_DEFINES`). Constant ctx
   setters use `(defspell NAME KEY VAL)`; parametric setters use
-  `(defparam NAME KEY)`; anything else still wants a hand-written
-  `(define …)`. Both CLI and WASM consumers import from there, so
-  one edit is enough. See ADR-025.
+  `(defparam NAME KEY)`; *element* runes go hand-written through
+  the `add-element` + `mix` helpers (ADR-030 — element runes mix
+  with whatever the ctx already holds rather than overwriting);
+  anything else still wants a hand-written `(define …)`. If the
+  new element introduces a derived tile (e.g. fire+earth → lava),
+  also extend the `Tile` enum in `crates/world/src/lib.rs` with
+  `glyph()` / `from_sym()` / `as_sym()` arms. Both CLI and WASM
+  consumers import from `crates/spells/`, so one prelude edit is
+  enough. See ADR-025 and ADR-030.
 - Adding a new codon: edit `crates/codons/src/lib.rs`. If the codon
   introduces a new trait, also extend the genome prelude
   (`PRELUDE_DEFINES`) and the `TRAITS` classification table in

@@ -2847,3 +2847,173 @@ deliberate weight on the "delayed second strike" knob.
   data and trivially serializable; ties in with the deferred
   "persistent store / undo" item from ADR-023.
 
+## ADR-030: Element mixing — alchemy in the spell prelude (2026-06-05)
+
+**Context**: The four "plain" runes (ᚦ fire, ᛇ ice, ᛚ bolt, ᛗ self)
+were grouped together in the rune palette because they shared one
+*syntactic* property — no numeric argument. But semantically they
+filled three different roles: fire and ice were elements that
+drove tile paint; bolt set a `shape` ctx key the resolver ignored;
+self set a `target` ctx key the resolver also ignored. Two of the
+four were aspirational placeholders.
+
+Adding a third element (ᛏ TIWAZ → earth) opened the question of
+what `ᚦ ᛇ` should *mean*. The trivial answer — last-write-wins on
+the `element` key — is what shipped pre-ADR-030, with ice
+overwriting fire silently. The interesting answer is that *fire
+plus ice is water*, and longer tapes should produce derived
+elements the same way an alchemist's recipe does. That gives the
+DSL a discovery dimension and rewards tape composition.
+
+**Decision**: Three named base elements (fire / ice / earth)
+compose via a prelude-level `mix` table consulted whenever an
+element rune fires. The three element runes go hand-written
+(through a shared `add-element` helper) rather than via the
+`defspell` macro, because `defspell` only handles constant ctx
+setters. Pairs with no explicit rule fall through to `else b` —
+last-write — so unmixed tapes stay predictable and pre-ADR-030
+behavior is preserved as the default.
+
+The full mix table:
+
+| First | Second | Result |
+|---|---|---|
+| fire  | ice    | water |
+| ice   | fire   | water |
+| water | earth  | mud   |
+| earth | water  | mud   |
+| fire  | earth  | lava  |
+| earth | fire   | lava  |
+| X     | X      | X (idempotent) |
+| none  | X      | X (first element entering empty ctx) |
+| *any other pair* | | (last-write-wins fallback) |
+
+Cascading falls out naturally because each element rune calls
+`add-element` against whatever ctx already holds: `ᚦ ᛇ ᛏ` enters
+fire (prev=none → fire), then mixes ice with fire to water, then
+mixes earth with water to mud. No special-case for tape length.
+
+Four new `Tile` variants (`Earth`, `Water`, `Mud`, `Lava`) ship
+alongside, with glyphs `%`, `~`, `&`, `^`. The world's
+`paint_area` / `tick` / aftershock pipeline is tile-agnostic, so
+no engine or world-prim changes were needed — only the data
+tables grew.
+
+**Implementation sketch**:
+
+```lisp
+;; in PRELUDE_DEFINES (crates/spells/src/lib.rs):
+
+(define mix
+  (lambda (a b)
+    (cond ((eq? a 'none) b)
+          ((eq? a b)     a)
+          ((or (and (eq? a 'fire)  (eq? b 'ice))
+               (and (eq? a 'ice)   (eq? b 'fire)))  'water)
+          ((or (and (eq? a 'water) (eq? b 'earth))
+               (and (eq? a 'earth) (eq? b 'water))) 'mud)
+          ((or (and (eq? a 'fire)  (eq? b 'earth))
+               (and (eq? a 'earth) (eq? b 'fire)))  'lava)
+          (else b))))
+
+(define add-element
+  (lambda (e ctx)
+    (assoc-set 'element
+               (mix (assoc-or 'element ctx 'none) e)
+               ctx)))
+
+(define fire  (lambda (ctx) (add-element 'fire  ctx)))
+(define ice   (lambda (ctx) (add-element 'ice   ctx)))
+(define earth (lambda (ctx) (add-element 'earth ctx)))
+```
+
+`spells::install` now also calls `macros::install_stdlib` first so
+the `and` / `or` macros are available — the mix table would
+otherwise be a forest of nested `(if a (if b c #f) #f)`.
+
+**Alternatives considered**:
+
+1. **Engine-level mixing** as a special form. Rejected — keeps the
+   mixing rules out of user-visible lisp; harder to extend without
+   a rebuild; violates the "engine knows nothing about the DSL"
+   stance from ADR-007/010.
+2. **A separate `mix` rune** (e.g. `ᛞ` doubles as "mix the last
+   two element-keys in ctx"). Rejected — the user mental model is
+   "stacking elements," not "calling a mixer." The cascade
+   behavior wants to be implicit.
+3. **Order-dependent mixing**. Rejected — `ᚦ ᛇ ≠ ᛇ ᚦ` would
+   make alchemy unintuitive and rewards no design goal. Same
+   symmetric pairs across the board.
+4. **Engine-level tile arithmetic** (Tile + Tile = Tile via a Rust
+   match). Rejected for the same reason as #1 — the rule set
+   becomes a Rust thing, harder to extend from lisp, harder to
+   test from a REPL.
+5. **Promote `self` and `bolt` to load-bearing** at the same time.
+   Bolt would mean "paint a line instead of a square area"
+   (different paint primitive); self would mean "paint at caster
+   position" (caster doesn't currently have a position). Both are
+   real features worth doing — but separately, behind their own
+   ADRs. ADR-030 only relocates them in the palette.
+6. **Ship just water (fire+ice) and leave the rest as future
+   work**. Rejected — full triangle (water, mud, lava) makes the
+   system feel complete on day one. With only one derived
+   element, alchemy reads as a tease.
+
+**Consequences**:
+- **+** Rune tapes gain a discovery dimension. The cheatsheet now
+  tells a small story: `ᚦ`, `ᚦ ᛞ 1`, `ᚦ ᛇ`, `ᚦ ᛇ ᛏ` step from
+  bare cast to cascaded alchemy in five clicks.
+- **+** Establishes a pattern (`add-X` helper composing a `mix`
+  table) other DSL packs could borrow. Genes already has a
+  Mendelian resolver that's structurally similar — the alchemy
+  table is the symmetric-binary version.
+- **+** `defspell` macro retained for `bolt` and `self`; only the
+  element trio went hand-written. The macros-stdlib pattern from
+  ADR-025 still has consumers.
+- **+** Palette now reads as four labeled groups (elements /
+  shape / targeting / parameters) separated by dividers. Honest
+  about the categorical distinctions instead of pretending the
+  flat list was uniform.
+- **+** `macros::install_stdlib` pulled in as a transitive
+  dependency of `spells::install` — `and` / `or` / `begin` /
+  `when` / `unless` now available to anything that installs the
+  spells prelude. Useful for any future prelude growth.
+- **−** Backwards-incompatible change: tapes like `ᚦ ᛇ` that
+  previously produced ice now produce water. The pre-alchemy
+  behavior is preserved only for *unmixed* pairs (the fallback);
+  anything in the mix table changed semantics. No external
+  consumer to migrate, but worth noting in case someone has a
+  saved tape from the previous behavior.
+- **−** `defspell` no longer covers the most prominent runes;
+  pedagogically the "look, macros!" demo loses some of its punch.
+  ADR-025's adoption pattern still applies, just to fewer of the
+  highest-traffic runes.
+- **−** Bolt and self remain cosmetic — the regrouping clarifies
+  *that* they're aspirational placeholders but doesn't make them
+  load-bearing. Both are flagged for future ADRs.
+- **−** Tile enum grew from 4 to 8 variants. The `Display` and
+  the `Tile::from_sym` / `as_sym` / `glyph` impls now have 8
+  match arms each. A `Tile` type that doubled again (to 16) would
+  be noisy enough to argue for table-driven dispatch; at 8 it's
+  still fine.
+
+**Deferred**:
+- **A `defelement` macro** that consolidates `(define X (lambda
+  (ctx) (add-element 'X ctx)))` into one line. Three call sites
+  is below the threshold where a macro pays for itself; revisit
+  if a fourth element joins.
+- **Configurable mix table** (host or user-defined alchemy
+  rules). The current table is hardcoded in the prelude. Pulling
+  it out would mean a registration API for hosts. Don't pull
+  until a second host with a different rule set shows up.
+- **Promoting `self` to real targeting** (paints at caster
+  position, not tx/ty). Requires a caster-position concept the
+  world doesn't have yet. Worth its own ADR.
+- **Promoting `bolt` to a real shape** (line paint, possibly
+  along the cast direction). Different paint primitive than
+  `paint_area`. Worth its own ADR.
+- **Visual distinction in the palette** (per-category color)
+  beyond the dividers. Currently restrained to keep the multi-
+  colored params/digits/ctl from competing. Revisit if the
+  groupings ever feel unclear in user testing.
+
