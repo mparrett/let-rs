@@ -41,6 +41,10 @@ use world::World;
 /// still wants a hand-written `(define …)`.
 pub const PRELUDE_DEFINES: &str = r#"
 (define assoc-set (lambda (k v ctx) (cons (cons k v) ctx)))
+(define assoc-or
+  (lambda (k ctx default)
+    (let ((v (assoc-get k ctx)))
+      (if (null? v) default v))))
 (define thread    (lambda (ctx fs)
                     (if (null? fs) ctx
                         (thread ((car fs) ctx) (cdr fs)))))
@@ -52,8 +56,37 @@ pub const PRELUDE_DEFINES: &str = r#"
 (defmacro defparam (name key)
   `(define ,name (lambda (n) (lambda (ctx) (assoc-set ',key n ctx)))))
 
-(defspell fire element fire)
-(defspell ice  element ice)
+;; ── alchemy (ADR-030) ─────────────────────────────────────────────
+;; The element runes (fire / ice / earth) don't use defspell — they
+;; need to look at the *prior* element in ctx and combine. defspell
+;; only knows constant setters; mixing is the whole point of this
+;; pack, so the three element runes go hand-written through
+;; add-element + mix.
+;;
+;; Pairs with no explicit rule fall through to last-write-wins (else
+;; b), matching the pre-alchemy behavior so unmixed tapes stay
+;; predictable. Same-element-twice is idempotent.
+
+(define mix
+  (lambda (a b)
+    (cond ((eq? a 'none) b)
+          ((eq? a b)     a)
+          ((or (and (eq? a 'fire)  (eq? b 'ice))
+               (and (eq? a 'ice)   (eq? b 'fire)))  'water)
+          ((or (and (eq? a 'water) (eq? b 'earth))
+               (and (eq? a 'earth) (eq? b 'water))) 'mud)
+          ((or (and (eq? a 'fire)  (eq? b 'earth))
+               (and (eq? a 'earth) (eq? b 'fire)))  'lava)
+          (else b))))
+
+(define add-element
+  (lambda (e ctx)
+    (assoc-set 'element (mix (assoc-or 'element ctx 'none) e) ctx)))
+
+(define fire  (lambda (ctx) (add-element 'fire  ctx)))
+(define ice   (lambda (ctx) (add-element 'ice   ctx)))
+(define earth (lambda (ctx) (add-element 'earth ctx)))
+
 (defspell bolt shape   bolt)
 (defspell self target  self)
 (defparam area       area)
@@ -77,11 +110,6 @@ pub const PRELUDE_DEFINES: &str = r#"
 
 (define max-mana 10)
 (define mana     max-mana)
-
-(define assoc-or
-  (lambda (k ctx default)
-    (let ((v (assoc-get k ctx)))
-      (if (null? v) default v))))
 
 (define spell-cost
   (lambda (ctx)
@@ -114,7 +142,13 @@ pub const PRELUDE_DEFINES: &str = r#"
 /// Install the spell prelude into `mvm`. Idempotent in effect — a later
 /// install shadows earlier defines of the same name (and re-registers
 /// the local macros, which is a no-op for behavior).
+///
+/// Pulls in the macros `STDLIB` (begin/when/unless/and/or) first so
+/// the prelude's `mix` table can use `and`/`or`. The alchemy logic
+/// in ADR-030 made these unavoidable — sequences of `(if a (if b c
+/// #f) #f)` would render the table unreadable.
 pub fn install(mvm: &mut MacroVm) {
+    macros::install_stdlib(mvm).expect("macros stdlib failed to install");
     mvm.eval_str(PRELUDE_DEFINES)
         .expect("spells prelude failed to install");
 }

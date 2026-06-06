@@ -17,10 +17,11 @@ fn mvm() -> MacroVm {
 
 #[test]
 fn defspell_produces_constant_ctx_setter() {
+    // Post-ADR-030, fire/ice/earth are hand-written (they mix) — bolt
+    // is the canonical constant-setter rune covered by defspell.
     let mut vm = mvm();
-    // (fire '()) → ((element . fire))
-    let r = vm.eval_str("(fire '())").expect("eval fire");
-    assert_eq!(format!("{r}"), "((element . fire))");
+    let r = vm.eval_str("(bolt '())").expect("eval bolt");
+    assert_eq!(format!("{r}"), "((shape . bolt))");
 }
 
 #[test]
@@ -34,15 +35,84 @@ fn defparam_closes_over_arg() {
 #[test]
 fn canonical_cast_threads_three_runes() {
     // Mirrors the example/spells.rs canonical cast: fire, area-3, ice.
-    // Threaded right-to-left through assoc-set means ice is the most
-    // recently written, so it sits at the head of the alist.
+    // Pre-ADR-030 this asserted last-write-wins (element=ice); now ice
+    // mixes with the prior fire to yield water at the head of the
+    // alist. The trailing (element . fire) is the original cons-cell —
+    // assoc-set never removes prior bindings, it just shadows them.
     let mut vm = mvm();
     let body = "(thread (start) (list fire (area 3) ice))";
     let r = vm.eval_str(body).expect("eval cast");
     assert_eq!(
         format!("{r}"),
-        "((element . ice) (area . 3) (element . fire))"
+        "((element . water) (area . 3) (element . fire))"
     );
+}
+
+// ── alchemy / element mixing (ADR-030) ────────────────────────────
+
+#[test]
+fn fire_plus_ice_makes_water() {
+    let mut vm = mvm();
+    let r = vm.eval_str("(ice (fire (start)))").expect("eval");
+    // Head is the mixed element; original (element . fire) lingers.
+    assert_eq!(format!("{r}"), "((element . water) (element . fire))");
+}
+
+#[test]
+fn ice_plus_fire_also_makes_water() {
+    // mix is symmetric — order doesn't matter for the named pairs.
+    let mut vm = mvm();
+    let r = vm.eval_str("(fire (ice (start)))").expect("eval");
+    assert_eq!(format!("{r}"), "((element . water) (element . ice))");
+}
+
+#[test]
+fn fire_plus_earth_makes_lava() {
+    let mut vm = mvm();
+    let r = vm.eval_str("(earth (fire (start)))").expect("eval");
+    assert_eq!(format!("{r}"), "((element . lava) (element . fire))");
+}
+
+#[test]
+fn cascade_fire_ice_earth_makes_mud() {
+    // Each rune mixes with whatever ctx already holds. fire enters,
+    // ice mixes to water, earth mixes with water to mud — the
+    // cascade falls out of add-element calling assoc-or each time,
+    // no special-case for tape length.
+    let mut vm = mvm();
+    let r = vm
+        .eval_str("(earth (ice (fire (start))))")
+        .expect("eval");
+    assert_eq!(
+        format!("{r}"),
+        "((element . mud) (element . water) (element . fire))"
+    );
+}
+
+#[test]
+fn same_element_twice_is_idempotent() {
+    let mut vm = mvm();
+    let r = vm.eval_str("(fire (fire (start)))").expect("eval");
+    assert_eq!(format!("{r}"), "((element . fire) (element . fire))");
+}
+
+#[test]
+fn unmixed_pair_falls_back_to_last_write() {
+    // No rule for ice+earth → mix returns `b` (the new element).
+    // This is the documented fallback so tapes with no defined
+    // alchemy pair stay predictable (matches pre-ADR-030 behavior).
+    let mut vm = mvm();
+    let r = vm.eval_str("(earth (ice (start)))").expect("eval");
+    assert_eq!(format!("{r}"), "((element . earth) (element . ice))");
+}
+
+#[test]
+fn single_element_does_not_trigger_mixing() {
+    // The first element call has prev=none → mix(none, X) = X.
+    // Bare fire still produces (element . fire).
+    let mut vm = mvm();
+    let r = vm.eval_str("(fire (start))").expect("eval");
+    assert_eq!(format!("{r}"), "((element . fire))");
 }
 
 #[test]
@@ -222,6 +292,52 @@ fn spell_cost_formula() {
         ),
         "5"
     );
+}
+
+#[test]
+fn alchemy_paints_mixed_tile_into_world() {
+    // End-to-end: cast through the prelude (fire+ice) and confirm
+    // the world holds Water tiles at the target. Pins the full data
+    // path runes → prelude → world-apply! → Tile::Water for ADR-030.
+    use world::Tile;
+    let world = Rc::new(RefCell::new(World::new(5, 5).expect("dims fit")));
+    let mut vm = MacroVm::new();
+    spells::install_with_world(&mut vm, world.clone());
+    let src = "(world-apply! \
+                 (assoc-set 'tx 2 \
+                   (assoc-set 'ty 2 \
+                     (thread (start) (list fire ice)))))";
+    let painted = vm.eval_str(src).expect("world-apply!");
+    assert_eq!(format!("{painted}"), "1");
+    assert_eq!(world.borrow().tile_at(2, 2), Some(Tile::Water));
+}
+
+#[test]
+fn alchemy_cascade_paints_mud() {
+    use world::Tile;
+    let world = Rc::new(RefCell::new(World::new(5, 5).expect("dims fit")));
+    let mut vm = MacroVm::new();
+    spells::install_with_world(&mut vm, world.clone());
+    let src = "(world-apply! \
+                 (assoc-set 'tx 2 \
+                   (assoc-set 'ty 2 \
+                     (thread (start) (list fire ice earth)))))";
+    vm.eval_str(src).expect("world-apply!");
+    assert_eq!(world.borrow().tile_at(2, 2), Some(Tile::Mud));
+}
+
+#[test]
+fn fire_plus_earth_paints_lava() {
+    use world::Tile;
+    let world = Rc::new(RefCell::new(World::new(5, 5).expect("dims fit")));
+    let mut vm = MacroVm::new();
+    spells::install_with_world(&mut vm, world.clone());
+    let src = "(world-apply! \
+                 (assoc-set 'tx 2 \
+                   (assoc-set 'ty 2 \
+                     (thread (start) (list fire earth)))))";
+    vm.eval_str(src).expect("world-apply!");
+    assert_eq!(world.borrow().tile_at(2, 2), Some(Tile::Lava));
 }
 
 #[test]
