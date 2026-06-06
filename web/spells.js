@@ -170,12 +170,7 @@ window.addEventListener('visibilitychange', () => {
   // perfect symmetry here.
 });
 
-// Seed cast so visitors land on a rendered grid. The tick loop will
-// fade it shortly; that's the point — the demo's central feature is
-// that the world has time.
-try {
-  vm.cast('ᚦ ᛞ 3 ᛇ', 3n, 2n);
-} catch (e) {
-  console.warn('seed cast failed:', e);
-}
+// First render uses the freshly-constructed empty world. No seed
+// cast — visitors land on a clean grid and start with full mana, so
+// the first thing they do is their own.
 refresh();
