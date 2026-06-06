@@ -99,7 +99,32 @@ document.querySelectorAll('.rune').forEach((btn) => {
 
 $('#clear-tape').addEventListener('click', () => { tapeEl.value = ''; });
 
-$('#cast-btn').addEventListener('click', () => {
+// Fizzle: spawn a transient `?` ghost rising from the target cell.
+// Used to signal "tried but didn't paint" — either mana-short or an
+// eval error. CSS handles the animation; we just plant the element
+// and let it self-remove.
+const fizzle = (x, y) => {
+  const cell = gridEl.querySelector(`span[data-x="${x}"][data-y="${y}"]`);
+  if (!cell) return;
+  const cRect = cell.getBoundingClientRect();
+  const gRect = gridEl.getBoundingClientRect();
+  const ghost = document.createElement('span');
+  ghost.textContent = '?';
+  ghost.className = 'fizzle-ghost';
+  ghost.style.left = `${cRect.left - gRect.left + cRect.width / 2}px`;
+  ghost.style.top  = `${cRect.top  - gRect.top}px`;
+  gridEl.appendChild(ghost);
+  ghost.addEventListener('animationend', () => ghost.remove(), { once: true });
+};
+
+const flashMana = () => {
+  // Restart the animation cleanly by toggling the class off-then-on.
+  meterEl.classList.remove('flash');
+  void meterEl.offsetWidth;  // force reflow so the class re-add restarts the animation
+  meterEl.classList.add('flash');
+};
+
+const doCast = () => {
   const tape = tapeEl.value;
   let x, y;
   try {
@@ -107,6 +132,7 @@ $('#cast-btn').addEventListener('click', () => {
     y = BigInt(yEl.value || '0');
   } catch {
     logEl.textContent = '⚠ x and y must be integers\n' + vm.log();
+    fizzle(Number(xEl.value) || 0, Number(yEl.value) || 0);
     return;
   }
   // No pre-cast reset — the world accumulates. Tiles painted on
@@ -114,15 +140,27 @@ $('#cast-btn').addEventListener('click', () => {
   // they decay. A `(cast! …)` that's refused for mana logs a
   // `mana-short` event and paints nothing; both outcomes are
   // visible via the refresh.
+  const manaBefore = vm.mana();
   try {
     vm.cast(tape, x, y);
   } catch (e) {
     logEl.textContent = `⚠ ${e}\n${vm.log()}`;
     gridEl.textContent = vm.grid();
+    fizzle(Number(x), Number(y));
     return;
   }
+  // Mana unchanged ⇒ cast! refused for mana-short (the only path that
+  // returns without decrementing). Distinguishes from a successful
+  // cast that painted zero tiles for legitimate reasons.
+  const refused = vm.mana() === manaBefore;
   refresh();
-});
+  if (refused) {
+    fizzle(Number(x), Number(y));
+    flashMana();
+  }
+};
+
+$('#cast-btn').addEventListener('click', doCast);
 
 $('#reset-btn').addEventListener('click', () => {
   // Resets world tiles + mana (the bridge calls reset-mana! after
@@ -132,12 +170,16 @@ $('#reset-btn').addEventListener('click', () => {
   refresh();
 });
 
-// Rune cheatsheet click-to-load. Scoped by `.cheatsheet.spells` so it
-// can't leak into the REPL (handled in common.js with `.cheatsheet.repl`).
+// Rune cheatsheet click-to-load-and-cast. Scoped by `.cheatsheet.spells`
+// so it can't leak into the REPL (handled in common.js with
+// `.cheatsheet.repl`). The cast fires immediately at the current x/y —
+// turning the cheatsheet into a live "try it" panel rather than a
+// passive reference. If the cast fizzles for mana, the fizzle UI
+// shows it; the user can hit reset or wait for tick regen.
 document.querySelectorAll('.tape-example').forEach((el) => {
   el.addEventListener('click', () => {
     tapeEl.value = el.dataset.tape;
-    tapeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    doCast();
   });
 });
 
