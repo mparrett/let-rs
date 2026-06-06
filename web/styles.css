@@ -100,6 +100,16 @@ body::after {
   .cols { grid-template-columns: 1fr 1fr; align-items: start; }
 }
 
+/* lab-row: primary panel + side cheatsheet, used by spells.html.
+ * At desktop the cheatsheet sits to the right of the panel as an
+ * always-visible reference card. At narrow widths everything stacks
+ * and the cheatsheet collapses to its <details> summary. */
+.lab-row { display: grid; gap: 24px; grid-template-columns: 1fr; }
+.lab-row + .lab-row { margin-top: 24px; }
+@media (min-width: 940px) {
+  .lab-row { grid-template-columns: 1fr 320px; align-items: start; }
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--rule);
@@ -373,6 +383,14 @@ textarea {
   color: var(--ink);
 }
 .cheatsheet code:active { background: rgba(139,143,255,0.30); }
+
+/* `.cheatsheet.side`: when a cheatsheet is hoisted out of its panel
+ * to be a sibling column (lab-row layout), drop the top margin that
+ * the in-panel variant uses to space itself below the log. The
+ * <details> stays open by default (`open` attribute in HTML) so at
+ * desktop it reads as a reference card. The summary remains
+ * clickable so users can collapse for more horizontal room. */
+.cheatsheet.side { margin-top: 0; }
 
 /* Spell Lab cheatsheet variant — plum to match the rune palette. */
 .cheatsheet.spells {

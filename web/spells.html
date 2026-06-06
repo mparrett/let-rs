@@ -23,7 +23,7 @@
       <p class="sub">Unicode runes compile to s-expressions that thread a context through a pipeline of primitives, then a resolver paints tiles on a 7×5 grid. The world ticks: tiles decay, mana regens.</p>
     </header>
 
-    <div class="cols">
+    <div class="lab-row">
 
       <section class="panel" id="spell-lab">
         <h2>Spell Lab</h2>
@@ -89,24 +89,28 @@
         </div>
 
         <pre class="log" id="log"></pre>
-
-        <details class="cheatsheet spells">
-          <summary>quick tapes</summary>
-          <ul>
-            <li><code class="tape-example" data-tape="ᚦ">ᚦ</code> — single fire tile</li>
-            <li><code class="tape-example" data-tape="ᚦ ᛞ 1">ᚦ ᛞ 1</code> — 3×3 fire patch</li>
-            <li><code class="tape-example" data-tape="ᚦ ᛇ">ᚦ ᛇ</code> — fire + ice → water (alchemy!)</li>
-            <li><code class="tape-example" data-tape="ᚦ ᛏ">ᚦ ᛏ</code> — fire + earth → lava</li>
-            <li><code class="tape-example" data-tape="ᚦ ᛇ ᛏ">ᚦ ᛇ ᛏ</code> — cascade: fire+ice → water, water+earth → mud</li>
-            <li><code class="tape-example" data-tape="ᚦ ᛇ ᛞ 3">ᚦ ᛇ ᛞ 3</code> — 7×7 water arena (fire + ice mixed, then area-3)</li>
-            <li><code class="tape-example" data-tape="ᛇ ᛞ 2">ᛇ ᛞ 2</code> — 5×5 ice arena</li>
-            <li><code class="tape-example" data-tape="ᛗ ᛇ">ᛗ ᛇ</code> — self-targeted ice (sets :target self)</li>
-            <li><code class="tape-example" data-tape="ᛚ ᚦ ᛟ 5">ᛚ ᚦ ᛟ 5</code> — bolt + fire + power-5 (:shape and :power linger in ctx)</li>
-            <li><code class="tape-example" data-tape="ᚦ ᛟ 1 ᛃ 3">ᚦ ᛟ 1 ᛃ 3</code> — short fire (power 1) that reignites 3 ticks after it dies</li>
-            <li><code class="tape-example" data-tape="ᛇ ᛞ 1 ᛟ 2 ᛃ 5">ᛇ ᛞ 1 ᛟ 2 ᛃ 5</code> — 3×3 ice patch (power 2) with a delayed re-cast at tick 5</li>
-          </ul>
-        </details>
       </section>
+
+      <details class="cheatsheet spells side" open>
+        <summary>quick tapes</summary>
+        <ul>
+          <li><code class="tape-example" data-tape="ᚦ">ᚦ</code> — single fire tile</li>
+          <li><code class="tape-example" data-tape="ᚦ ᛞ 1">ᚦ ᛞ 1</code> — 3×3 fire patch</li>
+          <li><code class="tape-example" data-tape="ᚦ ᛇ">ᚦ ᛇ</code> — fire + ice → water (alchemy!)</li>
+          <li><code class="tape-example" data-tape="ᚦ ᛏ">ᚦ ᛏ</code> — fire + earth → lava</li>
+          <li><code class="tape-example" data-tape="ᚦ ᛇ ᛏ">ᚦ ᛇ ᛏ</code> — cascade: fire+ice → water, water+earth → mud</li>
+          <li><code class="tape-example" data-tape="ᚦ ᛇ ᛞ 3">ᚦ ᛇ ᛞ 3</code> — 7×7 water arena (fire + ice mixed, then area-3)</li>
+          <li><code class="tape-example" data-tape="ᛇ ᛞ 2">ᛇ ᛞ 2</code> — 5×5 ice arena</li>
+          <li><code class="tape-example" data-tape="ᛗ ᛇ">ᛗ ᛇ</code> — self-targeted ice (sets :target self)</li>
+          <li><code class="tape-example" data-tape="ᛚ ᚦ ᛟ 5">ᛚ ᚦ ᛟ 5</code> — bolt + fire + power-5 (:shape and :power linger in ctx)</li>
+          <li><code class="tape-example" data-tape="ᚦ ᛟ 1 ᛃ 3">ᚦ ᛟ 1 ᛃ 3</code> — short fire (power 1) that reignites 3 ticks after it dies</li>
+          <li><code class="tape-example" data-tape="ᛇ ᛞ 1 ᛟ 2 ᛃ 5">ᛇ ᛞ 1 ᛟ 2 ᛃ 5</code> — 3×3 ice patch (power 2) with a delayed re-cast at tick 5</li>
+        </ul>
+      </details>
+
+    </div>
+
+    <div class="lab-row">
 
       <section class="panel" id="repl">
         <h2>REPL</h2>
@@ -120,18 +124,18 @@
         </div>
 
         <pre class="out" id="out"></pre>
-
-        <details class="cheatsheet repl">
-          <summary>quick examples</summary>
-          <ul>
-            <li><code>(+ 1 2 3 4 5)</code> — variadic arithmetic</li>
-            <li><code>'(a (b c) d)</code> — quoted nested list</li>
-            <li><code>(letrec ((f (lambda (n) (if (= n 0) 1 (* n (f (- n 1))))))) (f 6))</code> — factorial via letrec</li>
-            <li><code>(defmacro when args (list 'if (car args) (car (cdr args)) #f))</code> then <code>(when #t 'yes)</code></li>
-            <li><code>`(1 ,(+ 1 1) ,@'(3 4))</code> — quasiquote with splice</li>
-          </ul>
-        </details>
       </section>
+
+      <details class="cheatsheet repl side" open>
+        <summary>quick examples</summary>
+        <ul>
+          <li><code>(+ 1 2 3 4 5)</code> — variadic arithmetic</li>
+          <li><code>'(a (b c) d)</code> — quoted nested list</li>
+          <li><code>(letrec ((f (lambda (n) (if (= n 0) 1 (* n (f (- n 1))))))) (f 6))</code> — factorial via letrec</li>
+          <li><code>(defmacro when args (list 'if (car args) (car (cdr args)) #f))</code> then <code>(when #t 'yes)</code></li>
+          <li><code>`(1 ,(+ 1 1) ,@'(3 4))</code> — quasiquote with splice</li>
+        </ul>
+      </details>
 
     </div>
 
