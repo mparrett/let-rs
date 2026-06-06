@@ -355,6 +355,34 @@ input[type="text"] { letter-spacing: 0.05em; font-size: 16px; }
 .g-lava  { color: var(--copper); font-weight: 600; }
 .g-wall  { color: var(--ink-dust); }
 
+/* Cast error overlay — dedicated UI for parse/eval errors that
+   would otherwise vanish on the next tick refresh of the log.
+   Stays visible for ~5s, click to dismiss earlier. Copper to match
+   the mana-flash + fizzle color story. */
+.cast-error {
+  display: none;
+  padding: 8px 12px;
+  margin: 6px 0 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--copper);
+  background: rgba(217, 119, 87, 0.08);
+  border-left: 2px solid var(--copper);
+  border-radius: 2px;
+  cursor: pointer;
+  word-break: break-word;
+  transition: opacity 240ms ease;
+}
+.cast-error.visible {
+  display: block;
+  animation: cast-error-in 200ms ease-out;
+}
+.cast-error.fading { opacity: 0; }
+@keyframes cast-error-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .log, .out {
   font-family: var(--mono);
   font-size: 12.5px;

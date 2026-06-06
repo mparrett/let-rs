@@ -25,6 +25,7 @@ const meterEl   = $('#mana-meter');
 const pipsEl    = $('#mana-pips');
 const manaCurEl = $('#mana-cur');
 const manaMaxEl = $('#mana-max');
+const errEl     = $('#cast-error');
 
 // Map the ASCII glyphs the Rust World::Display emits onto the color
 // classes the legend uses. Anything outside this set passes through.
@@ -124,6 +125,31 @@ const flashMana = () => {
   meterEl.classList.add('flash');
 };
 
+// Persistent error overlay. The log gets clobbered every tick (~600ms)
+// by refresh(), so parse/eval errors dropped into it vanished before
+// they could be read. The overlay stays up for ~5s with click-to-
+// dismiss; new errors replace the message and reset the timer.
+const ERROR_HOLD_MS = 5000;
+let errorTimer = null;
+const showError = (msg) => {
+  errEl.textContent = `⚠ ${msg}`;
+  errEl.classList.remove('fading');
+  errEl.classList.add('visible');
+  if (errorTimer) clearTimeout(errorTimer);
+  errorTimer = setTimeout(() => {
+    errEl.classList.add('fading');
+    setTimeout(() => {
+      errEl.classList.remove('visible', 'fading');
+      errorTimer = null;
+    }, 240);  // match the .cast-error transition duration
+  }, ERROR_HOLD_MS);
+};
+const clearError = () => {
+  if (errorTimer) { clearTimeout(errorTimer); errorTimer = null; }
+  errEl.classList.remove('visible', 'fading');
+};
+errEl.addEventListener('click', clearError);
+
 const doCast = () => {
   const tape = tapeEl.value;
   let x, y;
@@ -131,7 +157,7 @@ const doCast = () => {
     x = BigInt(xEl.value || '0');
     y = BigInt(yEl.value || '0');
   } catch {
-    logEl.textContent = '⚠ x and y must be integers\n' + vm.log();
+    showError('x and y must be integers');
     fizzle(Number(xEl.value) || 0, Number(yEl.value) || 0);
     return;
   }
@@ -144,8 +170,11 @@ const doCast = () => {
   try {
     vm.cast(tape, x, y);
   } catch (e) {
-    logEl.textContent = `⚠ ${e}\n${vm.log()}`;
-    gridEl.textContent = vm.grid();
+    // Don't touch gridEl here — the grid state didn't change (the
+    // cast aborted before painting), and rewriting its textContent
+    // would tear out the per-cell <span>s that fizzle() needs to
+    // position the ghost over.
+    showError(String(e));
     fizzle(Number(x), Number(y));
     return;
   }
@@ -157,6 +186,10 @@ const doCast = () => {
   if (refused) {
     fizzle(Number(x), Number(y));
     flashMana();
+  } else {
+    // Successful cast — clear any stale error so the overlay doesn't
+    // linger past a recovery.
+    clearError();
   }
 };
 
