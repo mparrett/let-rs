@@ -58,6 +58,17 @@ fn whitespace_between_runes_is_optional() {
 }
 
 #[test]
+fn earth_rune_lexes() {
+    // ᛏ TIWAZ — third base element. Plain rune, no numeric arg,
+    // pairs with fire/ice via the prelude's mix table (ADR-030).
+    assert_eq!(tape_to_sexpr("ᛏ").unwrap(), "(list earth)");
+    assert_eq!(
+        tape_to_sexpr("ᚦ ᛇ ᛏ").unwrap(),
+        "(list fire ice earth)"
+    );
+}
+
+#[test]
 fn aftershock_rune_pairs_with_number() {
     // ᛃ JERA — aftershock. Parametrized like area/power; the immediately
     // following numeral becomes its arg (ticks until the delayed

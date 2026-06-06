@@ -14,8 +14,12 @@
 /// Plain runes: each chosen by its Elder Futhark meaning. Maps to a
 /// unary `ctx → ctx` primitive name.
 pub const PLAIN: &[(char, &str)] = &[
-    ('ᚦ', "fire"), // THURISAZ — thorn, sharp/destructive
-    ('ᛇ', "ice"),  // EIHWAZ   — yew, winter-hardy evergreen
+    ('ᚦ', "fire"),  // THURISAZ — thorn, sharp/destructive
+    ('ᛇ', "ice"),   // EIHWAZ   — yew, winter-hardy evergreen
+    ('ᛏ', "earth"), // TIWAZ    — warrior, solid ground. Third base
+    //          element; pairs with fire/ice via the
+    //          alchemy mix table in the spells prelude
+    //          (ADR-030).
     ('ᛚ', "bolt"), // LAGUZ    — water, flow
     ('ᛗ', "self"), // MANNAZ   — man, the self
 ];
