@@ -306,6 +306,10 @@ input[type="text"] { letter-spacing: 0.05em; font-size: 16px; }
 .g-floor { color: var(--ink-dim); }
 .g-fire  { color: var(--copper); }
 .g-ice   { color: var(--indigo); }
+.g-earth { color: var(--honey); }
+.g-water { color: var(--sage); }
+.g-mud   { color: var(--ink-dim); }
+.g-lava  { color: var(--copper); font-weight: 600; }
 .g-wall  { color: var(--ink-dust); }
 
 .log, .out {

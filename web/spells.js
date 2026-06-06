@@ -28,7 +28,10 @@ const manaMaxEl = $('#mana-max');
 
 // Map the ASCII glyphs the Rust World::Display emits onto the color
 // classes the legend uses. Anything outside this set passes through.
-const GLYPH_CLASS = { '.': 'g-floor', '*': 'g-fire', 'o': 'g-ice', '#': 'g-wall' };
+const GLYPH_CLASS = {
+  '.': 'g-floor', '*': 'g-fire', 'o': 'g-ice', '#': 'g-wall',
+  '%': 'g-earth', '~': 'g-water', '&': 'g-mud', '^': 'g-lava',
+};
 
 // Read max-mana once at startup. The pip count is fixed (it's a UI
 // concern, not a model one); if `(set! max-mana N)` ever fires from
