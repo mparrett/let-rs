@@ -3017,3 +3017,97 @@ otherwise be a forest of nested `(if a (if b c #f) #f)`.
   colored params/digits/ctl from competing. Revisit if the
   groupings ever feel unclear in user testing.
 
+
+## ADR-031: Strings as the ninth `Val` variant (2026-06-07)
+
+**Context**: The engine had no string type. `Val` was eight variants
+— `Num | Ratio | Bool | Sym | Nil | Cons | Clo | Prim` — and the
+tokenizer had no `"…"` handling. The closest workaround was
+`Val::Sym`, but symbols are identifiers — they print verbatim, are
+implicitly variable references in non-quoted position, and don't
+survive a round-trip through `read` if they contain whitespace or
+special chars. Several near-future use cases (a `format`/template
+prim for spell descriptions, host prims that return human-readable
+labels, REPL output that wants `display` semantics) wanted real
+text values.
+
+**Decision**: Add `Val::Str(Rc<str>)` as a ninth value variant,
+plus a `Tok::Str` / `Datum::Str` path through the parser. Strings
+are immutable, self-evaluating, and `eq?`-compare by content.
+
+Concretely:
+
+- *Lexer:* `"…"` produces `Tok::Str(String)`. Escapes are exactly
+  `\"`, `\\`, `\n`, `\t` — any other `\<c>` is an error. Unicode
+  escapes (`\xNN`, `\u{…}`) deferred until someone needs them.
+- *Datum:* new `Datum::Str(Rc<str>)`. `datum_to_val` returns
+  `Val::Str(rc)`. Quasiquote treats it as self-evaluating, same
+  shape as `Datum::Num`/`Datum::Ratio`.
+- *Compile:* like `Datum::Ratio`, no new `Expr` variant. Strings
+  compile to `Expr::Quote(Rc::new(Val::Str(...)))`. The CEK loop
+  already evaluates `Quote` in one step, so a string literal is
+  a single `Rc::clone` per evaluation.
+- *Display:* `Val::Str` prints as `"…"` with the same four
+  escapes re-applied. Matches Scheme `write` semantics, which
+  doubles as our REPL output convention. The existing
+  `curves::render!` workaround (wrap an ASCII canvas in
+  `Val::Sym` so `Display` is verbatim — crates/curves/src/lib.rs)
+  still applies for the rare case where you want raw text. No
+  `display` prim added; `write` semantics through `Display` are
+  the engine's only printer.
+- *Equality:* `eq_shallow` compares contents — same precedent as
+  `Val::Sym`, since neither is interned. `(eq? "foo" "foo") ⇒
+  #t`. This diverges from textbook Scheme (which would require
+  `equal?` for non-interned strings) but matches our existing
+  symbol model and avoids a second predicate.
+- *Prim surface (v1, six prims):* `string?`, `string-length`
+  (char count, not byte length), `string-append` (variadic, zero
+  args → `""`), `string->symbol`, `symbol->string`,
+  `number->string` (handles both `Num` and `Ratio`). Skipped for
+  v1: `substring`, `string-ref`, `string->number`, `string=?`
+  (use `eq?`), `string-upcase`/`downcase`, format-style helpers.
+  Add when a concrete consumer needs them.
+- *Macros crate:* `val_to_datum` and `datum_to_source` both
+  grow a `Str` arm so quasiquote-splicing a string and serializing
+  a string in a macro expansion both round-trip.
+
+**Consequences**:
+
+- **+** `Val` is one variant wider but the per-variant cost is
+  trivial — every match in the workspace either already had a
+  generic fallthrough (the genes/curves/world/wasm host prims) or
+  was in core and got updated. No third-party code to migrate.
+- **+** Strings are usable in the REPL today: `"hello"` parses,
+  `(string-length "héllo")` returns `5`, `(eq? "a" "a")` is `#t`.
+- **+** The expansion path that survived `Ratio` (compile-time
+  normalize into `Expr::Quote`) survives `Str` too. No new step
+  rule, no new compile arm beyond the datum-to-val plumbing.
+- **−** Char-count `string-length` makes `O(n)` what
+  byte-length would make `O(1)`. The other shape — returning
+  byte length and adding a separate `string-char-length` —
+  was rejected because user-facing programs expect "length"
+  to be characters and the engine has no streaming string I/O
+  to justify a fast byte API. Revisit if a host prim wants to
+  treat strings as byte buffers.
+- **−** `eq?` semantics now differ from Scheme tradition (we
+  return `#t` for two different string allocations with the
+  same contents). The same trade-off applies to symbols today;
+  documenting it here so future "let's add `equal?`" thinking
+  starts from the same baseline.
+
+**Deferred**:
+- **`substring` / `string-ref` / `string->number`** — add the
+  moment a real consumer asks. Keeping the v1 surface tight makes
+  the addition easier to evaluate.
+- **Unicode escapes in literals** (`\xNN`, `\u{…}`). The current
+  four are enough to round-trip through `Display`; anything
+  beyond ASCII can already be embedded literally as UTF-8.
+- **A `display` prim with raw (no-quote) output**. The
+  `curves::render!` shape (wrap in `Val::Sym`) is the existing
+  escape hatch. A `display` variant of the printer becomes
+  worthwhile only when someone wants both styles from a single
+  prim.
+- **Interning** for `Val::Sym` or `Val::Str`. Neither is
+  interned today; both pay `Rc::clone` + content equality. If a
+  benchmark exposes the cost we can add a symbol table; until
+  then, "compare by content" is the consistent story.

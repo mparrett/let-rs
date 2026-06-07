@@ -39,7 +39,7 @@ The five CEK transition rules live in `crates/lisp/src/step.rs` — read that
 file before anything else; the rest of the engine is decoration.
 
 - `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec`
-- `val.rs` — runtime values: `Num | Ratio | Bool | Sym | Nil | Cons | Clo | Prim`,
+- `val.rs` — runtime values: `Num | Ratio | Bool | Sym | Str | Nil | Cons | Clo | Prim`,
   plus `Arity` and `Display`. `Val::Prim` holds an
   `Rc<dyn Fn(&[Val]) -> Result<Val, String>>` so host prims can
   capture state at registration time without the engine knowing what
