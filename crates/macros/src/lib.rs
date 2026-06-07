@@ -432,6 +432,7 @@ fn val_to_datum(v: &Val) -> Result<Datum, String> {
         Val::Ratio(n, d) => Ok(Datum::Ratio(*n, *d)),
         Val::Bool(b) => Ok(Datum::Bool(*b)),
         Val::Sym(s) => Ok(Datum::Sym(s.clone())),
+        Val::Str(s) => Ok(Datum::Str(s.clone())),
         Val::Nil => Ok(Datum::List(vec![])),
         Val::Cons(_, _) => {
             let mut items = Vec::new();
@@ -463,6 +464,19 @@ fn datum_to_source(d: &Datum, out: &mut String) {
         Datum::Bool(true) => out.push_str("#t"),
         Datum::Bool(false) => out.push_str("#f"),
         Datum::Sym(s) => out.push_str(s),
+        Datum::Str(s) => {
+            out.push('"');
+            for c in s.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\t' => out.push_str("\\t"),
+                    _ => out.push(c),
+                }
+            }
+            out.push('"');
+        }
         Datum::List(items) => {
             out.push('(');
             for (i, item) in items.iter().enumerate() {

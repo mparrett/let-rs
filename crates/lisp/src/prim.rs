@@ -275,6 +275,52 @@ fn symbol_q(args: &[Val]) -> R {
     Ok(Val::Bool(matches!(args[0], Val::Sym(_))))
 }
 
+// ---- strings ----
+
+fn string_q(args: &[Val]) -> R {
+    Ok(Val::Bool(matches!(args[0], Val::Str(_))))
+}
+
+fn string_length(args: &[Val]) -> R {
+    match &args[0] {
+        Val::Str(s) => Ok(Val::Num(s.chars().count() as i64)),
+        other => Err(format!("string-length: expected string, got {other}")),
+    }
+}
+
+fn string_append(args: &[Val]) -> R {
+    let mut out = String::new();
+    for arg in args {
+        match arg {
+            Val::Str(s) => out.push_str(s),
+            other => return Err(format!("string-append: expected string, got {other}")),
+        }
+    }
+    Ok(Val::Str(out.into()))
+}
+
+fn string_to_symbol(args: &[Val]) -> R {
+    match &args[0] {
+        Val::Str(s) => Ok(Val::Sym(s.clone())),
+        other => Err(format!("string->symbol: expected string, got {other}")),
+    }
+}
+
+fn symbol_to_string(args: &[Val]) -> R {
+    match &args[0] {
+        Val::Sym(s) => Ok(Val::Str(s.clone())),
+        other => Err(format!("symbol->string: expected symbol, got {other}")),
+    }
+}
+
+fn number_to_string(args: &[Val]) -> R {
+    match &args[0] {
+        Val::Num(n) => Ok(Val::Str(n.to_string().into())),
+        Val::Ratio(n, d) => Ok(Val::Str(format!("{n}/{d}").into())),
+        other => Err(format!("number->string: expected number, got {other}")),
+    }
+}
+
 // ---- rational accessors ----
 
 fn numerator(args: &[Val]) -> R {
@@ -365,6 +411,12 @@ const BUILTINS: &[(&str, Arity, BuiltinFn)] = &[
     ("pair?", Arity::Exact(1), pair_q),
     ("number?", Arity::Exact(1), number_q),
     ("symbol?", Arity::Exact(1), symbol_q),
+    ("string?", Arity::Exact(1), string_q),
+    ("string-length", Arity::Exact(1), string_length),
+    ("string-append", Arity::AtLeast(0), string_append),
+    ("string->symbol", Arity::Exact(1), string_to_symbol),
+    ("symbol->string", Arity::Exact(1), symbol_to_string),
+    ("number->string", Arity::Exact(1), number_to_string),
     ("assoc-get", Arity::Exact(2), assoc_get),
     ("numerator", Arity::Exact(1), numerator),
     ("denominator", Arity::Exact(1), denominator),

@@ -16,6 +16,7 @@ pub enum Datum {
     Ratio(i64, u64),
     Bool(bool),
     Sym(Sym),
+    Str(Rc<str>),
     List(Vec<Datum>),
 }
 
@@ -31,6 +32,7 @@ enum Tok {
     Ratio(i64, u64),
     Bool(bool),
     Sym(String),
+    Str(String),
 }
 
 /// Read source → Datum (no compilation). Used by Vm so it can macro-expand
@@ -106,6 +108,26 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
                     toks.push(Tok::Unquote);
                 }
             }
+            '"' => {
+                chars.next();
+                let mut s = String::new();
+                loop {
+                    match chars.next() {
+                        None => return Err("unclosed string literal".into()),
+                        Some('"') => break,
+                        Some('\\') => match chars.next() {
+                            Some('"') => s.push('"'),
+                            Some('\\') => s.push('\\'),
+                            Some('n') => s.push('\n'),
+                            Some('t') => s.push('\t'),
+                            Some(c) => return Err(format!("unknown string escape \\{c}")),
+                            None => return Err("unterminated string escape".into()),
+                        },
+                        Some(c) => s.push(c),
+                    }
+                }
+                toks.push(Tok::Str(s));
+            }
             _ => {
                 let mut s = String::new();
                 while let Some(&c) = chars.peek() {
@@ -150,6 +172,7 @@ fn read_datum(it: &mut Peekable<IntoIter<Tok>>) -> Result<Datum, String> {
         Tok::Ratio(num, den) => Ok(Datum::Ratio(num, den)),
         Tok::Bool(b) => Ok(Datum::Bool(b)),
         Tok::Sym(s) => Ok(Datum::Sym(s.into())),
+        Tok::Str(s) => Ok(Datum::Str(s.into())),
         Tok::Quote => prefixed("quote", read_datum(it)?),
         Tok::Quasi => prefixed("quasiquote", read_datum(it)?),
         Tok::Unquote => prefixed("unquote", read_datum(it)?),
@@ -188,6 +211,9 @@ pub fn compile(d: &Datum) -> Result<Expr, String> {
         }
         Datum::Bool(b) => Ok(Expr::Bool(*b)),
         Datum::Sym(s) => Ok(Expr::Var(s.clone())),
+        // Self-evaluating; quote-wrap so eval emits the Val::Str with a
+        // single Rc clone per evaluation (same shape as Ratio).
+        Datum::Str(s) => Ok(Expr::Quote(Rc::new(Val::Str(s.clone())))),
         Datum::List(items) => {
             if items.is_empty() {
                 return Err("empty list".into());
@@ -261,6 +287,7 @@ pub fn datum_to_val(d: &Datum) -> Val {
             .expect("reader-validated ratio failed to normalize"),
         Datum::Bool(b) => Val::Bool(*b),
         Datum::Sym(s) => Val::Sym(s.clone()),
+        Datum::Str(s) => Val::Str(s.clone()),
         Datum::List(items) => {
             let vals: Vec<Val> = items.iter().map(datum_to_val).collect();
             Val::list_from(&vals)
@@ -396,7 +423,7 @@ fn qq_wrap_form(tag: &'static str, inner: Expr) -> Expr {
 /// `` `(a `(b ,c)) `` keeps `,c` literal inside the inner quasiquote.
 fn compile_qq(d: &Datum, depth: usize) -> Result<Expr, String> {
     match d {
-        Datum::Num(_) | Datum::Ratio(_, _) | Datum::Bool(_) | Datum::Sym(_) => {
+        Datum::Num(_) | Datum::Ratio(_, _) | Datum::Bool(_) | Datum::Sym(_) | Datum::Str(_) => {
             Ok(Expr::Quote(Rc::new(datum_to_val(d))))
         }
         Datum::List(items) => {

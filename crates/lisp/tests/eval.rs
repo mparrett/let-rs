@@ -707,3 +707,81 @@ fn set_bang_malformed_errors() {
     assert!(vm.eval_str("(set! 5 10)").is_err());
     assert!(vm.eval_str("(set! x 1 2)").is_err());
 }
+
+#[test]
+fn string_literal_is_self_evaluating_and_displays_quoted() {
+    // Display matches `write`: surrounded by quotes with escapes re-applied.
+    assert_eq!(eval("\"hi\""), "\"hi\"");
+    assert_eq!(eval("\"\""), "\"\"");
+}
+
+#[test]
+fn string_escapes_round_trip_through_display() {
+    // \\, \", \n, \t are the only escapes the tokenizer accepts.
+    assert_eq!(eval("\"a\\\"b\""), "\"a\\\"b\"");
+    assert_eq!(eval("\"line\\nbreak\""), "\"line\\nbreak\"");
+    assert_eq!(eval("\"tab\\there\""), "\"tab\\there\"");
+    assert_eq!(eval("\"back\\\\slash\""), "\"back\\\\slash\"");
+}
+
+#[test]
+fn string_unknown_escape_errors() {
+    let mut vm = Vm::new();
+    assert!(vm.eval_str("\"bad \\x escape\"").is_err());
+}
+
+#[test]
+fn unclosed_string_literal_errors() {
+    let mut vm = Vm::new();
+    assert!(vm.eval_str("\"oops").is_err());
+}
+
+#[test]
+fn string_predicate() {
+    assert_eq!(eval("(string? \"hi\")"), "#t");
+    assert_eq!(eval("(string? 'hi)"), "#f");
+    assert_eq!(eval("(string? 42)"), "#f");
+}
+
+#[test]
+fn string_length_counts_chars() {
+    assert_eq!(eval("(string-length \"\")"), "0");
+    assert_eq!(eval("(string-length \"hello\")"), "5");
+    // Multi-byte char counts as 1 grapheme/codepoint, not 3 bytes.
+    assert_eq!(eval("(string-length \"é\")"), "1");
+}
+
+#[test]
+fn string_append_variadic() {
+    assert_eq!(eval("(string-append)"), "\"\"");
+    assert_eq!(eval("(string-append \"foo\")"), "\"foo\"");
+    assert_eq!(
+        eval("(string-append \"foo\" \"-\" \"bar\")"),
+        "\"foo-bar\""
+    );
+}
+
+#[test]
+fn symbol_string_round_trip() {
+    assert_eq!(eval("(symbol->string 'hello)"), "\"hello\"");
+    assert_eq!(eval("(string->symbol \"hello\")"), "hello");
+    assert_eq!(
+        eval("(eq? 'foo (string->symbol (symbol->string 'foo)))"),
+        "#t"
+    );
+}
+
+#[test]
+fn number_to_string_handles_num_and_ratio() {
+    assert_eq!(eval("(number->string 42)"), "\"42\"");
+    assert_eq!(eval("(number->string -7)"), "\"-7\"");
+    assert_eq!(eval("(number->string 1/2)"), "\"1/2\"");
+}
+
+#[test]
+fn eq_q_compares_strings_by_contents() {
+    // Strings aren't interned; the engine compares by content the same
+    // way it does for symbols (both are Rc<str>).
+    assert_eq!(eval("(eq? \"foo\" \"foo\")"), "#t");
+    assert_eq!(eval("(eq? \"foo\" \"bar\")"), "#f");
+}

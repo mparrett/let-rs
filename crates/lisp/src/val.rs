@@ -21,6 +21,10 @@ pub enum Val {
     Ratio(i64, u64),
     Bool(bool),
     Sym(Sym),
+    /// Immutable UTF-8 string. `Rc<str>` so cloning is a refcount bump
+    /// and contents are shared. Self-evaluating; `eq?` compares contents
+    /// (matches `Sym` precedent — neither is interned, both compare by value).
+    Str(Rc<str>),
     Nil,
     Cons(Rc<Val>, Rc<Val>),
     Clo {
@@ -132,6 +136,7 @@ impl Val {
             (Val::Ratio(an, ad), Val::Ratio(bn, bd)) => an == bn && ad == bd,
             (Val::Bool(a), Val::Bool(b)) => a == b,
             (Val::Sym(a), Val::Sym(b)) => **a == **b,
+            (Val::Str(a), Val::Str(b)) => **a == **b,
             (Val::Nil, Val::Nil) => true,
             _ => false,
         }
@@ -155,6 +160,7 @@ impl fmt::Display for Val {
             Val::Bool(true) => write!(f, "#t"),
             Val::Bool(false) => write!(f, "#f"),
             Val::Sym(s) => write!(f, "{s}"),
+            Val::Str(s) => write_string_literal(s, f),
             Val::Nil => write!(f, "()"),
             Val::Cons(h, t) => {
                 write!(f, "(")?;
@@ -165,6 +171,23 @@ impl fmt::Display for Val {
             Val::Prim { name, arity, .. } => write!(f, "#<prim {name}/{}>", arity.describe()),
         }
     }
+}
+
+/// `write`-style string output: surrounding `"` plus the four escapes
+/// the tokenizer understands (`\"`, `\\`, `\n`, `\t`). Round-trips through
+/// `read` for any string this implementation can parse.
+fn write_string_literal(s: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "\"")?;
+    for c in s.chars() {
+        match c {
+            '"' => write!(f, "\\\"")?,
+            '\\' => write!(f, "\\\\")?,
+            '\n' => write!(f, "\\n")?,
+            '\t' => write!(f, "\\t")?,
+            _ => write!(f, "{c}")?,
+        }
+    }
+    write!(f, "\"")
 }
 
 fn write_pair(head: &Val, tail: &Val, f: &mut fmt::Formatter<'_>) -> fmt::Result {

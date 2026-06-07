@@ -360,3 +360,25 @@ fn stdlib_or_short_circuits() {
     vm.eval_str("(or 1 (bump!))").unwrap();
     assert_eq!(*count.borrow(), 0, "or should short-circuit on first truthy");
 }
+
+#[test]
+fn macro_expanding_to_string_literal() {
+    // Mirrors `macro_expanding_to_ratio_works` — pins val_to_datum's
+    // Val::Str arm so a macro body that returns a string literal
+    // round-trips through expansion back into the source.
+    let mut vm = mv();
+    vm.eval_str("(defmacro greeting () `\"hello\")").unwrap();
+    assert_eq!(
+        format!("{}", vm.eval_str("(greeting)").unwrap()),
+        "\"hello\""
+    );
+}
+
+#[test]
+fn quasiquote_splices_string_literal() {
+    let mut vm = mv();
+    let out = vm
+        .eval_str("(let ((name \"world\")) `(\"hi\" ,name))")
+        .unwrap();
+    assert_eq!(format!("{out}"), "(\"hi\" \"world\")");
+}
