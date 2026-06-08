@@ -38,7 +38,7 @@ The `lisp` core stays zero-deps.
 The five CEK transition rules live in `crates/lisp/src/step.rs` — read that
 file before anything else; the rest of the engine is decoration.
 
-- `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec`
+- `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec | SetBang`
 - `val.rs` — runtime values: `Num | Ratio | Bool | Sym | Str | Nil | Cons | Clo | Prim`,
   plus `Arity` and `Display`. `Val::Prim` holds an
   `Rc<dyn Fn(&[Val]) -> Result<Val, String>>` so host prims can
@@ -46,7 +46,7 @@ file before anything else; the rest of the engine is decoration.
   they capture (ADR-017).
 - `env.rs` — Rc-linked immutable frames; each slot is an `Rc<RefCell<Val>>` to
   support letrec placeholder bindings
-- `k.rs` — continuation variants: `Halt | App | If | Letrec`
+- `k.rs` — continuation variants: `Halt | App | If | Letrec | SetBang`
 - `step.rs` — `step(State) -> Step` and the driver `run` loop. The
   engine no longer threads a `&World` through CEK state; that
   responsibility moved to host-owned prim closures (ADR-017).

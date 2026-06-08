@@ -472,6 +472,9 @@ gene work. Listed for context so we don't duplicate them:
 - **Structured errors.** `eval_str` returns `Result<Val,
   String>`. The web REPL and gene/spell labs surface those
   strings raw. For a real REPL, line/column info would be nice.
+  **Partially resolved 2026-05-31 (ADR-022)** — parse errors now
+  carry source spans; runtime errors still come back as plain
+  strings. Runtime structured errors remain open.
 - **The play loop.** Listed in the docs/let-rs.html "what comes
   after" — turn-based render/input/spell/world tick. The engine
   is ready; this is host-side work.

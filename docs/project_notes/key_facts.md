@@ -9,7 +9,7 @@
 - `runes`, `codons`, `strokes` crates: zero deps.
 - `world`, `genes`, `curves`, `macros` crates: depend only on `lisp`.
 - `spells` crate: depends on `lisp` + `macros` + `world` (the prelude uses defspell/defparam macros — ADR-025 — and the `install_with_world` helper combines the prelude + world installs).
-- `wasm` crate: `wasm-bindgen` (=0.2.114 pinned to match CLI), `console_error_panic_hook`, plus `macros` (for the user-facing REPL). Justified by ADR-002's "lisp stays platform-independent" caveat.
+- `wasm` crate: `wasm-bindgen` (=0.2.114 pinned to match CLI), `console_error_panic_hook`, plus all 9 sibling crates (`lisp`, `macros`, `runes`, `codons`, `strokes`, `spells`, `genes`, `curves`, `world`) — the bridge wires every lab through one cdylib. Justified by ADR-002's "lisp stays platform-independent" caveat.
 
 ## WASM toolchain
 
@@ -47,34 +47,46 @@ let-rs/
 ├── crates/
 │   ├── lisp/                  the engine — zero deps, no host types
 │   │   ├── src/{expr,val,env,k,step,prim,parse,lib}.rs
-│   │   ├── tests/             eval.rs 56, express.rs 19, host_prim.rs 3, world.rs 4
-│   │   ├── examples/{repl,spells,world,genes}.rs
-│   │   └── Cargo.toml         dev-deps: runes, codons, spells, genes, world
+│   │   ├── tests/             eval.rs 71, express.rs 19, host_prim.rs 3, world.rs 12
+│   │   ├── examples/{repl,spells,world,genes,curves}.rs
+│   │   └── Cargo.toml         dev-deps: runes, codons, strokes, spells, genes, curves, world, macros
 │   ├── runes/                 rune-tape lexer + resolver — zero deps
 │   │   ├── src/lib.rs         PLAIN / PARAM tables, tape_to_sexpr
-│   │   ├── tests/lex.rs       9 tests
+│   │   ├── tests/lex.rs       11 tests
 │   │   └── Cargo.toml
 │   ├── codons/                ASCII RNA codon tape lexer — zero deps
 │   │   ├── src/lib.rs         codon table, tape_to_sexpr
 │   │   ├── tests/lex.rs       6 tests
 │   │   └── Cargo.toml
-│   ├── spells/                rune prelude + install/install_with_world (ADR-016, ADR-025)
+│   ├── strokes/               turtle glyph tape lexer (ADR-019) — zero deps
+│   │   ├── src/lib.rs         stroke table, tape_to_sexpr (emits quoted symbols)
+│   │   ├── tests/lex.rs       8 tests
+│   │   └── Cargo.toml
+│   ├── macros/                defmacro + expander + macros stdlib (ADR-024)
+│   │   ├── src/lib.rs         Macro, Expander, MacroVm, val_to_datum, install_stdlib
+│   │   ├── tests/macros.rs    32 tests
+│   │   └── Cargo.toml         deps: lisp
+│   ├── spells/                rune prelude + install/install_with_world (ADR-016, ADR-025, ADR-028)
 │   │   ├── src/lib.rs         PRELUDE_DEFINES (defspell/defparam macros), install, install_with_world
-│   │   ├── tests/prelude.rs   5 tests
+│   │   ├── tests/prelude.rs   26 tests
 │   │   └── Cargo.toml         deps: lisp, macros, world
 │   ├── genes/                 genome prelude + express!/mutate!/breed!/render (ADR-016)
 │   │   ├── src/lib.rs         PRELUDE_DEFINES, install, seeded, render_creature
 │   │   └── Cargo.toml         deps: lisp
-│   ├── world/                 tile grid + 6 world prims (ADR-018, ADR-027)
-│   │   ├── src/lib.rs         Tile, World (with per-cell lifetime), pub mod world_prim
-│   │   ├── tests/decay.rs     7 tests (ADR-027)
+│   ├── curves/                L-system prelude + Turtle + draw!/render!/reset! prims (ADR-019)
+│   │   ├── src/lib.rs         Turtle (8-direction sparse canvas), PRELUDE_DEFINES, install, render
+│   │   ├── tests/cast.rs      12 tests
+│   │   └── Cargo.toml         deps: lisp
+│   ├── world/                 tile grid + world prims (ADR-018, ADR-027, ADR-029)
+│   │   ├── src/lib.rs         Tile, World (with per-cell lifetime + pending casts), pub mod world_prim
+│   │   ├── tests/decay.rs     8 tests
 │   │   └── Cargo.toml         deps: lisp
 │   ├── bench/                 criterion benches (core + demos)
 │   │   ├── benches/{core,demos}.rs
 │   │   └── Cargo.toml         deps: lisp, macros, runes, codons, spells, genes, world
 │   └── wasm/                  JS-facing bridge — wasm-bindgen cdylib
-│       ├── src/lib.rs         WasmVm wrapper, owns world handle
-│       └── Cargo.toml
+│       ├── src/lib.rs         WasmVm wrapper, owns world + turtle handles, wires all three labs
+│       └── Cargo.toml         deps: wasm-bindgen, console_error_panic_hook, + 9 sibling crates
 ├── web/                       browser shell — no bundler, plain ESM
 │   ├── {index,spells,genes,curves}.html
 │   ├── let-rs.html            dev log (narrative tour)
@@ -85,13 +97,16 @@ let-rs/
     └── project_notes/         this directory
 ```
 
-## Stats as of 2026-05-29 (after ADR-016/017/018 refactor sequence)
+## Stats as of 2026-06-07 (after ADR-024–031 — macros extraction, dynamic spells arc, strings)
 
-- Lisp tests: 56 + 19 + 3 + 4 = 82 (`tests/eval.rs`, `tests/express.rs`, `tests/host_prim.rs`, `tests/world.rs`)
-- Runes: 9 tests (`crates/runes/tests/lex.rs`)
-- Codons: 6 tests (`crates/codons/tests/lex.rs`)
-- **Total: 97 tests passing**
-- Dependencies in `lisp`: 0; in `runes`: 0; in `codons`: 0; in `genes`/`world`: 1 (lisp); in `spells`: 2 (lisp, world); in `wasm`: 2 (wasm-bindgen, console_error_panic_hook)
+- Lisp tests: 71 + 19 + 3 + 12 = 105 (`tests/eval.rs`, `tests/express.rs`, `tests/host_prim.rs`, `tests/world.rs`)
+- Macros: 32 tests (`crates/macros/tests/macros.rs`)
+- Runes: 11 tests; Codons: 6; Strokes: 8 (`crates/{runes,codons,strokes}/tests/lex.rs`)
+- Spells: 26 tests (`crates/spells/tests/prelude.rs`)
+- Curves: 12 tests (`crates/curves/tests/cast.rs`)
+- World: 8 tests (`crates/world/tests/decay.rs`)
+- **Total: 208 tests passing**
+- Dependencies in `lisp`/`runes`/`codons`/`strokes`: 0; in `genes`/`world`/`curves`/`macros`: 1 (lisp); in `spells`: 3 (lisp, macros, world); in `wasm`: 11 (wasm-bindgen, console_error_panic_hook, + all 9 sibling crates)
 - WASM artifact size: ~104 KB after `wasm-opt -Oz`; ~42 KB gzipped on the wire
 
 ## URLs / ports
