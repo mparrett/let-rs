@@ -58,7 +58,7 @@ points at the CEK loop, env, parser, or pure prims.
 once per setup via `iter_batched`, so iteration measures only the
 per-cast cost (not installation).
 
-- `cast_spell_canonical` — `ᚦ ᛞ 3 ᛇ` over a fresh 8×5 world.
+- `cast_spell_canonical` — `☲ ☴ 3 ☵` over a fresh 8×5 world.
 - `cast_genome_balanced` — one allele per trait, no mutation.
 - `cast_genome_with_mut` — same strand with a `MUT` codon;
   rational-rate `mutate!` path.

@@ -18,7 +18,7 @@ use world::World;
 fn bench_cast_spell(c: &mut Criterion) {
     // The canonical four-rune cast: fire, area-3, ice. Mirrors what
     // `examples/spells.rs` and the WASM Spell Lab run on every click.
-    let list = rune_tape_to_sexpr("ᚦ ᛞ 3 ᛇ").unwrap();
+    let list = rune_tape_to_sexpr("☲ ☴ 3 ☵").unwrap();
     let body =
         format!("(world-apply! (assoc-set 'tx 4 (assoc-set 'ty 2 (thread (start) {list}))))");
     c.bench_function("cast_spell_canonical", |b| {
