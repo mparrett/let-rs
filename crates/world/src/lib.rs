@@ -214,6 +214,7 @@ impl World {
     ///     that hit zero revert to Floor (ADR-027).
     ///  2. Every pending aftershock decrements; entries that hit
     ///     zero fire (`paint_area`) and drop out (ADR-029).
+    ///
     /// Returns the number of tiles that reverted (kept this shape
     /// for back-compat with the world-tick! prim — fired aftershocks
     /// show up via grid changes + log entries instead).
