@@ -2,7 +2,7 @@
 //!
 //! A DSL layer on top of the [`lisp`](../lisp/index.html) crate. Each rune
 //! is mapped to a primitive name; parametrized runes pair with the
-//! immediately following numeral (e.g. `ᛞ 3` → `(area 3)`). The output is
+//! immediately following numeral (e.g. `☴ 3` → `(area 3)`). The output is
 //! a `(list …)` expression that callers wrap in their own spell pipeline
 //! (`(thread (start) …)` for the in-Vm demo; `(world-apply! (thread …))`
 //! for the resolver path used by the WASM bridge).
@@ -11,29 +11,30 @@
 //! about a particular DSL surface) while letting every host of the spell
 //! pipeline reuse one source of truth — see ADR-007 and ADR-010.
 
-/// Plain runes: each chosen by its Elder Futhark meaning. Maps to a
-/// unary `ctx → ctx` primitive name.
+/// Plain runes: the I Ching trigrams (bagua), each chosen so its classical
+/// element/force matches the primitive it names. Maps to a unary
+/// `ctx → ctx` primitive name.
 pub const PLAIN: &[(char, &str)] = &[
-    ('ᚦ', "fire"),  // THURISAZ — thorn, sharp/destructive
-    ('ᛇ', "ice"),   // EIHWAZ   — yew, winter-hardy evergreen
-    ('ᛏ', "earth"), // TIWAZ    — warrior, solid ground. Third base
+    ('☲', "fire"),  // LI    — fire, the clinging, radiance
+    ('☵', "ice"),   // KAN   — water, the abysmal, the cold deep
+    ('☷', "earth"), // KUN   — earth, the receptive, solid ground. Third base
     //          element; pairs with fire/ice via the
     //          alchemy mix table in the spells prelude
     //          (ADR-030).
-    ('ᛚ', "bolt"), // LAGUZ    — water, flow
-    ('ᛗ', "self"), // MANNAZ   — man, the self
+    ('☳', "bolt"), // ZHEN  — thunder, the arousing, a sudden shock
+    ('☶', "self"), // GEN   — mountain, keeping still: the immovable self
 ];
 
 /// Parametrized runes: each maps to `n → ctx → ctx`. Consumes the
 /// immediately following numeral.
 pub const PARAM: &[(char, &str)] = &[
-    ('ᛞ', "area"),  // DAGAZ  — day, expansion. Square neighborhood radius.
-    ('ᛟ', "power"), // OTHALA — inheritance, legacy. Drives tile lifetime
+    ('☴', "area"),  // XUN   — wind, the gentle: spreads and penetrates outward
+    ('☰', "power"), // QIAN  — heaven, the creative, force. Drives tile lifetime
     //          (how long the painted effect lingers).
-    ('ᛃ', "aftershock"), // JERA   — year, cycle, harvest. Schedules a delayed
-                         //          re-cast of the same effect: the spell fires
-                         //          now AND fires again N ticks later (once).
-                         //          Seed now, reap later. Adds to mana cost.
+    ('☱', "aftershock"), // DUI   — lake, the joyous: a ripple that returns.
+                         //          Schedules a delayed re-cast of the same
+                         //          effect: the spell fires now AND fires again
+                         //          N ticks later (once). Adds to mana cost.
 ];
 
 #[derive(Debug, Clone)]

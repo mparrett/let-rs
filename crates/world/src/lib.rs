@@ -64,7 +64,7 @@ impl Tile {
 }
 
 /// A cast scheduled to fire on a future tick. Aftershock effect from
-/// the `ᛃ` rune (ADR-029): the caller pays the mana cost up front,
+/// the `☱` rune (ADR-029): the caller pays the mana cost up front,
 /// the world reschedules the same area-paint to land later. The
 /// pending cast carries everything `paint_area` needs to replay the
 /// effect (element, target, area, lifetime); it does NOT carry its

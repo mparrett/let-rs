@@ -3111,3 +3111,54 @@ Concretely:
   interned today; both pay `Rc::clone` + content equality. If a
   benchmark exposes the cost we can add a symbol table; until
   then, "compare by content" is the consistent story.
+
+## ADR-032: Rune alphabet — Elder Futhark → I Ching trigrams (2026-07-23)
+
+**Context**: The spell DSL's rune alphabet was Elder Futhark, each glyph
+chosen so its rune meaning matched the primitive it names (THURISAZ/thorn →
+fire, EIHWAZ/yew → ice, and so on). The project's spell DSL is a clean-room
+homage to [xsofy](https://github.com/nooga/xsofy), which *also* draws its
+rune alphabet from Elder Futhark (though xsofy randomizes the glyph→primitive
+mapping per run, so no fixed meaning is shared). To make the visual identity
+our own — a respectful nudge away from sharing xsofy's alphabet outright —
+the glyph system moves to something distinct, while keeping every primitive
+name unchanged.
+
+**Decision**: Adopt the eight I Ching trigrams (bagua) as the rune alphabet.
+Each trigram already denotes an element or natural force, so the mapping stays
+meaning-driven rather than arbitrary:
+
+| glyph | trigram | element / force | primitive |
+|-------|---------|-----------------|-----------|
+| ☲ | Li   | fire, the clinging     | `fire`       |
+| ☵ | Kan  | water, the abysmal     | `ice`        |
+| ☷ | Kun  | earth, the receptive   | `earth`      |
+| ☳ | Zhen | thunder, the arousing  | `bolt`       |
+| ☶ | Gen  | mountain, keeping still| `self`       |
+| ☴ | Xun  | wind, the gentle       | `area`       |
+| ☰ | Qian | heaven, the creative   | `power`      |
+| ☱ | Dui  | lake, the joyous       | `aftershock` |
+
+Only the `(char, name)` table in `crates/runes/src/lib.rs` and the surface
+that shows glyphs (the web palette + quick-tape examples, the dev log) change.
+Primitive names are untouched, so the spell prelude, the resolver, `world`,
+and every test keep working — the swap is a relabeling of the input alphabet,
+not a change to the language or the DSL semantics.
+
+**Why trigrams**:
+- **+** Exactly eight — one per current rune, no glyph left arbitrary.
+- **+** Each is already an element/force, so the meaning-driven mapping the
+  Futhark set had is preserved (arguably tighter: ☳ Zhen *is* thunder for
+  `bolt`, ☲ Li *is* fire).
+- **+** BMP Unicode (`U+2630`–`U+2637`), monochrome, rendered by common system
+  fonts — verified in the playground (no bundled font needed, unlike the
+  alchemical-symbol block).
+- **+** A 64-hexagram runway if the rune vocabulary ever outgrows eight.
+- **~** Reads "eastern" rather than "arcane-western"; a deliberate trade for
+  distinctiveness.
+
+**Supersedes**: the Elder Futhark glyph choices in ADR-010 (and the specific
+glyphs named in ADR-029/ADR-030). Those ADRs are left as written — historical
+record of the decisions at the time. This ADR plus `crates/runes/src/lib.rs`
+are the current source of truth for the glyph table. The `codons` and `strokes`
+tapes (separate DSLs) are unaffected.

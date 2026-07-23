@@ -928,30 +928,31 @@
         </p>
 
         <p style="margin: 18px 0 22px;">
-          <span class="tape">ᚦ</span>
-          <span class="tape">ᚦ ᛞ 3 ᛇ</span>
-          <span class="tape">ᛚ ᚦ ᛟ 5</span>
-          <span class="tape">ᛗ ᛇ ᛞ 2</span>
+          <span class="tape">☲</span>
+          <span class="tape">☲ ☴ 3 ☵</span>
+          <span class="tape">☳ ☲ ☰ 5</span>
+          <span class="tape">☶ ☵ ☴ 2</span>
         </p>
 
         <p>
           A ~50-line Rust translator (<code>examples/spells.rs</code>) tokenizes
-          each rune through a table: plain runes (<code>ᚦ → fire</code>) become
-          unary primitives; parametrized runes (<code>ᛞ → area</code>,
-          <code>ᛟ → power</code>) pair with the following numeral. The result
+          each rune through a table: plain runes (<code>☲ → fire</code>) become
+          unary primitives; parametrized runes (<code>☴ → area</code>,
+          <code>☰ → power</code>) pair with the following numeral. The result
           is an s-expression that wraps the rune list in a user-level threading
           combinator:
         </p>
 
         <p class="note">
-          Each rune is chosen by its Elder Futhark meaning — <code>ᚦ</code>
-          THURISAZ (thorn) for fire, <code>ᛇ</code> EIHWAZ (yew) for ice,
-          <code>ᛚ</code> LAGUZ (water) for bolt, <code>ᛗ</code> MANNAZ (man)
-          for self, <code>ᛞ</code> DAGAZ (day) for area,
-          <code>ᛟ</code> OTHALA (legacy) for power.
+          Each rune is an I Ching trigram whose classical element matches the
+          primitive it names — <code>☲</code> Li (fire) for fire,
+          <code>☵</code> Kan (water) for ice, <code>☳</code> Zhen (thunder)
+          for bolt, <code>☶</code> Gen (mountain, stillness) for self,
+          <code>☴</code> Xun (wind) for area, and <code>☰</code> Qian
+          (heaven, the creative) for power.
         </p>
 
-        <div class="boxed code-wrap" data-label="ᚦ ᛞ 3 ᛇ · compiled">
+        <div class="boxed code-wrap" data-label="☲ ☴ 3 ☵ · compiled">
         <pre class="code"><span class="vio">(thread (start) (list</span> <span class="hl">fire</span> <span class="hl">(area 3)</span> <span class="hl">ice</span><span class="vio">))</span></pre>
         </div>
 
@@ -989,7 +990,7 @@
 
         <p class="note">
           Notice what happens when a tape mentions two elements:
-          <code>ᚦ ᛞ 3 ᛇ</code> produces a ctx with both
+          <code>☲ ☴ 3 ☵</code> produces a ctx with both
           <code>(element . fire)</code> and <code>(element . ice)</code> still
           present. The resolver currently takes the freshest, but the older
           binding hasn't been erased — it's structurally still there. This is
@@ -1667,7 +1668,7 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         </p>
 
         <p>
-          <strong>ADR-029 · aftershocks.</strong> The ᛃ JERA rune
+          <strong>ADR-029 · aftershocks.</strong> The ☱ Dui (lake) trigram
           schedules a cast to re-fire N ticks later — a fire that
           reignites after it dies, an ice patch that blooms twice. An
           exploratory split of <code>duration</code> out of

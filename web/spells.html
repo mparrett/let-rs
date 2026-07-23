@@ -30,17 +30,17 @@
         <h2>Spell Lab</h2>
 
         <div class="palette" id="rune-palette" aria-label="rune buttons">
-          <button type="button" class="rune"        data-rune="ᚦ"  title="fire (element)">ᚦ</button>
-          <button type="button" class="rune"        data-rune="ᛇ"  title="ice (element)">ᛇ</button>
-          <button type="button" class="rune"        data-rune="ᛏ"  title="earth (element)">ᛏ</button>
+          <button type="button" class="rune"        data-rune="☲"  title="fire (element)">☲</button>
+          <button type="button" class="rune"        data-rune="☵"  title="ice (element)">☵</button>
+          <button type="button" class="rune"        data-rune="☷"  title="earth (element)">☷</button>
           <span class="palette-sep"></span>
-          <button type="button" class="rune"        data-rune="ᛚ"  title="bolt (shape)">ᛚ</button>
+          <button type="button" class="rune"        data-rune="☳"  title="bolt (shape)">☳</button>
           <span class="palette-sep"></span>
-          <button type="button" class="rune"        data-rune="ᛗ"  title="self (target)">ᛗ</button>
+          <button type="button" class="rune"        data-rune="☶"  title="self (target)">☶</button>
           <span class="palette-sep"></span>
-          <button type="button" class="rune param"  data-rune="ᛞ "  title="area (followed by a number)">ᛞ</button>
-          <button type="button" class="rune param"  data-rune="ᛟ "  title="power (followed by a number)">ᛟ</button>
-          <button type="button" class="rune param"  data-rune="ᛃ "  title="aftershock — delayed re-cast after N ticks (followed by a number)">ᛃ</button>
+          <button type="button" class="rune param"  data-rune="☴ "  title="area (followed by a number)">☴</button>
+          <button type="button" class="rune param"  data-rune="☰ "  title="power (followed by a number)">☰</button>
+          <button type="button" class="rune param"  data-rune="☱ "  title="aftershock — delayed re-cast after N ticks (followed by a number)">☱</button>
           <span class="palette-sep"></span>
           <button type="button" class="rune digit" data-rune="1">1</button>
           <button type="button" class="rune digit" data-rune="2">2</button>
@@ -52,7 +52,7 @@
         <label class="field">
           <span>tape</span>
           <div class="input-row">
-            <input type="text" id="tape" value="ᚦ ᛇ ᛞ 3" autocomplete="off" spellcheck="false">
+            <input type="text" id="tape" value="☲ ☵ ☴ 3" autocomplete="off" spellcheck="false">
             <button type="button" class="rune ctl" id="clear-tape" title="clear tape">⌫</button>
           </div>
         </label>
@@ -97,17 +97,17 @@
       <details class="cheatsheet spells side" open>
         <summary>quick tapes</summary>
         <ul>
-          <li><code class="tape-example" data-tape="ᚦ">ᚦ</code> — single fire tile</li>
-          <li><code class="tape-example" data-tape="ᚦ ᛞ 1">ᚦ ᛞ 1</code> — 3×3 fire patch</li>
-          <li><code class="tape-example" data-tape="ᚦ ᛇ">ᚦ ᛇ</code> — fire + ice → water (alchemy!)</li>
-          <li><code class="tape-example" data-tape="ᚦ ᛏ">ᚦ ᛏ</code> — fire + earth → lava</li>
-          <li><code class="tape-example" data-tape="ᚦ ᛇ ᛏ">ᚦ ᛇ ᛏ</code> — cascade: fire+ice → water, water+earth → mud</li>
-          <li><code class="tape-example" data-tape="ᚦ ᛇ ᛞ 3">ᚦ ᛇ ᛞ 3</code> — 7×7 water arena (fire + ice mixed, then area-3)</li>
-          <li><code class="tape-example" data-tape="ᛇ ᛞ 2">ᛇ ᛞ 2</code> — 5×5 ice arena</li>
-          <li><code class="tape-example" data-tape="ᛗ ᛇ">ᛗ ᛇ</code> — self-targeted ice (sets :target self)</li>
-          <li><code class="tape-example" data-tape="ᛚ ᚦ ᛟ 5">ᛚ ᚦ ᛟ 5</code> — bolt + fire + power-5 (:shape and :power linger in ctx)</li>
-          <li><code class="tape-example" data-tape="ᚦ ᛟ 1 ᛃ 3">ᚦ ᛟ 1 ᛃ 3</code> — short fire (power 1) that reignites 3 ticks after it dies</li>
-          <li><code class="tape-example" data-tape="ᛇ ᛞ 1 ᛟ 2 ᛃ 5">ᛇ ᛞ 1 ᛟ 2 ᛃ 5</code> — 3×3 ice patch (power 2) with a delayed re-cast at tick 5</li>
+          <li><code class="tape-example" data-tape="☲">☲</code> — single fire tile</li>
+          <li><code class="tape-example" data-tape="☲ ☴ 1">☲ ☴ 1</code> — 3×3 fire patch</li>
+          <li><code class="tape-example" data-tape="☲ ☵">☲ ☵</code> — fire + ice → water (alchemy!)</li>
+          <li><code class="tape-example" data-tape="☲ ☷">☲ ☷</code> — fire + earth → lava</li>
+          <li><code class="tape-example" data-tape="☲ ☵ ☷">☲ ☵ ☷</code> — cascade: fire+ice → water, water+earth → mud</li>
+          <li><code class="tape-example" data-tape="☲ ☵ ☴ 3">☲ ☵ ☴ 3</code> — 7×7 water arena (fire + ice mixed, then area-3)</li>
+          <li><code class="tape-example" data-tape="☵ ☴ 2">☵ ☴ 2</code> — 5×5 ice arena</li>
+          <li><code class="tape-example" data-tape="☶ ☵">☶ ☵</code> — self-targeted ice (sets :target self)</li>
+          <li><code class="tape-example" data-tape="☳ ☲ ☰ 5">☳ ☲ ☰ 5</code> — bolt + fire + power-5 (:shape and :power linger in ctx)</li>
+          <li><code class="tape-example" data-tape="☲ ☰ 1 ☱ 3">☲ ☰ 1 ☱ 3</code> — short fire (power 1) that reignites 3 ticks after it dies</li>
+          <li><code class="tape-example" data-tape="☵ ☴ 1 ☰ 2 ☱ 5">☵ ☴ 1 ☰ 2 ☱ 5</code> — 3×3 ice patch (power 2) with a delayed re-cast at tick 5</li>
         </ul>
       </details>
 

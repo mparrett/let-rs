@@ -32,12 +32,12 @@ fn main() {
     spells::install(&mut vm);
     println!("let-rs spell demo\n================\n");
 
-    cast(&mut vm, "ᚦ"); // just fire
-    cast(&mut vm, "ᚦ ᛞ 3 ᛇ"); // the canonical example: fire, area-3, ice
-    cast(&mut vm, "ᛚ ᚦ ᛟ 5"); // bolt + fire + power-5
-    cast(&mut vm, "ᛗ ᛇ ᛞ 2"); // self-targeted ice area-2
+    cast(&mut vm, "☲"); // just fire
+    cast(&mut vm, "☲ ☴ 3 ☵"); // the canonical example: fire, area-3, ice
+    cast(&mut vm, "☳ ☲ ☰ 5"); // bolt + fire + power-5
+    cast(&mut vm, "☶ ☵ ☴ 2"); // self-targeted ice area-2
 
     // intentional failures, to show error surfaces
-    cast(&mut vm, "ᚦ ᛞ"); // ᛞ expects a number
+    cast(&mut vm, "☲ ☴"); // ☴ expects a number
     cast(&mut vm, "x"); // unknown rune
 }
