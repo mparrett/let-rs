@@ -9,6 +9,15 @@ hundred lines of Rust — and once you have it, everything else is just
 vocabulary. To prove the point, that vocabulary becomes three rune-tape DSLs:
 spells, genes, and curves.
 
+## Live
+
+The browser playground (REPL + all three labs, WASM) runs at
+**[mparrett.github.io/let-rs](https://mparrett.github.io/let-rs/)** —
+[Spell Lab](https://mparrett.github.io/let-rs/spells.html) ·
+[Gene Lab](https://mparrett.github.io/let-rs/genes.html) ·
+[Curve Lab](https://mparrett.github.io/let-rs/curves.html) ·
+[dev log](https://mparrett.github.io/let-rs/let-rs.html).
+
 ## Try it
 
 ```bash

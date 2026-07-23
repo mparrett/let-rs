@@ -1,0 +1,67 @@
+name: Deploy Pages
+
+on:
+  push:
+    branches: [main]
+    # Redeploy when the site or anything the wasm bundle is built from changes.
+    paths:
+      - 'web/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'justfile'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Least-privilege token scoped for Pages deploys.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialize deploys; don't cancel an in-flight one mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      # wasm-bindgen-cli is pinned to match crates/wasm/Cargo.toml (=0.2.114);
+      # bump both together. `just` runs the same wasm-build recipe as local dev;
+      # wasm-opt (binaryen) does the -Oz size pass.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.114,just,wasm-opt
+
+      - name: Build wasm bundle
+        run: just wasm-build
+
+      # web/ (now holding the built web/pkg/) is the site root. .nojekyll
+      # serves the wasm + JS modules verbatim (no Jekyll transform).
+      - name: Assemble site
+        run: |
+          cp -R web _site
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
