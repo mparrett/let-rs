@@ -188,7 +188,11 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
             }))
         }
 
-        K::SetBang { name, env, k: outer } => {
+        K::SetBang {
+            name,
+            env,
+            k: outer,
+        } => {
             env.set(name, v.clone())?;
             Ok(Step::Continue(State {
                 mode: Mode::Apply(v),

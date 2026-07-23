@@ -112,10 +112,8 @@ fn macro_expanding_to_define_works_at_top_level() {
     // expansion goes through `expand_top_level` and the define is
     // honored.
     let mut vm = mv();
-    vm.eval_str(
-        "(defmacro defconst (name val) `(define ,name ,val))",
-    )
-    .unwrap();
+    vm.eval_str("(defmacro defconst (name val) `(define ,name ,val))")
+        .unwrap();
     vm.eval_str("(defconst answer 42)").unwrap();
     assert_eq!(format!("{}", vm.eval_str("answer").unwrap()), "42");
 }
@@ -183,10 +181,7 @@ fn stdlib_begin_returns_last_value() {
 fn stdlib_begin_single_arg_passes_through() {
     let mut vm = MacroVm::with_stdlib();
     assert_eq!(format!("{}", vm.eval_str("(begin 42)").unwrap()), "42");
-    assert_eq!(
-        format!("{}", vm.eval_str("(begin (+ 1 2))").unwrap()),
-        "3"
-    );
+    assert_eq!(format!("{}", vm.eval_str("(begin (+ 1 2))").unwrap()), "3");
 }
 
 #[test]
@@ -196,15 +191,17 @@ fn stdlib_begin_evaluates_in_order() {
     let mut vm = MacroVm::with_stdlib();
     let order = std::rc::Rc::new(std::cell::RefCell::new(Vec::<i64>::new()));
     let order_clone = order.clone();
-    vm.vm.register_prim("note!", lisp::val::Arity::Exact(1), move |args| {
-        if let lisp::Val::Num(n) = &args[0] {
-            order_clone.borrow_mut().push(*n);
-            Ok(lisp::Val::Num(*n))
-        } else {
-            Err("note!: expected num".into())
-        }
-    });
-    vm.eval_str("(begin (note! 1) (note! 2) (note! 3))").unwrap();
+    vm.vm
+        .register_prim("note!", lisp::val::Arity::Exact(1), move |args| {
+            if let lisp::Val::Num(n) = &args[0] {
+                order_clone.borrow_mut().push(*n);
+                Ok(lisp::Val::Num(*n))
+            } else {
+                Err("note!: expected num".into())
+            }
+        });
+    vm.eval_str("(begin (note! 1) (note! 2) (note! 3))")
+        .unwrap();
     assert_eq!(*order.borrow(), vec![1, 2, 3]);
 }
 
@@ -250,10 +247,7 @@ fn stdlib_when_falsy_returns_false() {
 #[test]
 fn stdlib_when_multi_body_sequences_via_begin() {
     let mut vm = MacroVm::with_stdlib();
-    assert_eq!(
-        format!("{}", vm.eval_str("(when #t 1 2 3)").unwrap()),
-        "3"
-    );
+    assert_eq!(format!("{}", vm.eval_str("(when #t 1 2 3)").unwrap()), "3");
 }
 
 #[test]
@@ -343,7 +337,11 @@ fn stdlib_or_does_not_double_evaluate_args() {
         });
     // First call returns 1 (truthy) and `or` should NOT re-run it.
     vm.eval_str("(or (bump!) (bump!))").unwrap();
-    assert_eq!(*count.borrow(), 1, "or must evaluate its first arg exactly once");
+    assert_eq!(
+        *count.borrow(),
+        1,
+        "or must evaluate its first arg exactly once"
+    );
 }
 
 #[test]
@@ -358,7 +356,11 @@ fn stdlib_or_short_circuits() {
         });
     // First arg is truthy, so (bump!) in tail must NOT run.
     vm.eval_str("(or 1 (bump!))").unwrap();
-    assert_eq!(*count.borrow(), 0, "or should short-circuit on first truthy");
+    assert_eq!(
+        *count.borrow(),
+        0,
+        "or should short-circuit on first truthy"
+    );
 }
 
 #[test]

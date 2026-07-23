@@ -597,9 +597,7 @@ fn letrec_does_not_leak() {
     // `Weak<Store>` taken before the Vm dropped.
     let mut vm = lisp::Vm::new();
     let store_weak = vm.store_weak();
-    let v = vm
-        .eval_str("(letrec ((f (lambda () (f)))) f)")
-        .unwrap();
+    let v = vm.eval_str("(letrec ((f (lambda () (f)))) f)").unwrap();
     // Sanity: the letrec did allocate at least one slot.
     let store_pre_drop = store_weak
         .upgrade()
@@ -693,10 +691,7 @@ fn set_bang_evaluates_value_in_current_env() {
     // The value position is a normal expression. The reference to x in
     // (* x 2) resolves against the env at the set! site, including the
     // about-to-be-mutated binding.
-    assert_eq!(
-        eval("(let ((x 7)) (let ((_ (set! x (* x 2)))) x))"),
-        "14"
-    );
+    assert_eq!(eval("(let ((x 7)) (let ((_ (set! x (* x 2)))) x))"), "14");
 }
 
 #[test]
@@ -755,10 +750,7 @@ fn string_length_counts_chars() {
 fn string_append_variadic() {
     assert_eq!(eval("(string-append)"), "\"\"");
     assert_eq!(eval("(string-append \"foo\")"), "\"foo\"");
-    assert_eq!(
-        eval("(string-append \"foo\" \"-\" \"bar\")"),
-        "\"foo-bar\""
-    );
+    assert_eq!(eval("(string-append \"foo\" \"-\" \"bar\")"), "\"foo-bar\"");
 }
 
 #[test]

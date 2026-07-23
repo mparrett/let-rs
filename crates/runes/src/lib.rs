@@ -27,9 +27,9 @@ pub const PLAIN: &[(char, &str)] = &[
 /// Parametrized runes: each maps to `n → ctx → ctx`. Consumes the
 /// immediately following numeral.
 pub const PARAM: &[(char, &str)] = &[
-    ('ᛞ', "area"),       // DAGAZ  — day, expansion. Square neighborhood radius.
-    ('ᛟ', "power"),      // OTHALA — inheritance, legacy. Drives tile lifetime
-                         //          (how long the painted effect lingers).
+    ('ᛞ', "area"),  // DAGAZ  — day, expansion. Square neighborhood radius.
+    ('ᛟ', "power"), // OTHALA — inheritance, legacy. Drives tile lifetime
+    //          (how long the painted effect lingers).
     ('ᛃ', "aftershock"), // JERA   — year, cycle, harvest. Schedules a delayed
                          //          re-cast of the same effect: the spell fires
                          //          now AND fires again N ticks later (once).

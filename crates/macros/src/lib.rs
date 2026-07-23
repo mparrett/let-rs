@@ -489,4 +489,3 @@ fn datum_to_source(d: &Datum, out: &mut String) {
         }
     }
 }
-
