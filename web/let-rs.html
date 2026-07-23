@@ -702,6 +702,9 @@
     html.accordion-ready .act-content {
       max-height: 8em;
       overflow: hidden;
+      /* Whole collapsed preview is a tap target that expands the section
+         (the heading alone is a small target, especially on mobile). */
+      cursor: pointer;
       -webkit-mask-image: linear-gradient(to bottom, black 25%, transparent 100%);
               mask-image: linear-gradient(to bottom, black 25%, transparent 100%);
       transition:
@@ -711,6 +714,7 @@
     }
     html.accordion-ready .is-expanded .act-content {
       max-height: 12000px;
+      cursor: auto;
       -webkit-mask-image: none;
               mask-image: none;
     }
@@ -1918,6 +1922,16 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
             e.preventDefault();
             toggle();
           }
+        });
+
+        // Tapping the clamped preview expands the section — a larger tap
+        // target than the heading. Expand-only: once open, content clicks
+        // are left alone so reading/selecting/link-following isn't hijacked
+        // (the heading still collapses). Skip clicks on interactive elements.
+        content.addEventListener('click', function (e) {
+          if (section.classList.contains('is-expanded')) return;
+          if (e.target.closest('a, button, input, textarea, select, label')) return;
+          toggle();
         });
       });
 
