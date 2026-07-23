@@ -61,9 +61,23 @@ fn world_new_rejects_unaddressable_dims() {
     // and height huge but tiles size 1 — a fully-broken World.
     let r = World::new(u32::MAX, u32::MAX);
     assert!(
-        matches!(&r, Err(e) if e.contains("addressable")),
-        "expected addressable-cells error, got {r:?}"
+        matches!(&r, Err(e) if e.contains("cells")),
+        "expected cell-cap error, got {r:?}"
     );
+}
+
+#[test]
+fn world_new_rejects_oversized_but_addressable_dims() {
+    // 40_000 × 40_000 = 1.6e9 cells: under the old isize::MAX guard, so it
+    // used to allocate ~gigabytes and abort. The cell cap now rejects it
+    // cleanly (the size a JS-reachable `new(w, h)` could otherwise trigger).
+    let r = World::new(40_000, 40_000);
+    assert!(
+        matches!(&r, Err(e) if e.contains("cells")),
+        "expected cell-cap error, got {r:?}"
+    );
+    // A normal display-sized grid still builds.
+    assert!(World::new(200, 200).is_ok());
 }
 
 // ── tile decay via lisp (ADR-027) ─────────────────────────────────

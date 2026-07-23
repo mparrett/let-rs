@@ -384,3 +384,20 @@ fn quasiquote_splices_string_literal() {
         .unwrap();
     assert_eq!(format!("{out}"), "(\"hi\" \"world\")");
 }
+
+#[test]
+fn self_referential_macro_errors_instead_of_overflowing() {
+    // A macro that expands to a call to itself re-expands forever as native
+    // recursion (the Vm step budget only bounds evaluation). The expansion
+    // depth cap must convert that into a clean error, not a stack overflow.
+    let mut vm = mv();
+    vm.eval_str("(defmacro foo (x) `(foo ,x))").unwrap();
+    let r = vm.eval_str("(foo 1)");
+    assert!(
+        matches!(&r, Err(e) if e.contains("expansion too deep")),
+        "expected expansion-depth error, got {r:?}"
+    );
+    // A well-behaved macro alongside it still expands normally.
+    vm.eval_str("(defmacro twice (x) `(+ ,x ,x))").unwrap();
+    assert_eq!(format!("{}", vm.eval_str("(twice 21)").unwrap()), "42");
+}

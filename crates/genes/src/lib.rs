@@ -464,7 +464,7 @@ fn num(v: Val) -> Option<i64> {
 }
 
 fn sym(v: Val) -> Option<String> {
-    if let Val::Sym(s) = v {
+    if let Val::Sym(s) = &v {
         Some(s.to_string())
     } else {
         None

@@ -241,7 +241,11 @@ fn apply(evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
     let mut it = evaled.into_iter();
     let f = it.next().expect("apply with no fn");
     let args: Vec<Val> = it.collect();
-    match f {
+    // Borrow rather than move out of `f`: `Val` implements `Drop` (to
+    // dismantle cons spines iteratively), which forbids by-value
+    // destructuring. Clo/Prim aren't cons cells, so their `Drop` is a
+    // no-op; the only cost here is a few cheap `Rc` clones per call.
+    match &f {
         Val::Clo { params, body, env } => {
             if params.len() != args.len() {
                 return Err(format!(
@@ -250,15 +254,19 @@ fn apply(evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
                     args.len()
                 ));
             }
-            let env = env.extend_many(params.into_iter().zip(args));
+            let env = env.extend_many(params.iter().cloned().zip(args));
             // Tail-call note: we pass `k` through unchanged. No frame pushed for
             // entering the closure body, so a tail call grows nothing.
             Ok(Step::Continue(State {
-                mode: Mode::Eval(body, env),
+                mode: Mode::Eval(Rc::clone(body), env),
                 k,
             }))
         }
-        Val::Prim { name, arity, f } => {
+        Val::Prim {
+            name,
+            arity,
+            f: prim,
+        } => {
             if !arity.accepts(args.len()) {
                 return Err(format!(
                     "{name}: arity {}, got {}",
@@ -266,7 +274,7 @@ fn apply(evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
                     args.len()
                 ));
             }
-            let v = f(&args)?;
+            let v = prim(&args)?;
             Ok(Step::Continue(State {
                 mode: Mode::Apply(v),
                 k,

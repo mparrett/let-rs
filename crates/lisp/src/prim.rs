@@ -165,7 +165,11 @@ fn modulo(args: &[Val]) -> R {
             if *b == 0 {
                 return Err("mod: division by zero".into());
             }
-            Ok(Val::Num(a.rem_euclid(*b)))
+            // rem_euclid also panics on division overflow (i64::MIN % -1);
+            // checked_rem_euclid returns None there instead of aborting.
+            a.checked_rem_euclid(*b)
+                .map(Val::Num)
+                .ok_or_else(|| "mod: overflow".into())
         }
         _ => Err("mod: expected two integers".into()),
     }
