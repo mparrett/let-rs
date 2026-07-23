@@ -44,8 +44,15 @@ file before anything else; the rest of the engine is decoration.
   `Rc<dyn Fn(&[Val]) -> Result<Val, String>>` so host prims can
   capture state at registration time without the engine knowing what
   they capture (ADR-017).
-- `env.rs` — Rc-linked immutable frames; each slot is an `Rc<RefCell<Val>>` to
-  support letrec placeholder bindings
+- `env.rs` — Rc-linked immutable frames. Post-ADR-023 (CESK) each
+  frame carries a `Copy` `Addr` into the Vm's `Store` rather than an
+  `Rc<RefCell<Val>>` per slot; the top-level `globals` table kept its
+  `Rc<RefCell<Val>>` cells (for the ADR-015 `Weak` back-edge). Letrec
+  placeholders live in the store.
+- `store.rs` — the CESK `Store` (ADR-023): an append-only
+  `Vec<Val>` addressed by `Addr(u32)`. Frame slots and letrec
+  placeholders are `Addr`s into it, so a closure capturing an env
+  holds cheap `Copy` indices instead of refcounted cells.
 - `k.rs` — continuation variants: `Halt | App | If | Letrec | SetBang`
 - `step.rs` — `step(State) -> Step` and the driver `run` loop. The
   engine no longer threads a `&World` through CEK state; that
@@ -280,13 +287,22 @@ ships a larger bundle.
 
 ## Project Memory
 
-Memory files live in `docs/project_notes/`.
+Durable, reader-facing project docs live in `docs/project_notes/` (plus
+`docs/style.md`) — read and update these:
 
 **Before proposing changes**: Check `decisions.md` for existing ADRs
 **When encountering errors**: Search `bugs.md` for known solutions
 **When looking up config**: Check `key_facts.md` for ports, URLs, environments
+**When planning engine work**: Check `core-followups.md` for the roadmap
 **When asked about "world" or host coupling**: Read `host-state.md`
   for context on what `World` actually is, why it's not generic, and
   where it might go.
 
 When resolving bugs or making decisions, update the relevant file.
+
+**Keep internal working notes out of this repo.** Audits, bug/incident
+logs, session handoffs, review transcripts, and issue/feature stubs are
+process artifacts, not public reference — they live in the out-of-repo
+notes archive (`project-docs/docs/let-rs/`), never committed here.
+`docs/project_notes/` is only for durable docs a public visitor should
+see. (Earlier such material has already been archived out of this repo.)

@@ -3,8 +3,10 @@ members  = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-edition = "2024"
-license = "MIT"
+edition     = "2024"
+license     = "MIT"
+repository  = "https://github.com/mparrett/let-rs"
+description = "A small functional Lisp on a CEK abstract machine, in zero-dependency Rust"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

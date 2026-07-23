@@ -11,12 +11,12 @@ scratch next time someone asks "what's World, exactly?"
 
 ## What World is, concretely
 
-`crates/lisp/src/world.rs` defines `World`: a `width × height` tile
-grid (`Floor | Wall | Fire | Ice`) and an append-only `log:
-Vec<String>`. ~100 LOC of struct + helpers.
-`crates/lisp/src/world_prim.rs` adds five lisp-callable prims that
-read or mutate it: `world-tile`, `world-set-tile!`, `world-log!`,
-`world-size`, `world-apply!`.
+`crates/world/src/lib.rs` defines `World`: a `width × height` tile
+grid, per-cell lifetimes, and an append-only `log: Vec<String>` (moved
+out of the `lisp` crate by ADR-018). `crates/world/src/world_prim.rs`
+adds the lisp-callable prims that read or mutate it: `world-tile`,
+`world-set-tile!`, `world-log!`, `world-size`, `world-apply!`, and
+`world-tick!` (tile decay, ADR-027).
 
 That's the whole "world." The name is aspirational — it sounds
 general — but the implementation is specifically "a paintable tile

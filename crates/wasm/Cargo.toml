@@ -3,6 +3,8 @@ name    = "wasm"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+# JS bridge (cdylib), never a crates.io package.
+publish = false
 
 [lints]
 workspace = true
