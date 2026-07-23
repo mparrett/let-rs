@@ -777,3 +777,47 @@ fn eq_q_compares_strings_by_contents() {
     assert_eq!(eval("(eq? \"foo\" \"foo\")"), "#t");
     assert_eq!(eval("(eq? \"foo\" \"bar\")"), "#f");
 }
+
+// ── robustness at the untrusted boundary ──────────────────────────
+
+#[test]
+fn deeply_nested_input_errors_instead_of_overflowing() {
+    // `((((…` used to recurse read_datum per level and abort the process
+    // with a stack overflow; now it returns a clean error.
+    let src = "(".repeat(100_000);
+    let mut vm = Vm::new();
+    let r = vm.eval_str(&src);
+    assert!(
+        matches!(&r, Err(e) if e.contains("nesting too deep")),
+        "expected nesting error, got {r:?}"
+    );
+    // A modestly nested (legal) form still evaluates.
+    assert_eq!(eval("(car (cdr (cons 1 (cons 2 '()))))"), "2");
+}
+
+#[test]
+fn mod_min_by_neg_one_errors_instead_of_panicking() {
+    // i64::MIN % -1 overflows inside rem_euclid; must surface as an error.
+    let mut vm = Vm::new();
+    let r = vm.eval_str("(mod -9223372036854775808 -1)");
+    assert!(
+        matches!(&r, Err(e) if e.contains("overflow")),
+        "expected overflow error, got {r:?}"
+    );
+    // Ordinary modulo still works.
+    assert_eq!(eval("(mod 7 3)"), "1");
+    assert_eq!(eval("(mod -7 3)"), "2");
+}
+
+#[test]
+fn printing_a_long_list_does_not_overflow_the_stack() {
+    // write_pair walks the cons spine iteratively; a 200k-element list that
+    // previously overflowed the printer now formats fine.
+    let src = "(letrec ((loop (lambda (n acc) \
+                 (if (= n 0) acc (loop (- n 1) (cons n acc)))))) \
+                 (loop 200000 '()))";
+    let mut vm = Vm::new();
+    let out = format!("{}", vm.eval_str(src).expect("eval"));
+    assert!(out.starts_with("(1 2 3 "));
+    assert!(out.ends_with(" 200000)"));
+}

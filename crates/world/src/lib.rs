@@ -105,13 +105,15 @@ impl World {
     /// stored as the unwrapped values (so subsequent `tile_at` indexed
     /// past the allocation).
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
-        // Vec's capacity ceiling for a non-ZST is `isize::MAX` bytes —
-        // anything past that aborts inside Vec, so we check against the
-        // tighter bound here rather than `usize::MAX`.
+        // A grid is a display surface, not a bulk store: cap total cells at a
+        // few million so a JS-reachable `new(40000, 40000)` returns an error
+        // instead of trying to allocate gigabytes and aborting the module.
+        // The old `isize::MAX` bound only caught ~2.1e9 cells on wasm32.
+        const MAX_CELLS: u64 = 4_000_000;
         let total = (width as u64)
             .checked_mul(height as u64)
-            .filter(|&n| n <= isize::MAX as u64)
-            .ok_or_else(|| format!("World::new: {width}×{height} exceeds addressable cells"))?;
+            .filter(|&n| n <= MAX_CELLS)
+            .ok_or_else(|| format!("World::new: {width}×{height} exceeds {MAX_CELLS} cells"))?;
         let n = total as usize;
         Ok(World {
             width,

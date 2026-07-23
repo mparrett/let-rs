@@ -40,7 +40,7 @@ enum Tok {
 pub fn read(src: &str) -> Result<Datum, String> {
     let toks = tokenize(src)?;
     let mut it = toks.into_iter().peekable();
-    let d = read_datum(&mut it)?;
+    let d = read_datum(&mut it, 0)?;
     if it.peek().is_some() {
         return Err("extra tokens after expression".into());
     }
@@ -55,7 +55,7 @@ pub fn read_many(src: &str) -> Result<Vec<Datum>, String> {
     let mut it = toks.into_iter().peekable();
     let mut out = Vec::new();
     while it.peek().is_some() {
-        out.push(read_datum(&mut it)?);
+        out.push(read_datum(&mut it, 0)?);
     }
     Ok(out)
 }
@@ -166,17 +166,31 @@ fn classify(s: &str) -> Tok {
     Tok::Sym(s.to_string())
 }
 
-fn read_datum(it: &mut Peekable<IntoIter<Tok>>) -> Result<Datum, String> {
+/// Max structural nesting the reader will build. Deeply nested input like
+/// `((((…` recurses `read_datum` once per level and overflows the native
+/// (and, more tightly, the wasm) stack around a few tens of thousands deep —
+/// a crash/DoS at the untrusted boundary rather than a clean error. This cap
+/// aborts far below that yet sits well above any realistic hand-written or
+/// generated source. Because every `Datum` originates here, bounding reader
+/// depth transitively bounds `compile` / `datum_to_val` / `compile_qq` and the
+/// macro expander's structural descent (a macro template can only combine
+/// reader-built forms, never manufacture unbounded depth).
+const MAX_DEPTH: usize = 1024;
+
+fn read_datum(it: &mut Peekable<IntoIter<Tok>>, depth: usize) -> Result<Datum, String> {
+    if depth > MAX_DEPTH {
+        return Err("nesting too deep".into());
+    }
     match it.next().ok_or_else(|| "unexpected eof".to_string())? {
         Tok::Num(n) => Ok(Datum::Num(n)),
         Tok::Ratio(num, den) => Ok(Datum::Ratio(num, den)),
         Tok::Bool(b) => Ok(Datum::Bool(b)),
         Tok::Sym(s) => Ok(Datum::Sym(s.into())),
         Tok::Str(s) => Ok(Datum::Str(s.into())),
-        Tok::Quote => prefixed("quote", read_datum(it)?),
-        Tok::Quasi => prefixed("quasiquote", read_datum(it)?),
-        Tok::Unquote => prefixed("unquote", read_datum(it)?),
-        Tok::UnquoteSplice => prefixed("unquote-splicing", read_datum(it)?),
+        Tok::Quote => prefixed("quote", read_datum(it, depth + 1)?),
+        Tok::Quasi => prefixed("quasiquote", read_datum(it, depth + 1)?),
+        Tok::Unquote => prefixed("unquote", read_datum(it, depth + 1)?),
+        Tok::UnquoteSplice => prefixed("unquote-splicing", read_datum(it, depth + 1)?),
         Tok::RParen => Err("unexpected )".into()),
         Tok::LParen => {
             let mut items = Vec::new();
@@ -187,7 +201,7 @@ fn read_datum(it: &mut Peekable<IntoIter<Tok>>) -> Result<Datum, String> {
                         it.next();
                         break;
                     }
-                    _ => items.push(read_datum(it)?),
+                    _ => items.push(read_datum(it, depth + 1)?),
                 }
             }
             Ok(Datum::List(items))

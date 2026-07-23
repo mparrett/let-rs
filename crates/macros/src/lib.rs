@@ -27,6 +27,11 @@ use std::collections::HashMap;
 use lisp::{Datum, Sym, Val, Vm, parse};
 use std::rc::Rc;
 
+/// Recursion ceiling for macro expansion. Sits above the reader's own
+/// nesting cap (so a max-depth but legal form still expands) and well below
+/// the stack-overflow point, so runaway self-referential macros abort cleanly.
+const MAX_EXPANSION_DEPTH: usize = 1024;
+
 #[derive(Clone)]
 struct Macro {
     closure: Val,
@@ -60,6 +65,18 @@ impl Expander {
     /// would forbid the expansion even at the top of an `eval_str`
     /// batch.
     pub fn expand_top_level(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, String> {
+        self.expand_top_level_at(vm, d, 0)
+    }
+
+    fn expand_top_level_at(
+        &mut self,
+        vm: &mut Vm,
+        d: Datum,
+        depth: usize,
+    ) -> Result<Datum, String> {
+        if depth > MAX_EXPANSION_DEPTH {
+            return Err("macro expansion too deep".into());
+        }
         if let Datum::List(items) = &d
             && !items.is_empty()
             && let Datum::Sym(head) = &items[0]
@@ -72,7 +89,7 @@ impl Expander {
             if name_str == "define" && items.len() >= 3 {
                 let mut out = vec![items[0].clone(), items[1].clone()];
                 for i in &items[2..] {
-                    out.push(self.expand_all(vm, i.clone())?);
+                    out.push(self.expand_all_at(vm, i.clone(), depth + 1)?);
                 }
                 return Ok(Datum::List(out));
             }
@@ -81,15 +98,28 @@ impl Expander {
             let mac = self.macros.get(name_str).cloned();
             if let Some(m) = mac {
                 let expansion = self.expand_macro_call(vm, &m, &items[1..])?;
-                return self.expand_top_level(vm, expansion);
+                return self.expand_top_level_at(vm, expansion, depth + 1);
             }
         }
-        self.expand_all(vm, d)
+        self.expand_all_at(vm, d, depth)
     }
 
     /// Recursively expand macro calls inside `d`. Returns the expanded
     /// datum (or `d` unchanged if no macros apply).
     pub fn expand_all(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, String> {
+        self.expand_all_at(vm, d, 0)
+    }
+
+    /// Depth-bounded workhorse for [`expand_all`]. A self-referential macro
+    /// (e.g. `(defmacro foo (x) ` + "`" + `(foo ,x))` then `(foo 1)`) re-expands
+    /// forever as native recursion — the Vm step budget bounds evaluation, not
+    /// expansion — and a macro that emits deeply nested output recurses
+    /// structurally. Both funnel through here, so one depth cap converts either
+    /// into a clean error instead of a stack-overflow abort (fatal in wasm).
+    fn expand_all_at(&mut self, vm: &mut Vm, d: Datum, depth: usize) -> Result<Datum, String> {
+        if depth > MAX_EXPANSION_DEPTH {
+            return Err("macro expansion too deep".into());
+        }
         if let Datum::List(items) = &d
             && !items.is_empty()
             && let Datum::Sym(head) = &items[0]
@@ -110,7 +140,7 @@ impl Expander {
             if (name_str == "lambda" || name_str == "λ") && items.len() >= 3 {
                 let mut out = vec![items[0].clone(), items[1].clone()];
                 for i in &items[2..] {
-                    out.push(self.expand_all(vm, i.clone())?);
+                    out.push(self.expand_all_at(vm, i.clone(), depth + 1)?);
                 }
                 return Ok(Datum::List(out));
             }
@@ -121,7 +151,7 @@ impl Expander {
                 return Ok(Datum::List(vec![
                     items[0].clone(),
                     items[1].clone(),
-                    self.expand_all(vm, items[2].clone())?,
+                    self.expand_all_at(vm, items[2].clone(), depth + 1)?,
                 ]));
             }
             // Let-family: don't macro-expand binding-name positions.
@@ -135,7 +165,7 @@ impl Expander {
                             {
                                 new_pairs.push(Datum::List(vec![
                                     pair[0].clone(),
-                                    self.expand_all(vm, pair[1].clone())?,
+                                    self.expand_all_at(vm, pair[1].clone(), depth + 1)?,
                                 ]));
                             } else {
                                 new_pairs.push(p.clone());
@@ -147,7 +177,7 @@ impl Expander {
                 };
                 let mut out = vec![items[0].clone(), bindings_out];
                 for i in &items[2..] {
-                    out.push(self.expand_all(vm, i.clone())?);
+                    out.push(self.expand_all_at(vm, i.clone(), depth + 1)?);
                 }
                 return Ok(Datum::List(out));
             }
@@ -164,7 +194,7 @@ impl Expander {
             let mac = self.macros.get(name_str).cloned();
             if let Some(m) = mac {
                 let expansion = self.expand_macro_call(vm, &m, &items[1..])?;
-                return self.expand_all(vm, expansion);
+                return self.expand_all_at(vm, expansion, depth + 1);
             }
         }
 
@@ -172,7 +202,7 @@ impl Expander {
             Datum::List(items) => {
                 let mut new_items = Vec::with_capacity(items.len());
                 for i in items {
-                    new_items.push(self.expand_all(vm, i)?);
+                    new_items.push(self.expand_all_at(vm, i, depth + 1)?);
                 }
                 Ok(Datum::List(new_items))
             }

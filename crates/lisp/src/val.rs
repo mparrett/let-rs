@@ -41,6 +41,27 @@ pub enum Val {
     },
 }
 
+impl Drop for Val {
+    fn drop(&mut self) {
+        // Dropping a long list recurses once per cell as each `Rc<Val>` tail
+        // reaches refcount zero — a deep enough list overflows the stack the
+        // same way the printer used to. Dismantle the spine iteratively:
+        // sever each link and descend only into tails we uniquely own (a
+        // shared tail is left intact for its other owners). Cons heads still
+        // drop normally, bounded by their own nesting depth.
+        if let Val::Cons(_, tail) = self {
+            let mut next = std::mem::replace(tail, Rc::new(Val::Nil));
+            while let Ok(mut cell) = Rc::try_unwrap(next) {
+                match &mut cell {
+                    Val::Cons(_, t) => next = std::mem::replace(t, Rc::new(Val::Nil)),
+                    _ => break,
+                }
+                // `cell` drops here with its tail already severed to Nil.
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum Arity {
     Exact(usize),
@@ -191,14 +212,21 @@ fn write_string_literal(s: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 }
 
 fn write_pair(head: &Val, tail: &Val, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    // Walk the cons spine iteratively so a long proper list prints in O(n)
+    // stack space instead of recursing once per element (which overflowed
+    // the stack around ~30k elements). Only each head recurses, via its own
+    // Display, bounded by that element's nesting depth.
     write!(f, "{head}")?;
-    match tail {
-        Val::Nil => Ok(()),
-        Val::Cons(h, t) => {
-            write!(f, " ")?;
-            write_pair(h, t, f)
+    let mut tail = tail;
+    loop {
+        match tail {
+            Val::Nil => return Ok(()),
+            Val::Cons(h, t) => {
+                write!(f, " {h}")?;
+                tail = t;
+            }
+            other => return write!(f, " . {other}"),
         }
-        other => write!(f, " . {other}"),
     }
 }
 
