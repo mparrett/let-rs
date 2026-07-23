@@ -80,6 +80,19 @@ means adding a closure, not a new engine rule.
 Architecture decisions are recorded as ADRs in `docs/project_notes/decisions.md`;
 known bugs and config live alongside in `docs/project_notes/`.
 
+## Acknowledgements
+
+The spell DSL is a clean-room homage to [**xsofy**](https://github.com/nooga/xsofy)
+by [nooga](https://github.com/nooga) — a roguelike whose magic system *is* a
+lisp: flat rune sequences compile to s-expressions that thread a context through
+a pipeline of primitives. That idea is the seed the whole "a tiny substrate plus
+vocabulary" thesis here grew from. ([Play it in the browser.](https://nooga.github.io/xsofy/))
+
+xsofy in turn runs on [**let-go**](https://github.com/nooga/let-go), nooga's
+Clojure dialect with a bytecode compiler and stack VM in Go — kindred proof that
+a small, real lisp is a short weekend of substrate and an open-ended amount of
+vocabulary. let-rs takes the same spirit to a CEK machine in Rust.
+
 ## License
 
 MIT
