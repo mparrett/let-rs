@@ -80,9 +80,7 @@ fn cascade_fire_ice_earth_makes_mud() {
     // cascade falls out of add-element calling assoc-or each time,
     // no special-case for tape length.
     let mut vm = mvm();
-    let r = vm
-        .eval_str("(earth (ice (fire (start))))")
-        .expect("eval");
+    let r = vm.eval_str("(earth (ice (fire (start))))").expect("eval");
     assert_eq!(
         format!("{r}"),
         "((element . mud) (element . water) (element . fire))"
@@ -148,10 +146,8 @@ fn cast_decrements_mana_by_cost() {
     // cost = 1 + power + area. A bare (fire) ctx has neither, so
     // cost = 1; mana goes 10 → 9.
     let mut vm = vm_with_world(5, 5);
-    vm.eval_str(
-        "(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list fire)))))",
-    )
-    .unwrap();
+    vm.eval_str("(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list fire)))))")
+        .unwrap();
     assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "9");
 }
 
@@ -270,7 +266,8 @@ fn spell_cost_formula() {
     assert_eq!(
         format!(
             "{}",
-            vm.eval_str("(spell-cost (assoc-set 'power 5 '()))").unwrap()
+            vm.eval_str("(spell-cost (assoc-set 'power 5 '()))")
+                .unwrap()
         ),
         "6"
     );

@@ -258,4 +258,3 @@ fn extract_define_name(d: &Datum) -> Result<Option<Sym>, String> {
         _ => Err("define: name must be a symbol".into()),
     }
 }
-

@@ -51,9 +51,5 @@ pub enum K {
     /// rather than capturing the slot up front so the form behaves
     /// like a `Var` reference — the same forward-reference rules
     /// apply.
-    SetBang {
-        name: Sym,
-        env: Env,
-        k: Rc<K>,
-    },
+    SetBang { name: Sym, env: Env, k: Rc<K> },
 }
