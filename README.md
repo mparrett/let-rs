@@ -1,5 +1,7 @@
 # let-rs
 
+[![CI](https://github.com/mparrett/let-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/mparrett/let-rs/actions/workflows/ci.yml)
+
 A small functional Lisp built on a [CEK abstract machine](https://en.wikipedia.org/wiki/CEK_Machine),
 written in zero-dependency Rust (edition 2024).
 
