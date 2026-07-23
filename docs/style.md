@@ -74,14 +74,14 @@ to one line.
 
 ## TODOs
 
-We do not use GitHub Issues for in-flight work. Local convention:
+We track in-flight work as local stubs, not GitHub Issues. To keep process
+notes out of the public tree, those stubs live in the out-of-repo archive at
+`project-docs/docs/let-rs/project_incoming/`:
 
-1. File the issue as `docs/project_incoming/issue_<N>.md` (or `feat_<N>.md`
-   for feature work). The skills `6-fix-issue` and `7-build-feature` look
-   here when GitHub is unavailable, and we treat that path as primary.
+1. File an `issue_<N>.md` (or `feat_<N>.md` for feature work) stub there.
 2. Reference in code: `// TODO(issue #N): one-line description`.
 3. A naked `// TODO` with no issue link is a smell — either fix it now or
-   file the doc.
+   file the stub.
 
 ## Errors
 
