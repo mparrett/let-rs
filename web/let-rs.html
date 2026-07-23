@@ -778,7 +778,7 @@
     <section class="prelude-wrap">
       <h3 class="prelude-toggle">Prelude</h3>
       <p class="prelude">
-        Xsofy is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Let-rs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives. The second day proved it twice — a second DSL (genomes, codons, Mendelian breeding) shipped without the engine learning a thing about it.
+        <a href="https://github.com/nooga/xsofy" target="_blank" rel="noopener">Xsofy</a> is a roguelike where the magic system <em>is</em> the language — flat sequences of runes compile into s-expressions that thread a context through a pipeline of primitives. Let-rs is a clean-room spin-off: same idea, but the substrate is a tiny pure-functional lisp on a CEK machine, written in Rust from scratch, with the spell DSL as its first real client. The point is not to ship anything yet. The point is that the smallest interesting substrate you can call a real programming language fits in a few hundred lines of code, and once you have it, the rest is just a vocabulary of primitives. The second day proved it twice — a second DSL (genomes, codons, Mendelian breeding) shipped without the engine learning a thing about it.
       </p>
     </section>
 
@@ -1839,6 +1839,29 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           continuations (the "F") for backtracking. Useful as a reference
           implementation and as a sketch of the shape the machine takes
           when you push it past pure lambda calculus into a real language.
+        </li>
+      </ul>
+    </div>
+
+    <div class="further">
+      <h3>With thanks</h3>
+      <ul>
+        <li>
+          <a href="https://github.com/nooga/xsofy" target="_blank" rel="noopener">
+            nooga · <em>xsofy</em>
+          </a>
+          — the roguelike whose magic system <em>is</em> a lisp; the spell DSL
+          here is a clean-room homage to it, and the whole "tiny substrate plus
+          vocabulary" thesis is that idea's seed.
+          (<a href="https://nooga.github.io/xsofy/" target="_blank" rel="noopener">play it in the browser</a>)
+        </li>
+        <li>
+          <a href="https://github.com/nooga/let-go" target="_blank" rel="noopener">
+            nooga · <em>let-go</em>
+          </a>
+          — the Clojure dialect (bytecode compiler + stack VM, in Go) that xsofy
+          runs on; kindred proof that a small, real lisp is a short weekend of
+          substrate and an open-ended amount of vocabulary.
         </li>
       </ul>
     </div>
