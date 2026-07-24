@@ -182,6 +182,13 @@ fn cmp_chain(args: &[Val], name: &str, ok: fn(i128, i128) -> bool) -> R {
     // Compare a < b by cross-multiplying: a.n * b.d  ?  b.n * a.d.
     // Both denominators are positive (Val::make_ratio invariant), so
     // the cross-multiplied compare preserves direction.
+    //
+    // Unchecked multiplication is safe *given the current Val::Ratio
+    // widths*, and only just: `Val::make_ratio` narrows to (i64, u64),
+    // so |n| ≤ 2^63 and d ≤ 2^64 - 1, bounding each product at
+    // 2^127 - 2^63 — inside i128 by one part in 2^64. Widen either
+    // field and this overflows; switch to checked_mul if that day
+    // comes. Every other arithmetic path here already is checked.
     for w in xs.windows(2) {
         let (an, ad) = w[0];
         let (bn, bd) = w[1];

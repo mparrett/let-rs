@@ -99,9 +99,11 @@ pub const PRELUDE_DEFINES: &str = r#"
 ;; spell DSL owns its resource model.
 ;;
 ;; `cast!` is the mana-gated entry. Wraps `world-apply!`: computes
-;; cost = 1 + power + area; on shortfall, logs and returns 0
-;; (no paint, no mana spent); on success, decrements mana and
-;; delegates to world-apply!.
+;; cost = 1 + power + area + aftershock (the aftershock rune pays
+;; its re-strike up front — ADR-029 — so the delayed fire costs
+;; nothing when it lands); on shortfall, logs and returns 0 (no
+;; paint, no mana spent); on success, decrements mana and delegates
+;; to world-apply!.
 ;;
 ;; `tick!` is the temporal entry. Wraps `world-tick!`: advances
 ;; world decay, then regens one point of mana (capped at max-mana).
