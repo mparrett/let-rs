@@ -222,31 +222,42 @@ document.querySelectorAll('.tape-example').forEach((el) => {
 // being twitchy — at default lifetime 5, a painted tile takes
 // ~3 seconds to fade.
 const TICK_MS = 600;
-const interval = setInterval(() => {
-  try {
-    vm.tick();
-  } catch (e) {
-    // A tick failure is recoverable (the next tick will retry); log
-    // it once and don't stop the loop.
-    console.warn('tick failed:', e);
-  }
-  refresh();
-}, TICK_MS);
+let interval = null;
+
+const startTicking = () => {
+  if (interval !== null) return;  // already running; don't stack intervals
+  interval = setInterval(() => {
+    try {
+      vm.tick();
+    } catch (e) {
+      // A tick failure is recoverable (the next tick will retry); log
+      // it once and don't stop the loop.
+      console.warn('tick failed:', e);
+    }
+    refresh();
+  }, TICK_MS);
+};
+
+const stopTicking = () => {
+  if (interval === null) return;
+  clearInterval(interval);
+  interval = null;
+};
 
 // If the tab is hidden, pause ticking to avoid silent mana regen +
-// log entries piling up while the user isn't looking. (`visibilitychange`
-// is one of the rare events fast enough that we can react without a
-// debounce.)
+// log entries piling up while the user isn't looking; resume when it
+// comes back. Clearing and re-arming (rather than letting the browser
+// throttle us) also avoids the cumulative drift of a long hidden
+// window suddenly catching up.
 window.addEventListener('visibilitychange', () => {
-  // Easy path: clear + restart. Avoids cumulative drift from a long
-  // hidden window suddenly catching up.
   if (document.hidden) {
-    clearInterval(interval);
+    stopTicking();
+  } else {
+    startTicking();
   }
-  // We don't restart on visible — the user reloading or interacting
-  // is the natural recovery. Keeping things simple matters more than
-  // perfect symmetry here.
 });
+
+startTicking();
 
 // First render uses the freshly-constructed empty world. No seed
 // cast — visitors land on a clean grid and start with full mana, so
