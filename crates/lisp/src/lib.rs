@@ -57,11 +57,15 @@ pub struct Vm {
     /// strong; reached by closures via `Env::store` as a `Weak`, so a
     /// closure can't keep the store alive past its Vm.
     pub store: Rc<Store>,
-    /// Per-`eval_str` CEK step budget. `u64::MAX` (the default) is
-    /// effectively unbounded — preserves day-one behavior. Hosts that
-    /// can't otherwise interrupt evaluation (the WASM bridge, the REPL)
-    /// should lower this via `set_step_budget` so a nonterminating
-    /// expression surfaces as an error instead of a hung page.
+    /// CEK step budget, applied *per top-level form* — not per
+    /// `eval_str` call. A source of N forms can therefore run up to
+    /// N × `step_budget` steps in total; the budget bounds any single
+    /// nonterminating expression, not the aggregate work of a batch.
+    /// `u64::MAX` (the default) is effectively unbounded — preserves
+    /// day-one behavior. Hosts that can't otherwise interrupt
+    /// evaluation (the WASM bridge, the REPL) should lower this via
+    /// `set_step_budget` so a nonterminating expression surfaces as an
+    /// error instead of a hung page.
     step_budget: u64,
 }
 
@@ -98,9 +102,11 @@ impl Vm {
         &self.env
     }
 
-    /// Cap each `eval_str` invocation at `n` CEK steps. Calls that
-    /// exceed the budget return `Err("execution exceeded step budget")`.
-    /// Set to `u64::MAX` to disable.
+    /// Cap each top-level form at `n` CEK steps (see [`Vm::step_budget`]
+    /// — the cap is per form, so a batch of N forms can spend up to
+    /// N × `n`). Forms that exceed the budget return
+    /// `Err("execution exceeded step budget")`. Set to `u64::MAX` to
+    /// disable.
     pub fn set_step_budget(&mut self, n: u64) {
         self.step_budget = n;
     }
@@ -142,18 +148,33 @@ impl Vm {
     /// globals sees the table's *current* contents, not a snapshot of
     /// its own capture time. See ADR-015.
     ///
+    /// If any form in the batch fails, the globals *table* is restored
+    /// to its pre-call state, so a failed `(define …)` can't leave a
+    /// placeholder shadowing a builtin. Values reached through cells
+    /// that already existed are not restored — `set!` and host prim
+    /// effects survive a failed batch. See the note in the body.
+    ///
     /// `(defmacro …)` is *not* recognized here — macros live in the
     /// sibling `macros` crate (ADR-024). Hosts that want macros wrap
     /// this Vm in `macros::MacroVm`.
     pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
-        // Atomic semantics: if any form in the batch fails, restore
-        // globals to their pre-call state. Pre-fix, a failed define
-        // left a placeholder cell visible in env (e.g.
+        // Binding-level rollback: if any form in the batch fails,
+        // restore the globals *table* to its pre-call state. Pre-fix, a
+        // failed define left a placeholder cell visible in env (e.g.
         // `(define + (/ 1 0))` masking the builtin `+` with `#f`),
         // which then took every subsequent REPL line down.
         //
         // Snapshotting the HashMap clones it but Rc-bumps each cell,
         // so cost is O(globals.len()) and unchanged-cells are shared.
+        //
+        // This is *not* transactional rollback of effects, and the
+        // sharing is exactly why: the snapshot restores which cell each
+        // name points at, not what's inside those cells. `set!`
+        // (ADR-026, which postdates this rollback) writes through the
+        // shared `RefCell`, so `(set! x 99) (car 5)` fails the batch
+        // and leaves `x` at 99. Host prim effects — painted tiles,
+        // turtle state, log entries — likewise stand. Undoing those
+        // would need the persistent store ADR-023 leaves open.
         let saved_globals = self.globals.borrow().clone();
         let result = self.eval_str_inner(src);
         if result.is_err() {

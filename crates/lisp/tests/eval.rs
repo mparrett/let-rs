@@ -821,3 +821,41 @@ fn printing_a_long_list_does_not_overflow_the_stack() {
     assert!(out.starts_with("(1 2 3 "));
     assert!(out.ends_with(" 200000)"));
 }
+
+/// The globals rollback on a failed batch restores the *table*, not the
+/// contents of cells that already existed. `set!` (ADR-026) writes
+/// through the shared cell, so its effect survives. Locking this in
+/// because the rollback predates `set!` and the two read as if they
+/// contradict each other.
+#[test]
+fn failed_batch_restores_bindings_but_not_set_bang_effects() {
+    let mut vm = Vm::new();
+    vm.eval_str("(define x 1)").unwrap();
+
+    // A failed define can't leave a placeholder shadowing the binding…
+    assert!(vm.eval_str("(define x 2) (car 5)").is_err());
+    assert_eq!(format!("{}", vm.eval_str("x").unwrap()), "1");
+
+    // …but a set! that ran before the failure is not undone.
+    assert!(vm.eval_str("(set! x 99) (car 5)").is_err());
+    assert_eq!(format!("{}", vm.eval_str("x").unwrap()), "99");
+}
+
+/// The step budget bounds a single top-level form, not an `eval_str`
+/// batch: N forms can each spend the full budget.
+#[test]
+fn step_budget_applies_per_form_not_per_batch() {
+    let loop_form = "(letrec ((f (lambda (n) (if (= n 0) 0 (f (- n 1)))))) (f 4000))";
+
+    // One form over budget fails.
+    let mut tight = Vm::new();
+    tight.set_step_budget(1_000);
+    assert!(tight.eval_str(loop_form).is_err());
+
+    // Fifty forms, each under budget, all pass — total steps spent far
+    // exceed the budget itself.
+    let mut vm = Vm::new();
+    vm.set_step_budget(100_000);
+    let batch = vec![loop_form; 50].join(" ");
+    assert!(vm.eval_str(&batch).is_ok());
+}
