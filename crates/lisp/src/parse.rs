@@ -229,8 +229,19 @@ pub fn compile(d: &Datum) -> Result<Expr, String> {
         // single Rc clone per evaluation (same shape as Ratio).
         Datum::Str(s) => Ok(Expr::Quote(Rc::new(Val::Str(s.clone())))),
         Datum::List(items) => {
+            // `()` stays invalid syntax in expression position (R7RS
+            // agrees), but the bare "empty list" message left two
+            // callers guessing. The REPL user wants to know that `'()`
+            // is the literal; a macro author hits this when a macro
+            // returns `Val::Nil`, because `val_to_datum` renders it as
+            // `()` and there is no context at serialization time to
+            // tell an evaluated position from a `(lambda () …)` binder
+            // — so the macro has to emit `'(quote ())` instead.
             if items.is_empty() {
-                return Err("empty list".into());
+                return Err(
+                    "empty list: () is not a valid expression — write '() for the empty list"
+                        .into(),
+                );
             }
             if let Datum::Sym(head) = &items[0] {
                 match &**head {

@@ -401,3 +401,52 @@ fn self_referential_macro_errors_instead_of_overflowing() {
     vm.eval_str("(defmacro twice (x) `(+ ,x ,x))").unwrap();
     assert_eq!(format!("{}", vm.eval_str("(twice 21)").unwrap()), "42");
 }
+
+/// A macro that returns `Val::Nil` renders as `()` on the way back
+/// through source text, which is invalid in expression position. There
+/// is no context at serialization time to tell an evaluated `()` from
+/// a `(lambda () …)` binder, so the macro has to quote it. Lock in both
+/// halves: the error names the fix, and the quoted form works.
+#[test]
+fn macro_returning_nil_errors_with_a_pointer_to_the_workaround() {
+    let mut vm = MacroVm::with_stdlib();
+    let err = vm
+        .eval_str("(defmacro nada () '()) (nada)")
+        .expect_err("a macro expanding to () should error");
+    assert!(err.contains("'()"), "message should name the fix: {err}");
+}
+
+#[test]
+fn macro_can_emit_the_empty_list_via_quote() {
+    let mut vm = MacroVm::with_stdlib();
+    let v = vm
+        .eval_str("(defmacro nada () '(quote ())) (cons 1 (nada))")
+        .expect("quoted nil should expand cleanly");
+    assert_eq!(format!("{v}"), "(1)");
+}
+
+/// Empty lists in *binder* position must keep working — they never
+/// reach `compile`, so the sharpened error must not have caught them.
+#[test]
+fn empty_binder_lists_in_macro_output_still_work() {
+    let mut vm = MacroVm::with_stdlib();
+    let thunk = vm
+        .eval_str("(defmacro thunk (b) `(lambda () ,b)) ((thunk 42))")
+        .expect("empty lambda params should survive the round trip");
+    assert_eq!(format!("{thunk}"), "42");
+    let nolet = vm
+        .eval_str("(defmacro nolet (b) `(let () ,b)) (nolet 7)")
+        .expect("empty let bindings should survive the round trip");
+    assert_eq!(format!("{nolet}"), "7");
+}
+
+/// And `()` nested inside quoted *data* stays data — the sharpened
+/// error is an expression-position rule, not a reader rule.
+#[test]
+fn empty_list_inside_quoted_data_is_untouched() {
+    let mut vm = MacroVm::with_stdlib();
+    let v = vm
+        .eval_str("(defmacro d () `(quote (a ()))) (d)")
+        .expect("quoted data containing () should expand cleanly");
+    assert_eq!(format!("{v}"), "(a ())");
+}
