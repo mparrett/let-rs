@@ -169,10 +169,10 @@ Sibling crates:
 Web shell at `web/` — four pages, one bundle:
 
 - `web/index.html` — landing page. Three `.lab-card` links to the demos
-  (plum-accented Spell Lab, honey-accented Gene Lab, copper-accented
+  (jade-accented Spell Lab, honey-accented Gene Lab, copper-accented
   Curve Lab) over a Let-rs masthead. No WASM init on this page; it's
   pure HTML.
-- `web/spells.html` — Spell Lab + REPL, two-column at ≥940px. Plum
+- `web/spells.html` — Spell Lab + REPL, two-column at ≥940px. Jade
   rune-palette aesthetic.
 - `web/genes.html` — Gene Lab + REPL, two-column at ≥940px. Honey/sage
   codon-palette aesthetic.

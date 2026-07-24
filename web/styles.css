@@ -2,7 +2,7 @@
  *
  * Palette + typography lifted from let-rs.html. Cooler/more academic than
  * xsofy's warmer JetBrains-mono look — Cinzel display + IBM Plex Mono body,
- * indigo/sage/copper/honey accents on a near-black ground.
+ * indigo/sage/copper/honey/jade accents on a near-black ground.
  */
 
 :root {
@@ -18,7 +18,7 @@
   --sage:     #7fc59a;
   --copper:   #d97757;
   --honey:    #e0b34a;
-  --plum:     #b07cb0;
+  --jade:     #54b6a4;
   --display:  "Cinzel", "Iowan Old Style", "Palatino", serif;
   --mono:     "IBM Plex Mono", "Menlo", "Consolas", monospace;
 }
@@ -141,14 +141,14 @@ body::after {
   min-width: 38px; height: 38px;
   padding: 0 8px;
   background: transparent;
-  color: var(--plum);
-  border: 1px solid rgba(176,124,176,0.35);
+  color: var(--jade);
+  border: 1px solid rgba(84, 182, 164,0.35);
   border-radius: 3px;
   cursor: pointer;
   transition: background 80ms, color 80ms, border-color 80ms;
 }
 .rune:hover {
-  background: rgba(176,124,176,0.12);
+  background: rgba(84, 182, 164,0.12);
   color: var(--ink);
 }
 .rune.param { color: var(--honey); border-color: rgba(224,179,74,0.35); }
@@ -275,7 +275,7 @@ input[type="text"] { letter-spacing: 0.05em; font-size: 16px; }
   100% { opacity: 0;   transform: translate(-50%, -28px) scale(1.4); }
 }
 
-/* Mana meter — caster-side resource (ADR-028). A row of plum pips
+/* Mana meter — caster-side resource (ADR-028). A row of jade pips
    sits above the grid; lit pips show current mana, dim pips show
    the deficit. Numeric label trails for precision when the
    eyeball-count gets ambiguous. Lives directly under the action
@@ -299,13 +299,13 @@ input[type="text"] { letter-spacing: 0.05em; font-size: 16px; }
   flex: 1;
   height: 8px;
   border-radius: 1px;
-  background: rgba(176, 124, 176, 0.10); /* plum @ 10% */
-  border: 1px solid rgba(176, 124, 176, 0.18);
+  background: rgba(84, 182, 164, 0.10); /* jade @ 10% */
+  border: 1px solid rgba(84, 182, 164, 0.18);
   transition: background 180ms ease, border-color 180ms ease;
 }
 .mana-pips .pip.lit {
-  background: var(--plum);
-  border-color: var(--plum);
+  background: var(--jade);
+  border-color: var(--jade);
 }
 /* Low-mana warning tone: when the lit count drops to ~20% the
    remaining pips shift toward copper so the eye picks it up. */
@@ -453,19 +453,19 @@ textarea {
  * clickable so users can collapse for more horizontal room. */
 .cheatsheet.side { margin-top: 0; }
 
-/* Spell Lab cheatsheet variant — plum to match the rune palette. */
+/* Spell Lab cheatsheet variant — jade to match the rune palette. */
 .cheatsheet.spells {
-  border-left-color: var(--plum);
-  background: rgba(176,124,176,0.05);
+  border-left-color: var(--jade);
+  background: rgba(84, 182, 164,0.05);
 }
-.cheatsheet.spells summary { color: var(--plum); }
+.cheatsheet.spells summary { color: var(--jade); }
 .cheatsheet.spells code {
   font-size: 15px;
   letter-spacing: 0.12em;
-  color: var(--plum);
+  color: var(--jade);
 }
-.cheatsheet.spells code:hover  { background: rgba(176,124,176,0.20); color: var(--ink); }
-.cheatsheet.spells code:active { background: rgba(176,124,176,0.34); }
+.cheatsheet.spells code:hover  { background: rgba(84, 182, 164,0.20); color: var(--ink); }
+.cheatsheet.spells code:active { background: rgba(84, 182, 164,0.34); }
 
 /* ─── Gene Lab ──────────────────────────────────────────── */
 #gene-lab { border-left-color: var(--honey); }
@@ -550,7 +550,7 @@ textarea {
   max-width: 64ch;
 }
 
-/* Gene cheatsheet variant — honey, parallel to the spells/plum variant. */
+/* Gene cheatsheet variant — honey, parallel to the spells/jade variant. */
 .cheatsheet.genes {
   border-left-color: var(--honey);
   background: rgba(224,179,74,0.05);
@@ -686,7 +686,7 @@ textarea {
 }
 .stepper-body input[type="number"] { -moz-appearance: textfield; }
 
-/* Curve cheatsheet variant — copper, parallel to spells/plum + genes/honey. */
+/* Curve cheatsheet variant — copper, parallel to spells/jade + genes/honey. */
 .cheatsheet.curves {
   border-left-color: var(--copper);
   background: rgba(217,119,87,0.05);
@@ -756,7 +756,7 @@ textarea {
   color: var(--ink-dust);
 }
 
-.lab-card.spells { border-left-color: var(--plum); }
+.lab-card.spells { border-left-color: var(--jade); }
 .lab-card.genes  { border-left-color: var(--honey); }
 .lab-card.curves { border-left-color: var(--copper); }
 
