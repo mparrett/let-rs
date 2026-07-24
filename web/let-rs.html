@@ -1712,6 +1712,124 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       </div>
     </section>
 
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">X</span>
+        <span class="mark">⊓</span>
+      </div>
+      <div class="body">
+        <h2>The guarantees go stale
+          <span class="tag">— a budget that counts the wrong thing; a rollback that outlived its language</span>
+        </h2>
+        <p>
+          Nine acts of building, then an afternoon of trying to break
+          it. Most of what fell out was ordinary — a lifecycle slip in
+          the Spell Lab's tick loop, a missing <code>checked_add</code>
+          in the genes resolver, comments that had drifted a release
+          behind their code. Two findings were more interesting, and
+          they were the same finding twice: a guarantee that was true
+          when it was written and false by the time anyone read it.
+          Nothing had gone wrong with either guarantee. The language
+          moved underneath them.
+        </p>
+
+        <h3 class="subact">A budget that counts the wrong thing</h3>
+        <p>
+          The CEK step budget is the substrate's answer to hostile
+          input. The browser evaluates on the main thread, so an
+          unbounded loop doesn't fail — it hangs the page. Capping a
+          run at ten million transitions turns that into an error
+          message. It is the stated safety net at the untrusted
+          boundary, and it works.
+        </p>
+
+        <p>
+          It counts steps. The Curve Lab's canvas is
+          <em>sparse</em> — a hash map holding only the cells the
+          turtle has stamped — and its renderer is <em>dense</em>: a
+          grid spanning the bounding box, spaces where nothing was
+          drawn. For most curves those are the same order of
+          magnitude. For a diagonal they aren't. N stamped cells span
+          an N×N box, so the turtle grows linearly while the thing
+          that prints it grows quadratically, and nothing in the code
+          connected the two.
+        </p>
+
+        <p>
+          <code>(grow '(+ F) '((F F F)) 14)</code> is 16,384 strokes.
+          That sits comfortably inside ten million steps — the budget
+          never blinks — and it asks the renderer for a
+          268-million-cell grid, about a gigabyte. The tab stops
+          responding. The safety net had a hole in it exactly the
+          shape of memory, because it had only ever been asked about
+          time.
+        </p>
+
+        <p>
+          The page had a second bound, missing in the same direction:
+          <code>max="6"</code> on the iterations input, which browsers
+          enforce for the steppers and for form validation but not for
+          a value someone types. Two independent limits, both absent
+          along the same axis.
+        </p>
+
+        <p>
+          <code>render</code> now returns a <code>Result</code> and
+          refuses a bounding box over two million cells, checked
+          before it allocates rather than after. The guard is a
+          transplant, not an invention — <code>World::new</code> has
+          had one since the grid became reachable from JavaScript, for
+          the same reason. What was missing wasn't the idea. It was
+          noticing that a second surface had grown the same exposure.
+        </p>
+
+        <h3 class="subact">A rollback that outlived its language</h3>
+        <p>
+          Back in Act VI, <code>eval_str</code> learned to undo
+          itself. A failed <code>(define + (/ 1 0))</code> used to
+          leave a placeholder cell shadowing the builtin
+          <code>+</code>, which took down every subsequent REPL line —
+          one typo and the session was over. The fix snapshots the
+          globals table before the batch and restores it if any form
+          errors. It's cheap because unchanged cells are shared rather
+          than copied: the snapshot bumps refcounts, not values.
+        </p>
+
+        <p>
+          That sharing is precisely what broke it. Act IX added
+          <code>set!</code> — the language's only effecting form — and
+          <code>set!</code> writes <em>through</em> the shared cell. So
+          <code>(set! x 99) (car 5)</code> fails the batch, the
+          rollback runs, and <code>x</code> is still 99. The snapshot
+          restores which cell each name points at. It was never
+          restoring what's inside them; until Act IX, nothing could
+          tell the difference.
+        </p>
+
+        <p>
+          Not one line of <code>eval_str</code> changed. Act IX broke
+          Act VI's promise at a distance, and the docstring went on
+          saying <em>atomic</em> for two acts. The fix is a smaller
+          claim rather than a bigger mechanism — real transactional
+          rollback wants the persistent store ADR-023 left open, and
+          even with it the host's painted tiles and turtle state would
+          still stand. Better to document a narrow guarantee that
+          holds than a broad one that doesn't.
+        </p>
+
+        <p class="lift">
+          Neither guarantee was wrong, exactly. The budget still
+          catches the loop it was built for; the rollback still keeps
+          a failed define from poisoning a REPL session. Both were
+          just narrower than their wording — and a docstring is the
+          one part of a codebase that never fails a test. Both have
+          tests underneath them now, which is the whole difference
+          between writing a guarantee down and actually having one.
+        </p>
+      </div>
+    </section>
+
     <div class="coda">
       <h3>What comes after</h3>
       <p>
