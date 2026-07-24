@@ -300,3 +300,40 @@ fn child_phenotype_can_differ_from_both_parents() {
         "expected averaged size, got {child}"
     );
 }
+
+/// `express!` and `mutate!` are public prims, reachable from the REPL
+/// that ships alongside the Gene Lab. A hand-rolled genome can carry
+/// allele values the codon table never produces, so the arithmetic has
+/// to survive i64 extremes — panicking aborts the wasm module, and
+/// wrapping (release builds have overflow checks off) silently
+/// fabricates a phenotype.
+#[test]
+fn express_numeric_overflow_errors_instead_of_panicking() {
+    let mut vm = Vm::new();
+    genes::install(&mut vm);
+    let err = vm
+        .eval_str(
+            "(express! (list (cons 'size (list (cons 9223372036854775807 #t) \
+                                               (cons 9223372036854775807 #t)))))",
+        )
+        .expect_err("summing two i64::MAX alleles should error");
+    assert!(err.contains("overflow"), "unexpected message: {err}");
+}
+
+#[test]
+fn mutate_saturates_on_extreme_alleles() {
+    // Rate 1 mutates every allele, so both sign draws are exercised
+    // across the two alleles; either way the result clamps into range
+    // rather than overflowing on the ±10 drift.
+    let mut vm = Vm::new();
+    genes::install(&mut vm);
+    let out = vm
+        .eval_str(
+            "(mutate! 1 7 (list (cons 'size (list (cons 9223372036854775807 #t) \
+                                                  (cons -9223372036854775808 #f)))))",
+        )
+        .expect("mutating extreme alleles should not panic");
+    let s = format!("{out}");
+    assert!(s.contains("100"), "expected a clamped high allele: {s}");
+    assert!(s.contains('0'), "expected a clamped low allele: {s}");
+}

@@ -233,7 +233,11 @@ fn mutate_prim(args: &[Val]) -> Result<Val, String> {
                     } else {
                         -10
                     };
-                    Val::Num((*n + delta).clamp(0, 100))
+                    // Saturating rather than checked: the result is
+                    // immediately clamped to [0, 100] anyway, so an
+                    // out-of-range allele from a hand-rolled genome
+                    // lands on the nearest bound instead of panicking.
+                    Val::Num(n.saturating_add(delta).clamp(0, 100))
                 }
                 (Kind::Categorical(pool), Val::Sym(s)) => {
                     let cur = s.to_string();
@@ -369,7 +373,13 @@ fn resolve_numeric(alleles: &[(Val, Val)]) -> Result<Val, String> {
     for (v, _kind) in alleles.iter().take(2) {
         match v {
             Val::Num(n) => {
-                sum += n;
+                // Codon-built alleles are 0..100, but `express!` is a
+                // public prim — a hand-rolled genome from the REPL can
+                // hand us two i64::MAX alleles, which panics in debug
+                // and wraps silently in the wasm release build.
+                sum = sum
+                    .checked_add(*n)
+                    .ok_or("express!: numeric allele sum overflowed i64")?;
                 count += 1;
             }
             other => {
