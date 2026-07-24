@@ -19,7 +19,7 @@ fn cast_axiom(tape: &str) -> String {
     let (mut vm, turtle) = fresh_vm();
     let list = tape_to_sexpr(tape).unwrap();
     vm.eval_str(&format!("(draw! {list})")).unwrap();
-    render(&turtle.borrow())
+    render(&turtle.borrow()).unwrap()
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn grow_zero_returns_axiom() {
     let list = tape_to_sexpr("F+F").unwrap();
     vm.eval_str(&format!("(draw! (grow {list} '() 0))"))
         .unwrap();
-    let via_grow = render(&turtle.borrow());
+    let via_grow = render(&turtle.borrow()).unwrap();
 
     let direct = cast_axiom("F+F");
     assert_eq!(via_grow, direct);
@@ -161,7 +161,53 @@ fn render_prim_returns_canvas_string() {
     let (mut vm, turtle) = fresh_vm();
     let list = tape_to_sexpr("F+F").unwrap();
     vm.eval_str(&format!("(draw! {list})")).unwrap();
-    let host_render = render(&turtle.borrow());
+    let host_render = render(&turtle.borrow()).unwrap();
     let lisp_render = vm.eval_str("(render!)").unwrap();
     assert_eq!(format!("{lisp_render}"), host_render);
+}
+
+/// Build a turtle that has walked `n` cells diagonally (heading NE),
+/// which stamps `n` sparse cells spanning an `n`×`n` bounding box.
+/// Driving the turtle directly rather than through `(grow …)` keeps
+/// these bound checks fast — the lisp rewrite is what's slow, and it
+/// isn't what's under test here.
+fn diagonal_turtle(n: usize) -> Turtle {
+    let mut t = Turtle::new();
+    t.turn(1); // heading NE
+    for _ in 0..n {
+        t.forward(true);
+    }
+    t
+}
+
+#[test]
+fn oversized_bbox_errors_instead_of_allocating() {
+    // A diagonal walk spans an N×N bbox from N sparse cells, so the
+    // dense render grid grows quadratically while the turtle's own
+    // memory grows linearly. Tapes well inside the wasm host's 10M step
+    // budget can reach bboxes measured in gigabytes, so the renderer
+    // must refuse rather than attempt the allocation.
+    let t = diagonal_turtle(1500);
+    assert_eq!(t.cell_count(), 1500);
+    let err = render(&t).expect_err("1500² is over the cap");
+    assert!(err.contains("exceeds"), "unexpected message: {err}");
+}
+
+#[test]
+fn large_but_representable_canvas_still_renders() {
+    // Just under the cap — the bound must not clip legitimate curves.
+    let t = diagonal_turtle(1400);
+    let canvas = render(&t).expect("1400² is under the cap");
+    assert_eq!(canvas.lines().count(), 1400);
+}
+
+#[test]
+fn render_prim_surfaces_the_cap_as_an_eval_error() {
+    // The lisp-side prim must return an Err (not panic, not truncate)
+    // so a wasm host sees a catchable exception.
+    let turtle = Rc::new(RefCell::new(diagonal_turtle(1500)));
+    let mut vm = Vm::new();
+    install(&mut vm, turtle);
+    let err = vm.eval_str("(render!)").expect_err("render! should error");
+    assert!(err.contains("exceeds"), "unexpected message: {err}");
 }

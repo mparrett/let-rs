@@ -146,7 +146,10 @@ Sibling crates:
   canvas, host-owned via `Rc<RefCell<Turtle>>`), the three turtle prims
   (`draw!`, `render!`, `reset!`), `PRELUDE_DEFINES` with the pure-lisp
   rewrite engine (`expand`, `expand-one`, `grow`), and a Rust-side
-  `render(&Turtle) -> String` for direct access. `install(vm, turtle)`
+  `render(&Turtle) -> Result<String, String>` for direct access (it
+  errs rather than allocating when the bbox exceeds
+  `MAX_CANVAS_CELLS` — the canvas is sparse but the render grid is
+  dense, so a long diagonal spans an N×N box). `install(vm, turtle)`
   wires all of it in one call. Depends only on `lisp`. Cast pipeline is
   `(draw! (grow axiom rules n))` then `(render!)`. See ADR-019.
 - `crates/macros/` — `defmacro` + procedural expansion + quasiquote-

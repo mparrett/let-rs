@@ -54,6 +54,15 @@ function rulesToSexpr(text) {
   return `(${parts.join(' ')})`;
 }
 
+// Clamp an iteration count to the input's declared bounds. Shared by
+// `draw` and the steppers so there's one definition of "in range" and
+// the JS doesn't duplicate the HTML's numbers.
+const clampIters = (n) => {
+  const min = Number(itersEl.min || 0);
+  const max = Number(itersEl.max || 99);
+  return Math.min(max, Math.max(min, Math.floor(n) || 0));
+};
+
 const draw = () => {
   const axiom = axiomEl.value.trim();
   if (!axiom) {
@@ -67,7 +76,13 @@ const draw = () => {
     canvasEl.textContent = `⚠ ${e.message}`;
     return;
   }
-  const iters = Math.max(0, Math.floor(Number(itersEl.value) || 0));
+  // Clamp to the input's own min/max. The HTML `max` attribute only
+  // constrains the steppers and form validation — a typed value sails
+  // straight through — and each extra iteration doubles the tape under
+  // a rule like `F = FF`, so an unclamped value reaches the bridge and
+  // asks the renderer for a bbox measured in gigabytes.
+  const iters = clampIters(Number(itersEl.value) || 0);
+  if (String(iters) !== itersEl.value.trim()) itersEl.value = String(iters);
   try {
     const canvas = vm.cast_curve(axiom, rules, iters);
     // Empty turtle (e.g., axiom of just `+`) renders to empty string.
@@ -84,13 +99,10 @@ $('#draw-btn').addEventListener('click', draw);
 
 // Stepper: bump iters by ±1 (clamped to the input's min/max) and
 // re-draw immediately so the canvas reflects each click without a
-// second action. Reads the bounds from the input attributes so the
-// JS doesn't duplicate the HTML's clamp range.
+// second action.
 const bumpIters = (delta) => {
-  const min = Number(itersEl.min || 0);
-  const max = Number(itersEl.max || 99);
-  const cur = Math.max(0, Math.floor(Number(itersEl.value) || 0));
-  const next = Math.min(max, Math.max(min, cur + delta));
+  const cur = clampIters(Number(itersEl.value) || 0);
+  const next = clampIters(cur + delta);
   if (next === cur) return;
   itersEl.value = String(next);
   draw();

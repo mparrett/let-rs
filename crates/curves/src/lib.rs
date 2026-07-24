@@ -152,12 +152,26 @@ fn heading_glyph(h: u8) -> char {
     }
 }
 
+/// Upper bound on the *dense* canvas a render will materialize. The
+/// turtle's `cells` map is sparse, but the rendered grid is not: a
+/// diagonal walk of N cells spans an N×N bbox, so cell count is a poor
+/// proxy for output size. Without this cap, `(draw! (grow '(+ F)
+/// '((F F F)) 14))` — well inside the wasm host's 10M step budget —
+/// asks for a 16384² grid (~1 GB) and takes the page down.
+///
+/// Two million cells permits every cheatsheet curve with room to spare
+/// (the widest is well under 1.1M) while keeping the returned string
+/// inside what a `<pre>` can hold without janking. Mirrors the
+/// `World::new` `MAX_CELLS` precedent.
+const MAX_CANVAS_CELLS: u64 = 2_000_000;
+
 /// Render the turtle's stamped cells to a multi-line ASCII string.
 /// Auto-sizes to the bbox of visited cells; unvisited interior cells
-/// become spaces. Empty turtle → empty string.
-pub fn render(turtle: &Turtle) -> String {
+/// become spaces. Empty turtle → empty string. Errors if the bbox
+/// exceeds [`MAX_CANVAS_CELLS`] rather than attempting the allocation.
+pub fn render(turtle: &Turtle) -> Result<String, String> {
     if turtle.cells.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
     let mut min_x = i32::MAX;
     let mut max_x = i32::MIN;
@@ -169,16 +183,26 @@ pub fn render(turtle: &Turtle) -> String {
         min_y = min_y.min(y);
         max_y = max_y.max(y);
     }
-    let w = (max_x - min_x + 1) as usize;
-    let h = (max_y - min_y + 1) as usize;
+    // i64 so a bbox spanning the full i32 range can't wrap the subtraction.
+    let w64 = (max_x as i64 - min_x as i64 + 1) as u64;
+    let h64 = (max_y as i64 - min_y as i64 + 1) as u64;
+    let cells = w64.saturating_mul(h64);
+    if cells > MAX_CANVAS_CELLS {
+        return Err(format!(
+            "render!: canvas {w64}×{h64} = {cells} cells exceeds {MAX_CANVAS_CELLS} \
+             (the curve spans too wide a bounding box — try fewer iterations)"
+        ));
+    }
+    let (w, h) = (w64 as usize, h64 as usize);
     let mut grid: Vec<Vec<char>> = vec![vec![' '; w]; h];
     for (&(x, y), &c) in &turtle.cells {
         grid[(y - min_y) as usize][(x - min_x) as usize] = c;
     }
-    grid.iter()
+    Ok(grid
+        .iter()
         .map(|row| row.iter().collect::<String>())
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n"))
 }
 
 /// `(draw! sym-list)` — walk a list of stroke symbols and dispatch each
@@ -240,7 +264,7 @@ fn is_nonterminal(s: &str) -> bool {
 /// dep-free; the REPL's default printer surfaces the newlines
 /// correctly because `Val::Sym(s) => write!(f, "{s}")` is verbatim.
 fn render_prim(_args: &[Val], t: &mut Turtle) -> Result<Val, String> {
-    Ok(Val::Sym(render(t).into()))
+    Ok(Val::Sym(render(t)?.into()))
 }
 
 fn reset_prim(_args: &[Val], t: &mut Turtle) -> Result<Val, String> {
