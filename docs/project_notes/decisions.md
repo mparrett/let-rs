@@ -3375,3 +3375,107 @@ printer is not a lossless transport. Worth remembering the next time
 a correctness cost gets filed as a performance one.
 
 **Supersedes**: ADR-024's deferred `Vm::eval_datums` item.
+
+## ADR-035: Shared slices and owned continuations in the CEK loop (2026-07-27)
+
+**Context**: Eleven acts in, nothing had profiled the machine's
+allocation behavior. Three allocations sat on the hottest paths, all
+of them structural rather than algorithmic:
+
+1. **`Val::Clo { params: Vec<Sym> }`.** `Val` is `Clone` and
+   `Env::lookup` clones the value out of the store — so *every
+   reference to a function name heap-allocated a fresh params vector*.
+   Not the call: the mere mention of the name.
+2. **`K::App { evaled: Vec<Val>, remaining: Vec<Rc<Expr>> }`, matched
+   by reference.** `apply_k` took `&*k` and therefore had to clone
+   both vectors on every single argument, plus a `remove(0)` memmove.
+   An n-argument application did O(n²) `Val` clones and 2n vector
+   allocations. Nothing in the bench suite had an arity above three,
+   which is why it went unmeasured.
+3. **`Expr::App(Vec<Rc<Expr>>)`.** Entering an application copied the
+   subexpression vector out of the `Expr` (`exprs.to_vec()`) purely to
+   pop the head off it.
+
+**Decision**: Share what is immutable; own what is consumed.
+
+- `Expr::Lam` and `Val::Clo` hold `Rc<[Sym]>`. Evaluating a `lambda`
+  and looking up a closure-bound name are both refcount bumps.
+- `Expr::App` and `K::App` hold the same `Rc<[Rc<Expr>]>`. Entering an
+  application allocates nothing for the subexpressions.
+- `K::App` drops `remaining` entirely. `evaled` is filled strictly
+  left to right, so `evaled.len()` *is* the index of the
+  subexpression in flight — one field instead of two, and no cursor
+  that can drift out of sync with the results.
+- `K::Letrec` gets the same treatment: `Rc<[Addr]>` + `Rc<[Rc<Expr>]>`
+  walked by the `next` it already carried.
+- **`apply_k` takes the continuation by value.** This engine has no
+  first-class continuations, so every `K` is uniquely owned by the one
+  `State` about to consume it. `Rc::try_unwrap` therefore succeeds and
+  every field can be *moved* out instead of cloned. A clone fallback
+  covers the shared case so the code stays correct if `call/cc` or
+  continuation marks ever land.
+- `apply` shifts the callee off the front of `evaled` and reuses that
+  allocation for the argument vector rather than draining into a
+  second one.
+
+The `try_unwrap` fast path was verified to always hit: replacing the
+clone arm with a `panic!` leaves all 228 tests green.
+
+**Result** (min-of-N, three interleaved A/B rounds; arms never
+overlapped):
+
+| workload | before | after |
+|---|---|---|
+| tail-recursive loop, 20k | 37.7–39.0 ms | 20.2–20.4 ms |
+| 32-arg application | 11.5 µs | 5.0 µs |
+| 32-arg application ×200 | 2.04–2.07 ms | 0.65 ms |
+| closure alloc ×5k | 19.9–20.1 ms | 10.2–10.4 ms |
+| 5-deep closure lookup | 3.8 µs | 2.6 µs |
+| letrec chain, 200 bindings | 84.8–85.2 µs | 49.1 µs |
+
+The repo's own criterion suite agrees: −45% (tail calls), −48%
+(letrec), −49% (assoc-get), −66% (list map), −69% (int fold).
+
+`apply_32_args_x200` is added to `crates/bench/benches/core.rs` — the
+quadratic term survived eleven acts because every existing bench had
+arity ≤ 3.
+
+**Alternatives considered**:
+
+1. **`Rc<Vec<Val>>` + `Rc::make_mut` for `evaled`.** Would give
+   copy-on-write push. Rejected: `make_mut` needs `&mut Rc`, and
+   `apply_k` only had `&Rc<K>` — the ownership problem is the actual
+   problem, and taking `K` by value solves it directly.
+2. **Keep `remaining`, store it reversed, and `pop()`.** Removes the
+   memmove but not the clone, and adds a reversed-order invariant to
+   every reader. Strictly worse than deriving the index from
+   `evaled.len()`.
+3. **Interning symbols** so `Sym` comparison is pointer equality and
+   env lookup skips `str` compares. Orthogonal and still open — this
+   ADR removes allocations, not comparisons. Worth its own ADR if
+   lookup shows up again after this.
+4. **A compile-time lexical-addressing pass** (de Bruijn indices) so
+   `Var` resolution is O(1) instead of a frame walk. The real fix for
+   deep environments, and a much larger change. Deferred; the 1.45×
+   on `deep_lookup` here is incidental, not the fix.
+
+**Consequences**:
+- **+** 1.5–3× across every core workload measured, from a change with
+  no semantic surface: no behavior, error, or API change outside the
+  `Expr`/`Val`/`K` field types.
+- **+** `K::App` has one fewer field and one fewer invariant.
+- **−** `Expr::Lam`, `Expr::App`, `Val::Clo`, and both `K` variants
+  changed shape. Construction sites need `.into()`; `crates/macros`
+  needed one. Breaking for anyone pattern-matching these types.
+- **−** `Rc<[T]>` cannot be grown. Nothing in the engine wanted to,
+  but a future pass that rewrites `Expr` trees in place would have to
+  rebuild rather than mutate.
+- **−** The `try_unwrap` fast path is a *performance* assumption
+  documented in a comment, not enforced by a type. If first-class
+  continuations land, this silently degrades to the old cloning cost
+  rather than failing loudly. Acceptable: correctness is preserved
+  either way, and that is the property that matters.
+
+**Note**: none of this was found by reading the code — it was found by
+asking what the machine allocates per variable reference. Same lesson
+as ADR-033 and ADR-034, third instance in one day.

@@ -38,12 +38,17 @@ The `lisp` core stays zero-deps.
 The five CEK transition rules live in `crates/lisp/src/step.rs` — read that
 file before anything else; the rest of the engine is decoration.
 
-- `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec | SetBang`
+- `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec | SetBang`.
+  `Lam` and `App` hold `Rc<[…]>`, not `Vec`, so the `K` that walks an
+  application shares the slice instead of copying it (ADR-035).
 - `val.rs` — runtime values: `Num | Ratio | Bool | Sym | Str | Nil | Cons | Clo | Prim`,
   plus `Arity` and `Display`. `Val::Prim` holds an
   `Rc<dyn Fn(&[Val]) -> Result<Val, String>>` so host prims can
   capture state at registration time without the engine knowing what
-  they capture (ADR-017).
+  they capture (ADR-017). `Val::Clo` holds `params: Rc<[Sym]>` —
+  `Val` is `Clone` and `Env::lookup` clones out of the store, so a
+  `Vec` here meant every mention of a function name allocated
+  (ADR-035). Keep new `Val` fields cheap to clone for the same reason.
 - `env.rs` — Rc-linked immutable frames. Post-ADR-023 (CESK) each
   frame carries a `Copy` `Addr` into the Vm's `Store` rather than an
   `Rc<RefCell<Val>>` per slot; the top-level `globals` table kept its
@@ -57,7 +62,12 @@ file before anything else; the rest of the engine is decoration.
   arena is sized by live env depth, not by total evaluation
   (ADR-033). `Store::len` is live slots; `Store::slots` is the
   high-water mark.
-- `k.rs` — continuation variants: `Halt | App | If | Letrec | SetBang`
+- `k.rs` — continuation variants: `Halt | App | If | Letrec | SetBang`.
+  `apply_k` takes the `Rc<K>` **by value** and `Rc::try_unwrap`s it so
+  fields move out rather than being cloned — valid because there are no
+  first-class continuations, so every `K` is uniquely owned (ADR-035).
+  Don't change it back to matching on `&*k`: that reintroduces an
+  O(n²) clone per application.
 - `step.rs` — `step(State) -> Step` and the driver `run` loop. The
   engine no longer threads a `&World` through CEK state; that
   responsibility moved to host-owned prim closures (ADR-017).

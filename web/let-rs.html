@@ -1837,8 +1837,8 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         <span class="mark">⊘</span>
       </div>
       <div class="body">
-        <h2>The register that never let go
-          <span class="tag">— a leak traded for a leak, and a correctness bug filed under performance</span>
+        <h2>Three things the record got wrong
+          <span class="tag">— a leak traded for a leak, a correctness bug filed under performance, and a vector per name</span>
         </h2>
         <p>
           Act VII ends in triumph. The <code>letrec</code> cycle that
@@ -1960,15 +1960,56 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           this. A five-line test did, in about a minute.
         </p>
 
+        <h3 class="subact">What the machine allocates per name</h3>
+        <p>
+          Then the third one, which nobody had written down at all —
+          because nobody had asked the machine a question it could
+          answer. Not <em>is this correct</em> but <em>what does this
+          allocate</em>.
+        </p>
+
+        <p>
+          <code>Val::Clo</code> held its parameter names in a
+          <code>Vec</code>. <code>Val</code> is <code>Clone</code>, and
+          looking a name up copies the value out of the store — so
+          every <em>mention</em> of a function name, not every call,
+          heap-allocated a fresh vector of its parameter names.
+          Meanwhile <code>apply_k</code> matched the continuation by
+          reference, which left it no choice but to clone both of
+          <code>K::App</code>'s vectors on every single argument: an
+          n-argument call cost O(n²) value clones. It had survived
+          eleven acts because nothing in the benchmark suite takes more
+          than three arguments.
+        </p>
+
+        <p>
+          The fix is one idea applied in three places: share what's
+          immutable, own what's consumed. Parameter lists and
+          subexpression lists become <code>Rc&lt;[…]&gt;</code>, shared
+          between the AST and the continuation walking it. The
+          <code>remaining</code> field disappears entirely —
+          <code>evaled</code> fills left to right, so its length
+          <em>is</em> the index of the expression in flight. And
+          <code>apply_k</code> takes the continuation <em>by value</em>
+          and unwraps the <code>Rc</code>: with no first-class
+          continuations, every frame is uniquely owned by the one state
+          about to consume it, so the fields can simply move. Between
+          1.5× and 3× faster on every core workload, for a change with
+          no semantic surface at all.
+        </p>
+
         <p class="lift">
-          The second one fails the same way from the other side. Act
-          VIII didn't miss the round-trip — it wrote it down, sized it,
-          and attached the wrong test for whether it mattered. A
-          benchmark was never going to fire, because the problem was
-          never that printing was slow. Both findings are what happens
-          when the record is good enough to trust and nobody checks it
-          against the machine. The store had one honest number in it
-          the whole time; the expander had one line of lisp.
+          Three findings, one shape. The first was a document
+          incomplete on the day it was written. The second was complete
+          and sized and attached to the wrong test for whether it
+          mattered — a benchmark that was never going to fire, for a
+          problem that was never about speed. The third was the one the
+          benchmarks would have caught, if any of them had passed more
+          than three arguments to anything. The record was good enough
+          to trust in all three cases. What it wasn't, in any of them,
+          was checked against the machine. The store had one honest
+          number in it the whole time; the expander had one line of
+          lisp; the CEK loop had a profiler and thirty-two arguments.
         </p>
       </div>
     </section>
