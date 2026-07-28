@@ -49,10 +49,14 @@ file before anything else; the rest of the engine is decoration.
   `Rc<RefCell<Val>>` per slot; the top-level `globals` table kept its
   `Rc<RefCell<Val>>` cells (for the ADR-015 `Weak` back-edge). Letrec
   placeholders live in the store.
-- `store.rs` — the CESK `Store` (ADR-023): an append-only
-  `Vec<Val>` addressed by `Addr(u32)`. Frame slots and letrec
+- `store.rs` — the CESK `Store` (ADR-023): a `Vec<Val>` addressed
+  by `Addr(u32)`, with a free list. Frame slots and letrec
   placeholders are `Addr`s into it, so a closure capturing an env
-  holds cheap `Copy` indices instead of refcounted cells.
+  holds cheap `Copy` indices instead of refcounted cells. A frame
+  owns its slot: `Frame::drop` returns it to the free list, so the
+  arena is sized by live env depth, not by total evaluation
+  (ADR-033). `Store::len` is live slots; `Store::slots` is the
+  high-water mark.
 - `k.rs` — continuation variants: `Halt | App | If | Letrec | SetBang`
 - `step.rs` — `step(State) -> Step` and the driver `run` loop. The
   engine no longer threads a `&World` through CEK state; that
@@ -71,9 +75,12 @@ host types.)
   syntax — works without macros installed.
 - `lib.rs` — `Vm`, top-level `define` registration. `eval_str` accepts
   a sequence of top-level forms; returns the last expression's value
-  (ADR-014). The engine is macro-unaware: `defmacro` lives in the
-  sibling `macros` crate (ADR-024). Hosts that want macros wrap a
-  `Vm` in `macros::MacroVm`.
+  (ADR-014). `eval_datums(&[Datum])` is the same thing for callers
+  that already hold read forms — `eval_str` is `read_many` plus it.
+  Hosts that build forms programmatically should use it rather than
+  `format!`-ing source (ADR-034). The engine is macro-unaware:
+  `defmacro` lives in the sibling `macros` crate (ADR-024). Hosts
+  that want macros wrap a `Vm` in `macros::MacroVm`.
 
 The spell, gene, and curve DSL packs live in sibling crates
 (`crates/spells/`, `crates/genes/`, `crates/curves/`) as of ADR-016
@@ -157,7 +164,10 @@ Sibling crates:
   bundles `lisp::Vm` + `Expander` with a macro-aware `eval_str`.
   Hosts that want macros wrap their `Vm` in `MacroVm`; hosts that
   don't (the CLI demos) stay on the raw engine. Depends only on
-  `lisp`. See ADR-024.
+  `lisp`. Expanded datums go to the engine via `Vm::eval_datums`;
+  they used to be re-serialized to source and re-read, which lost
+  any symbol the printer can't represent (ADR-034) — don't
+  reintroduce a printer on this path. See ADR-024, ADR-034.
 - `crates/wasm/` — JS-facing bridge (`wasm-bindgen` `cdylib`). Wraps
   `macros::MacroVm` (which wraps `lisp::Vm`) + `World` + `Turtle`,
   installs all three DSL packs at construction via
