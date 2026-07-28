@@ -31,8 +31,14 @@ use crate::val::Val;
 /// Nothing in the engine holds an `Addr` without also holding the
 /// `Env` that keeps its frame alive (`K::Letrec` carries both), and
 /// there is no public accessor that hands one out — see ADR-033.
+///
+/// The `u32` is private (ADR-036) so an `Addr` can only come from
+/// `Store::alloc`. That is what makes the invariant above enforceable
+/// rather than merely documented: `store_weak` hands out a `Store`, but
+/// without a constructible `Addr` there is nothing a holder can read or
+/// write through it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Addr(pub u32);
+pub struct Addr(u32);
 
 pub struct Store {
     cells: RefCell<Vec<Val>>,
@@ -54,7 +60,7 @@ impl Store {
     /// when one is available. Panics if the address space is exhausted
     /// (2^32 *live* slots — an environment that deep is a runaway, not
     /// a workload).
-    pub fn alloc(&self, v: Val) -> Addr {
+    pub(crate) fn alloc(&self, v: Val) -> Addr {
         if let Some(idx) = self.free.borrow_mut().pop() {
             // The slot holds `Val::Nil` (cleared by `free`), so the
             // implicit drop of the old value here is a no-op and can't
@@ -72,7 +78,7 @@ impl Store {
         Addr(idx as u32)
     }
 
-    pub fn get(&self, addr: Addr) -> Val {
+    pub(crate) fn get(&self, addr: Addr) -> Val {
         self.cells.borrow()[addr.0 as usize].clone()
     }
 
@@ -81,7 +87,7 @@ impl Store {
     /// same re-entrancy reason as `free`: it may be the last owner of a
     /// closure whose env holds frames, and those frames free slots as
     /// they die.
-    pub fn set(&self, addr: Addr, v: Val) {
+    pub(crate) fn set(&self, addr: Addr, v: Val) {
         let displaced = {
             let mut cells = self.cells.borrow_mut();
             std::mem::replace(&mut cells[addr.0 as usize], v)

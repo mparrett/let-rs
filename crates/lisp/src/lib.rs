@@ -51,12 +51,24 @@ pub struct Vm {
     /// reach back to it via `env.globals` use a `Weak`, so dropping
     /// this Vm collapses every closure stored here without leaks. See
     /// ADR-015.
-    pub globals: Globals,
+    ///
+    /// Private (ADR-036): the sole-strong-reference property above is
+    /// only true if nothing outside can clone the `Rc`. Hosts install
+    /// bindings through [`Vm::register_prim`] and [`Vm::eval_str`];
+    /// tests observe cell lifetime through [`Vm::global_cell_weak`].
+    globals: Globals,
     /// Lexical-binding heap (frame slots; `let`/`letrec`/lambda
     /// params). The fourth CESK register from ADR-023. Owned by `Vm`
     /// strong; reached by closures via `Env::store` as a `Weak`, so a
     /// closure can't keep the store alive past its Vm.
-    pub store: Rc<Store>,
+    ///
+    /// Private (ADR-036). `Store::set` writes any `Addr` without
+    /// checking that a live `Frame` owns it, which is sound only
+    /// because the engine never lets an `Addr` escape the `Env` that
+    /// keeps its frame alive (ADR-033). A `pub` handle here would have
+    /// been the way to break exactly that. Diagnostics go through
+    /// [`Vm::store_weak`].
+    store: Rc<Store>,
     /// CEK step budget, applied *per top-level form* — not per
     /// `eval_str` call. A source of N forms can therefore run up to
     /// N × `step_budget` steps in total; the budget bounds any single
@@ -94,6 +106,15 @@ impl Vm {
     /// drops with the Vm — proof that no closure rooted it.
     pub fn store_weak(&self) -> Weak<Store> {
         Rc::downgrade(&self.store)
+    }
+
+    /// `Weak` handle to the cell backing top-level binding `name`, or
+    /// `None` if it isn't bound. Diagnostic sibling of
+    /// [`Vm::store_weak`]: it lets a caller observe whether a binding's
+    /// cell outlives this Vm — the ADR-015 property — without holding
+    /// the cell (or the table) alive and thereby changing the answer.
+    pub fn global_cell_weak(&self, name: &str) -> Option<Weak<RefCell<Val>>> {
+        self.globals.borrow().get(name).map(Rc::downgrade)
     }
 
     /// Borrow the Vm's root environment. Exposed for the `macros`
