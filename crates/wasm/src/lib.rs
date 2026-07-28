@@ -136,30 +136,27 @@ impl WasmVm {
             .map_err(|e| JsValue::from_str(&e))
     }
 
-    /// Current mana value, as an i32 for the UI meter. The mana model
-    /// lives in lisp (ADR-028); this is just a thin accessor.
-    pub fn mana(&mut self) -> i32 {
-        self.inner
-            .eval_str("mana")
-            .ok()
-            .and_then(|v| match v {
-                lisp::Val::Num(n) => i32::try_from(n).ok(),
-                _ => None,
-            })
-            .unwrap_or(0)
+    /// Read a lisp-side integer global, or 0 if it's unbound or not a
+    /// number. Mana lives in the spells prelude rather than in host
+    /// state (ADR-028, grandfathered by ADR-037), so the bridge reads
+    /// it back out — but via `Vm::global`, a hashmap lookup, rather
+    /// than by evaluating source.
+    fn global_int(&self, name: &str) -> i32 {
+        match self.inner.vm.global(name) {
+            Some(lisp::Val::Num(n)) => i32::try_from(n).unwrap_or(0),
+            _ => 0,
+        }
     }
 
-    /// Mana cap. Read once at startup; doesn't change unless the host
+    /// Current mana value, as an i32 for the UI meter.
+    pub fn mana(&self) -> i32 {
+        self.global_int("mana")
+    }
+
+    /// Mana cap. Read once at startup; doesn't change unless something
     /// rewrites `max-mana` from lisp.
-    pub fn max_mana(&mut self) -> i32 {
-        self.inner
-            .eval_str("max-mana")
-            .ok()
-            .and_then(|v| match v {
-                lisp::Val::Num(n) => i32::try_from(n).ok(),
-                _ => None,
-            })
-            .unwrap_or(0)
+    pub fn max_mana(&self) -> i32 {
+        self.global_int("max-mana")
     }
 
     /// Newline-joined ASCII render of the world grid.
@@ -180,8 +177,14 @@ impl WasmVm {
         *self.world.borrow_mut() =
             World::new(self.width, self.height).expect("dims validated at construction");
         // Best-effort: reset-mana! is defined by the spells prelude;
-        // if a future bridge drops that prelude, this no-ops cleanly.
-        let _ = self.inner.eval_str("(reset-mana!)");
+        // if a future bridge drops that prelude, `global` returns None
+        // and this no-ops cleanly. Looking the closure up and calling
+        // it beats `eval_str("(reset-mana!)")` — no reparse, and the
+        // "not installed" case is a `None` rather than an error string
+        // we'd have to discard blind.
+        if let Some(f) = self.inner.vm.global("reset-mana!") {
+            let _ = self.inner.vm.call_value(&f, vec![]);
+        }
     }
 
     /// Translate two codon tapes into parent genomes, breed them via

@@ -24,6 +24,13 @@ pub type Globals = Rc<RefCell<HashMap<Sym, Rc<RefCell<Val>>>>>;
 /// no longer Rc-reach back to its own letrec cell — the cycle from
 /// ADR-021 dissolves by construction.
 ///
+/// A frame owns its slot: when the last `Env` naming a frame drops,
+/// `Frame::drop` returns the slot to the store's free list (ADR-033).
+/// So a loop that allocates a binding per iteration reuses one slot
+/// rather than growing the arena without bound — *unless* the slot's
+/// value captures this very frame, which keeps it alive and defeats
+/// the drop. See the known-residual note in `store.rs` and ADR-038.
+///
 /// `globals` is a `Weak` reference to the Vm's top-level table; any
 /// name not found in the frame chain falls back to it. `store` is the
 /// matching `Weak` for frame-slot resolution. Both `Weak` keeps any
@@ -39,7 +46,30 @@ pub struct Env {
 struct Frame {
     name: Sym,
     addr: Addr,
+    /// Back-edge to the arena this frame's slot lives in, so the slot
+    /// can be reclaimed when the frame dies (ADR-033). `Weak` for the
+    /// same reason `Env::store` is: a frame must not root its own Vm.
+    store: Weak<Store>,
     parent: Option<Rc<Frame>>,
+}
+
+impl Drop for Frame {
+    /// A frame owns its store slot. When the last `Env` referencing
+    /// this frame goes away the binding is unreachable, so the slot
+    /// returns to the free list (ADR-033).
+    ///
+    /// This does not fire when the slot's own value reaches back here —
+    /// a recursive closure holds its frame alive, so the frame never
+    /// drops and the slot is never freed. Pinned by
+    /// `recursive_closures_retain_their_slot`; see ADR-038.
+    ///
+    /// An upgrade failure means the Vm dropped first and took the
+    /// whole arena with it; there is nothing to reclaim into.
+    fn drop(&mut self) {
+        if let Some(store) = self.store.upgrade() {
+            store.free(self.addr);
+        }
+    }
 }
 
 impl Env {
@@ -61,11 +91,15 @@ impl Env {
         self.extend_addr(name, addr)
     }
 
+    /// Sole constructor of `Frame`. Every caller passes a freshly
+    /// allocated `addr`, which is what makes the frame the unique owner
+    /// of its slot — the invariant `Store::free` relies on.
     fn extend_addr(&self, name: Sym, addr: Addr) -> Env {
         Env {
             frame: Some(Rc::new(Frame {
                 name,
                 addr,
+                store: self.store.clone(),
                 parent: self.frame.clone(),
             })),
             globals: self.globals.clone(),
@@ -120,20 +154,12 @@ impl Env {
         self.store.upgrade()
     }
 
-    /// Return the frame-allocated `Addr` for `name`, if any. Walks
-    /// frames only — does *not* fall through to globals. Exposed for
-    /// diagnostic tests that need to observe slot identity without
-    /// holding the store value alive.
-    pub fn lookup_addr(&self, name: &str) -> Option<Addr> {
-        let mut cur = self.frame.as_deref();
-        while let Some(f) = cur {
-            if &*f.name == name {
-                return Some(f.addr);
-            }
-            cur = f.parent.as_deref();
-        }
-        None
-    }
+    // `lookup_addr` (a frames-only `Addr` accessor, added for diagnostic
+    // tests and never used by one) was removed in ADR-033. Slots are
+    // recycled now, so an `Addr` that outlives its frame reads a
+    // different binding instead of faulting — and that accessor was the
+    // only way for one to escape the engine's "holds the Addr ⇒ holds
+    // the Env" invariant.
 
     /// Mutate the binding for `name`. Walks frames first (writing into
     /// the store slot via `Addr`), then falls through to the globals

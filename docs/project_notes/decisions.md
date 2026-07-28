@@ -1830,7 +1830,15 @@ follow-up; this ADR doesn't ship it.
   back to the user's source rather than into macro-generated
   forms.
 
-## ADR-023: CESK migration — designed, deferred (2026-06-01)
+## ADR-023: CESK migration (2026-06-01, shipped 2026-06-02)
+
+> **Status: implemented.** Designed 2026-06-01, landed 2026-06-02 (see
+> `decisions.md` ADR-026's note and `store.rs`). The store's
+> append-only design specified below was **amended by ADR-033**, which
+> added slot reclamation after it turned out to leak every binding for
+> the life of the Vm. The consequences list in this ADR does not
+> mention that; ADR-033 explains why it should have.
+
 
 **Context**: The engine today is CEK. The three explicit registers
 are control, environment, continuation (`State { mode, k }` at
@@ -2179,6 +2187,12 @@ macro-unaware. Hosts opt in by wrapping a `Vm` in
   the reader (serialize → parse → compile). Cheap for REPL
   scale; could be replaced by exposing a `Vm::eval_datums`
   entry point if it ever measures hot.
+  **Resolved by ADR-034 (2026-07-27) — and the framing here was
+  wrong. The round-trip was a correctness bug, not a perf cost:
+  the printer cannot represent every `Datum` the expander can
+  produce (see ADR-031's own note that symbols with whitespace
+  don't survive `read`). Waiting for it to "measure hot" would
+  have waited forever.**
 - **−** Hosts that want macros + a `Vm` field need to reach the
   inner engine via `macro_vm.vm` (`pub vm: Vm` on MacroVm).
   Minor verbosity in `crates/wasm/src/lib.rs` (e.g.
@@ -2189,9 +2203,11 @@ macro-unaware. Hosts opt in by wrapping a `Vm` in
   Documented in `crates/lisp/Cargo.toml`.
 
 **Deferred**:
-- A `Vm::eval_datums(forms)` entry point that would let
+- ~~A `Vm::eval_datums(forms)` entry point that would let
   `MacroVm::eval_str` skip the serialize round-trip. Worth
-  doing only if a benchmark shows the round-trip is measurable.
+  doing only if a benchmark shows the round-trip is measurable.~~
+  **Shipped 2026-07-27 (ADR-034), on correctness grounds rather
+  than the benchmark this item was waiting for.**
 - Hygienic macros (gensym + renaming pass). Listed in the
   let-rs.html "what comes after"; would live in `crates/macros/`
   when picked up, with the choice between "hygienic by default"
@@ -2437,9 +2453,9 @@ globals write path is one `borrow_mut`, no store routing.
   doesn't reach into Val structure; this would be a separate
   decision (and probably needs a new addressing scheme inside
   Cons). Not pulled by any consumer yet.
-- An `unset!` / `unbind` form. Not requested; the store has no
-  reclamation today (ADR-023), so a frame-slot unbind would be
-  cheap to express but doesn't free anything.
+- An `unset!` / `unbind` form. Not requested. (When written, the
+  store had no reclamation, so an unbind would have freed nothing;
+  as of ADR-033 it would — but nothing has asked for the form.)
 - A `parameterize` / dynamic binding form. Distinct from `set!`
   (block-scoped, push/pop on entry/exit); CESK makes both
   expressible. Pull when a consumer wants thread-locals or
@@ -3162,3 +3178,638 @@ glyphs named in ADR-029/ADR-030). Those ADRs are left as written — historical
 record of the decisions at the time. This ADR plus `crates/runes/src/lib.rs`
 are the current source of truth for the glyph table. The `codons` and `strokes`
 tapes (separate DSLs) are unaffected.
+
+## ADR-033: The CESK store reclaims frame slots (2026-07-27)
+
+**Context**: ADR-023 migrated the engine from CEK to CESK: frame slots
+became `Addr` indices into a Vm-owned `Store` instead of
+`Rc<RefCell<Val>>` cells. That dissolved the ADR-021 letrec cycle by
+construction, which was the goal, and it worked.
+
+What ADR-023 did not weigh — its consequences list has six `+` and five
+`−`, none of them this — is that the store it specified was **append-only
+with no reclamation**. Pre-CESK, a frame slot's `Rc<RefCell<Val>>` died
+when the frame died; only letrec cycles leaked. Post-CESK, *every*
+binding ever created was retained for the life of the `Vm`. The migration
+traded a conditional leak for an unconditional one, in exchange for a
+snapshot/undo capability that has not yet shipped.
+
+Measured on the pre-fix engine:
+
+```
+(loop 10000 0), run four times:  20002 → 40004 → 60006 → 80008 slots
+100 × a two-argument call:        2 slots per call, none reclaimed
+```
+
+This was not theoretical. The Spell Lab drives `(tick!)` on a
+`setInterval` in a page designed to be left open, and the web REPL's step
+budget is 10M — one `(loop 1000000)` permanently added ~2M `Val` slots to
+a Vm that lives as long as the tab. `letrec_does_not_leak` (ADR-023's own
+regression test) was passing for the wrong reason: the cycle was gone
+because nothing was ever freed.
+
+**Decision**: Give `Store` a free list, and reclaim slots from
+`Frame::drop`.
+
+> **Amended 2026-07-28 after review.** The claim in the next paragraph
+> — "slot lifetime tracks frame lifetime again, exactly as the pre-CESK
+> cells did" — **is false for closures that capture the frame owning
+> their own slot.** See "Known residual" below. The decision stands and
+> the measurements below are real; the scope of the claim was wrong.
+
+A `Frame` owns its `Addr` uniquely — `Env::extend_addr` is the sole
+constructor and every call site passes a freshly-allocated address — so
+when the last `Env` naming a frame drops, that slot is unreachable and
+returns to the free list. `Store::alloc` pops the free list before
+growing the backing vector. For any binding that doesn't outlive its
+frame, slot lifetime tracks frame lifetime as the pre-CESK cells did.
+
+Two implementation hazards, both handled:
+
+1. **Re-entrancy.** Freeing a slot releases the `Val` it held, which may
+   be the last owner of a closure → env → frame chain, which re-enters
+   `Store::free`. Both `free` and `set` therefore take the displaced
+   value out *under* the borrow and drop it *after* releasing, or the
+   nested call hits a live `borrow_mut` and panics.
+2. **Slot recycling.** An `Addr` outliving its frame now reads a
+   *different* binding rather than faulting. Nothing in the engine holds
+   an `Addr` without also holding the `Env` that keeps its frame alive
+   (`K::Letrec` carries both `addrs` and `env`). The one way an `Addr`
+   could escape that invariant was `Env::lookup_addr`, a public accessor
+   added for diagnostic tests and never used by one; it is removed.
+
+`Store::len` now reports *live* slots (allocated minus freed) since that
+is the number that must stay bounded; `Store::slots` exposes the
+high-water mark for diagnostics.
+
+**Result**: the 80,008-slot figure above becomes a high-water mark of 4.
+For bindings that don't outlive their frame, slot count is a function
+of live environment depth rather than of how much evaluation has
+happened.
+
+**Known residual** (found in review of PR #12, 2026-07-28). A closure
+that captures the frame owning its own slot is never reclaimed:
+
+```
+store slot ──> Val::Clo ──> captured Env ──> Rc<Frame> ──> owns slot
+```
+
+`Frame::drop` is what frees the slot, but the closure sitting *in* that
+slot holds the frame alive, so the drop never runs. Measured, 100
+evaluations each:
+
+| form | retained |
+|---|---|
+| `(letrec ((f (lambda () (f)))) 0)` | 100 slots |
+| mutual-recursive letrec pair | 200 slots |
+| `(let ((f 0)) (set! f (lambda () f)) …)` | 100 slots |
+| top-level define + 100 calls | 0 |
+| `let` + non-recursive closure | 0 |
+
+This is ADR-021's cycle in a new form. By choosing the frame destructor
+as the reclamation mechanism, this ADR made the slot's liveness depend
+on the frame and the frame's liveness depend on the slot's contents.
+Refcounting cannot break that without tracing.
+
+Three things keep it from being a blocker:
+
+- **It is not a regression.** The append-only store retained these too,
+  along with everything else. `(count 20000 0)` still goes from 20,002
+  slots per run to a high-water of 4.
+- **It is bounded per closure, not per iteration** — one slot for a
+  self-recursive letrec, two for a mutual pair. It doesn't accumulate
+  within an evaluation, only across repeated ones.
+- **The preludes don't hit it.** They define vocabulary with top-level
+  `define`, which lives in the globals table, not in frames. The
+  exposure is REPL code and demos that use `letrec` directly.
+
+Pinned by `recursive_closures_retain_their_slot`, in the ADR-021
+tradition: the test asserts the limitation so that a future fix flips
+it loudly rather than silently. The fix is ADR-038.
+
+**Why this got shipped**: the original `store_reclaims_frame_slots`
+exercised only a top-level define, whose closure captures the root env
+and therefore cannot form the cycle. One frame shape, tested; the one
+that mattered, not. The test now covers five shapes. Worth noting on an
+ADR whose siblings are about records asserting properties the code
+doesn't have — this one did it too, and a reviewer caught it with a
+three-line reproduction.
+
+**Alternatives considered**:
+
+1. **Status quo.** Rejected. The leak is unbounded and reachable from
+   the shipped web playground, not just from pathological input.
+2. **Mark-and-sweep from roots at top-level form boundaries.** Correct
+   but heavier: needs a root set (globals + the Vm env + any live `K`),
+   a traversal, and a stop-the-world point that doesn't exist today.
+   Buys nothing over frame-drop reclamation, which is precise and
+   incremental.
+3. **Generation-tagged `Addr` (index + generation counter).** Would turn
+   a stale-`Addr` read into a detectable fault rather than a silent
+   aliasing bug. Rejected for now: it doubles `Addr`'s size and adds a
+   check to the hottest read path in the machine, to defend an invariant
+   that removing `lookup_addr` makes structural. Revisit if a future
+   feature needs to hand `Addr`s out.
+4. **Jump straight to a persistent / HAMT store** (ADR-023's open
+   follow-on). Rejected as sequencing, not as a direction — the leak is
+   a live defect and this fix is ~40 lines. Reclamation does not close
+   the HAMT door.
+
+**Consequences**:
+- **+** Memory profile returns to pre-CESK behavior for non-escaping
+  bindings. Long-lived hosts (the tick loop, the browser REPL, any
+  future game loop) stop growing on ordinary evaluation; a REPL session
+  that repeatedly evaluates `letrec`-bound recursive closures still
+  accrues one slot each (see Known residual).
+- **+** Pinned by three tests: `store_reclaims_frame_slots` asserts
+  live count and high-water mark stay flat across five different frame
+  shapes (the first version tested only one, which is how the residual
+  shipped); `escaped_closures_survive_slot_reuse` asserts the converse
+  — a closure's captured slot is *not* freed while still reachable,
+  with free-list churn in between to catch premature reuse; and
+  `recursive_closures_retain_their_slot` pins the residual above.
+- **−** Each `Frame` grows a `Weak<Store>` (8 bytes plus a weak-count
+  bump per frame construction). Frames are already `Rc`-allocated; this
+  is noise next to that allocation, but it is on the call path.
+- **−** `Addr`s are no longer stable identities. Documented on `Addr`
+  itself. Any future feature that wants to hand an `Addr` outside the
+  engine needs alternative 3 first.
+- **−** Frame-chain drop remains recursive (`parent: Option<Rc<Frame>>`),
+  now with a `free` call per level. Depth is bounded by live lexical
+  nesting, not by iteration count, so this is unchanged in order from
+  pre-CESK — but a pathologically deep `let*` could still recurse on
+  drop. Pre-existing; noted here rather than fixed.
+
+**Amends**: ADR-023, whose store design this changes. That ADR's header
+still read "designed, deferred" after the migration shipped 2026-06-02 —
+corrected in the same pass.
+
+## ADR-034: `Vm::eval_datums` — the expander stops printing (2026-07-27)
+
+**Context**: ADR-024 extracted macros to a sibling crate. Because
+`lisp::Vm::eval_str` was the only public way into the engine, the new
+`MacroVm::eval_str` had to hand its expansion back as *source text*:
+it serialized every expanded `Datum` with a private `datum_to_source`
+and let the reader parse it a second time. The full path was
+
+```
+read → expand → print → read → compile
+```
+
+ADR-024 listed this as a known cost and deferred the fix — "worth
+doing only if a benchmark shows the round-trip is measurable."
+
+That framing scoped it as a performance question. It was a
+correctness question. ADR-031, seven weeks earlier, had written down
+the exact reason in its own context section: symbols "don't survive a
+round-trip through `read` if they contain whitespace or special
+chars." ADR-024 then made `read` the transport for macro output.
+Neither ADR cites the other and nothing connected them.
+
+The bug that falls out is one line of lisp:
+
+```lisp
+(defmacro weird () (list 'quote (string->symbol "a b")))
+(weird)   ;; => Err("quote: expected (quote datum)")
+```
+
+`string->symbol` builds a symbol the printer cannot represent.
+`(quote |a b|)` prints as `(quote a b)`, which re-reads as a
+two-argument quote. Any macro deriving names from strings — the
+natural shape for a `defsomething` — hits this. The same seam
+produced the `()` finding in the 2026-07-24 audit (M2) and a lossy
+string escape path (`datum_to_source` emitted four escapes; anything
+else became source the tokenizer rejects).
+
+**Decision**: Add `Vm::eval_datums(&[Datum])` and make
+`Vm::eval_str` a two-liner over it (`read_many` + `eval_datums`).
+`MacroVm::eval_str_inner` hands its expanded datums straight through.
+`datum_to_source` is deleted.
+
+The rollback boundary moves with the body it guards: `eval_datums`
+takes the globals snapshot, so a `read_many` failure — which mutates
+nothing — no longer pays for one. Behavior is unchanged.
+
+**Alternatives considered**:
+
+1. **Keep the round-trip, fix the printer.** Teach
+   `datum_to_source` `|a b|` bar-quoting for symbols and full string
+   escapes. Rejected: it makes the printer a second, parallel
+   specification of the reader's grammar that must stay in sync
+   forever, to solve a problem created by printing at all.
+2. **Give `Datum` a `Val`-carrying escape hatch** so unrepresentable
+   values ride through as opaque payloads. Rejected: complicates the
+   datum type for every consumer to serve one seam that shouldn't
+   exist.
+3. **Merge `macros` back into `lisp`.** Would remove the boundary
+   and the round-trip together. Rejected — ADR-024's separation is
+   good and this ADR is evidence for it, not against: the fix is to
+   give the boundary a proper API, not to delete the boundary.
+
+**Consequences**:
+- **+** Macro expansion is faithful. Pinned by
+  `macro_output_survives_symbols_the_printer_cannot_round_trip` and
+  `derived_symbol_names_survive_expansion`; both fail on the old path
+  with `quote: expected (quote datum)` (verified by reverting).
+- **+** Prelude installation is ~18% faster —
+  `MacroVm::with_stdlib()` + `spells::install` measured at 390.5 µs
+  before / 306.3 µs after (min-of-60, best of 3 interleaved rounds;
+  the after arm won every round). Per-cast time is unchanged within
+  noise, which is expected: cast bodies are one small form, so the
+  round-trip's cost was concentrated in prelude installs.
+- **+** Hosts that build forms programmatically now have a
+  non-stringly entry point. The WASM bridge currently assembles lisp
+  via `format!` (`cast`, `cast_genome`, `cast_curve`); those could
+  move to datums without inventing an API.
+- **~** `Vm::eval_str` and `Vm::eval_datums` are now two public
+  entry points with identical semantics. Documented as such.
+- **−** `Datum` is now load-bearing public API rather than an
+  implementation detail the macros crate happened to see. Changing
+  it is a breaking change for macro hosts.
+
+**Note on measurement**: ADR-024 deferred this pending a benchmark.
+A benchmark would have been the wrong instrument — the round-trip
+never measured dramatic, and the reason to remove it was that a
+printer is not a lossless transport. Worth remembering the next time
+a correctness cost gets filed as a performance one.
+
+**Supersedes**: ADR-024's deferred `Vm::eval_datums` item.
+
+## ADR-035: Shared slices and owned continuations in the CEK loop (2026-07-27)
+
+**Context**: Eleven acts in, nothing had profiled the machine's
+allocation behavior. Three allocations sat on the hottest paths, all
+of them structural rather than algorithmic:
+
+1. **`Val::Clo { params: Vec<Sym> }`.** `Val` is `Clone` and
+   `Env::lookup` clones the value out of the store — so *every
+   reference to a function name heap-allocated a fresh params vector*.
+   Not the call: the mere mention of the name.
+2. **`K::App { evaled: Vec<Val>, remaining: Vec<Rc<Expr>> }`, matched
+   by reference.** `apply_k` took `&*k` and therefore had to clone
+   both vectors on every single argument, plus a `remove(0)` memmove.
+   An n-argument application did O(n²) `Val` clones and 2n vector
+   allocations. Nothing in the bench suite had an arity above three,
+   which is why it went unmeasured.
+3. **`Expr::App(Vec<Rc<Expr>>)`.** Entering an application copied the
+   subexpression vector out of the `Expr` (`exprs.to_vec()`) purely to
+   pop the head off it.
+
+**Decision**: Share what is immutable; own what is consumed.
+
+- `Expr::Lam` and `Val::Clo` hold `Rc<[Sym]>`. Evaluating a `lambda`
+  and looking up a closure-bound name are both refcount bumps.
+- `Expr::App` and `K::App` hold the same `Rc<[Rc<Expr>]>`. Entering an
+  application allocates nothing for the subexpressions.
+- `K::App` drops `remaining` entirely. `evaled` is filled strictly
+  left to right, so `evaled.len()` *is* the index of the
+  subexpression in flight — one field instead of two, and no cursor
+  that can drift out of sync with the results.
+- `K::Letrec` gets the same treatment: `Rc<[Addr]>` + `Rc<[Rc<Expr>]>`
+  walked by the `next` it already carried.
+- **`apply_k` takes the continuation by value.** This engine has no
+  first-class continuations, so every `K` is uniquely owned by the one
+  `State` about to consume it. `Rc::try_unwrap` therefore succeeds and
+  every field can be *moved* out instead of cloned. A clone fallback
+  covers the shared case so the code stays correct if `call/cc` or
+  continuation marks ever land.
+- `apply` shifts the callee off the front of `evaled` and reuses that
+  allocation for the argument vector rather than draining into a
+  second one.
+
+The `try_unwrap` fast path was verified to always hit: replacing the
+clone arm with a `panic!` leaves all 228 tests green.
+
+**Result** (min-of-N, three interleaved A/B rounds; arms never
+overlapped):
+
+| workload | before | after |
+|---|---|---|
+| tail-recursive loop, 20k | 37.7–39.0 ms | 20.2–20.4 ms |
+| 32-arg application | 11.5 µs | 5.0 µs |
+| 32-arg application ×200 | 2.04–2.07 ms | 0.65 ms |
+| closure alloc ×5k | 19.9–20.1 ms | 10.2–10.4 ms |
+| 5-deep closure lookup | 3.8 µs | 2.6 µs |
+| letrec chain, 200 bindings | 84.8–85.2 µs | 49.1 µs |
+
+The repo's own criterion suite agrees: −45% (tail calls), −48%
+(letrec), −49% (assoc-get), −66% (list map), −69% (int fold).
+
+`apply_32_args_x200` is added to `crates/bench/benches/core.rs` — the
+quadratic term survived eleven acts because every existing bench had
+arity ≤ 3.
+
+**Alternatives considered**:
+
+1. **`Rc<Vec<Val>>` + `Rc::make_mut` for `evaled`.** Would give
+   copy-on-write push. Rejected: `make_mut` needs `&mut Rc`, and
+   `apply_k` only had `&Rc<K>` — the ownership problem is the actual
+   problem, and taking `K` by value solves it directly.
+2. **Keep `remaining`, store it reversed, and `pop()`.** Removes the
+   memmove but not the clone, and adds a reversed-order invariant to
+   every reader. Strictly worse than deriving the index from
+   `evaled.len()`.
+3. **Interning symbols** so `Sym` comparison is pointer equality and
+   env lookup skips `str` compares. Orthogonal and still open — this
+   ADR removes allocations, not comparisons. Worth its own ADR if
+   lookup shows up again after this.
+4. **A compile-time lexical-addressing pass** (de Bruijn indices) so
+   `Var` resolution is O(1) instead of a frame walk. The real fix for
+   deep environments, and a much larger change. Deferred; the 1.45×
+   on `deep_lookup` here is incidental, not the fix.
+
+**Consequences**:
+- **+** 1.5–3× across every core workload measured, from a change with
+  no semantic surface: no behavior, error, or API change outside the
+  `Expr`/`Val`/`K` field types.
+- **+** `K::App` has one fewer field and one fewer invariant.
+- **−** `Expr::Lam`, `Expr::App`, `Val::Clo`, and both `K` variants
+  changed shape. Construction sites need `.into()`; `crates/macros`
+  needed one. Breaking for anyone pattern-matching these types.
+- **−** `Rc<[T]>` cannot be grown. Nothing in the engine wanted to,
+  but a future pass that rewrites `Expr` trees in place would have to
+  rebuild rather than mutate.
+- **−** The `try_unwrap` fast path is a *performance* assumption
+  documented in a comment, not enforced by a type. If first-class
+  continuations land, this silently degrades to the old cloning cost
+  rather than failing loudly. Acceptable: correctness is preserved
+  either way, and that is the property that matters.
+
+**Note**: none of this was found by reading the code — it was found by
+asking what the machine allocates per variable reference. Same lesson
+as ADR-033 and ADR-034, third instance in one day.
+
+## ADR-036: `Vm` internals are private (2026-07-27)
+
+**Context**: `Vm::globals` and `Vm::store` were `pub`, and
+`Addr`'s index was a `pub` tuple field. Both `Vm` fields carry
+invariants stated in their own doc comments:
+
+- `globals` is documented as *"held by `Vm` as the sole strong
+  reference"* — the property ADR-015's `Weak` back-edge depends on.
+  Public access means any host can clone the `Rc` and falsify it.
+- `store` is only sound because the engine never lets an `Addr` escape
+  the `Env` that keeps its frame alive (ADR-033). `Store::set` writes
+  any address without checking that a live `Frame` owns it, so a
+  public handle plus a constructible `Addr` was a direct route to
+  corrupting an unrelated binding.
+
+Nothing outside the crate used either field except one test reaching
+into the globals table to take a `Weak` to a cell.
+
+**Decision**: Make both fields private. Narrow `Store::alloc`, `get`,
+and `set` to `pub(crate)`, and make `Addr`'s `u32` private.
+
+Two diagnostic accessors cover the legitimate uses:
+
+- `Vm::store_weak()` (already existed) — hands out a `Weak<Store>` for
+  observing `len` / `slots` / `is_empty`.
+- `Vm::global_cell_weak(name)` (new) — a `Weak` to one binding's cell,
+  so a test can watch whether it outlives the Vm without holding it
+  alive and changing the answer.
+
+The `Addr` change is what makes `store_weak` genuinely read-only:
+without a constructible `Addr`, a holder can ask the store how big it
+is but has nothing to read or write through it. Verified by compiling
+a probe that attempts all five — every one is a hard error.
+
+**Alternatives considered**:
+
+1. **Leave them public, document harder.** What was already being
+   done. The doc comments correctly stated the invariants; they just
+   weren't enforceable. Consistent with nothing else in the crate —
+   `Env`'s frame chain and `Store`'s cells were already private.
+2. **Expose a read-only `StoreView` newtype** instead of narrowing the
+   API. More machinery than the problem needs, now that `Addr` alone
+   is sufficient to gate access.
+
+**Consequences**:
+- **+** ADR-015's sole-strong-reference and ADR-033's addr-liveness
+  invariants are enforced by the type system rather than asserted in
+  prose. Given that this day's other three findings were all
+  "documentation asserting a property the code didn't have," that
+  distinction is the point.
+- **−** Breaking for any host reading `vm.globals` / `vm.store`, or
+  constructing an `Addr`. Nothing in-tree did except the one test.
+- **−** A future host with a genuine need to enumerate top-level
+  bindings (a REPL completer, say) will need a new accessor. That is
+  the right time to design one, rather than pre-emptively exposing the
+  whole table.
+
+## ADR-037: Where state lives (2026-07-28)
+
+**Context**: The project has two mechanisms for holding state across
+evaluations and no written rule for choosing between them.
+
+1. **Host-owned, prim-captured.** `World` (ADR-017/018) and `Turtle`
+   (ADR-019) live in `Rc<RefCell<…>>` handles the host owns; prims
+   close over a clone at registration time. The engine has no
+   awareness of either.
+2. **Lisp globals mutated by `set!`.** The mana model (ADR-028):
+   `max-mana` and `mana` are top-level defines that `cast!` and
+   `tick!` write through.
+
+Both are reasonable in isolation. Having both with no rule means the
+next piece of state gets placed by whichever ADR was written most
+recently, which is how mana ended up where it is.
+
+The symptom that surfaced it: `crates/wasm/src/lib.rs` was reading
+the mana counter with `eval_str("mana")` — tokenize, compile to
+`Expr::Var`, run the CEK machine — to perform what is a hashmap
+lookup, and `reset_world` called `eval_str("(reset-mana!)")` as a
+best-effort whose failure it discarded blind. A host doing string-eval
+RPC into the interpreter to read an integer is the shape of a
+misplaced boundary.
+
+**Decision**: The rule is
+
+> **State the host must read or render lives in the host. State only
+> lisp reads lives in lisp.**
+
+It classifies the existing cases correctly: the host renders the tile
+grid (`World` → host), the host renders the ASCII canvas (`Turtle` →
+host), the host renders a mana meter (`mana` → *should be* host).
+
+The rule governs **placement of the cell, not ownership of the
+model**. `World` is the precedent: the grid is a Rust struct, but
+every decision about what gets painted is lisp vocabulary building a
+ctx that `world-apply!` consumes. A host-side mana cell would keep
+`spell-cost`, the gate, and the regen rate in `PRELUDE_DEFINES`
+exactly as they are now. ADR-028's "the spell DSL owns its resource
+model" is preserved under either placement — that argument was never
+actually in tension with host-side storage.
+
+**Mana is grandfathered.** It works, it has ten tests, and migrating
+it is churn without a functional payoff. The rule governs new state.
+This is recorded rather than quietly tolerated so the inconsistency is
+a known exception instead of a precedent.
+
+**What changes now**: `Vm::global(name) -> Option<Val>` — the
+supported way for a host to read a lisp-side value. The bridge's
+`mana()` / `max_mana()` use it (and drop to `&self`, since reading a
+binding is not evaluation), and `reset_world` looks up `reset-mana!`
+and calls it via `Vm::call_value` instead of re-parsing a call. No
+string-eval remains in the mana path.
+
+**Note on how mana got here**, because the sequence is instructive.
+ADR-023 added the CESK store, justified partly by snapshot/undo
+capability that has still not shipped. ADR-026 observed that the store
+made `set!` cheap and added it. ADR-028 opens by noting that ADR-026
+and ADR-027 "were inert without a consumer" and supplies one. Each
+step is justified by the step before it; the chain is not justified by
+anything the project needed. ADR-028's alternatives list rejects
+host-side mana partly because it "doesn't exercise `set!`" — a reason
+to build a feature, not a reason a design is right. Its one
+substantive objection, that a Rust-side cap couldn't be rebound, does
+not hold: nothing rebinds `max-mana`, `web/spells.js` documents that
+its pip row would not react if anything did, and a host-side cap could
+expose a setter prim regardless.
+
+The mana model is also the **only** production consumer of `set!` in
+the tree — three occurrences, all in the spells prelude.
+
+**Alternatives considered**:
+
+1. **Migrate mana to a host `Caster` now.** The rule says it belongs
+   there. Deferred, not rejected: the payoff is consistency rather
+   than function, and it would leave `set!` with no production
+   consumer, which is a separate decision (see below) that shouldn't
+   be forced by a cleanup.
+2. **Rule: all state lives in the host.** Simpler to state and would
+   make the engine expression-pure again. Rejected as too strong — a
+   DSL that wants a counter only it reads shouldn't have to grow a
+   Rust type and a prim to hold it.
+3. **Rule: all state lives in lisp.** Would require `World` and
+   `Turtle` to become lisp values, which means growing vectors or a
+   mutable map in `Val` and putting rendering behind more prims
+   anyway. Strictly more engine surface for less capability.
+4. **No rule; decide case by case.** The status quo, which produced
+   the inconsistency this ADR exists to resolve.
+
+**Deferred**: whether `set!` survives. If mana ever migrates, `set!`
+has no production consumer and the engine could return to being
+expression-pure with host prims as the only effecting things. The
+argument for keeping it anyway is that it is one special form, it is
+genuinely part of "a real lisp," and removing shipped language surface
+has its own cost. Not decided here; recorded so the choice is visible
+if the migration ever happens.
+
+**Consequences**:
+- **+** New state has an unambiguous home, and the reasoning is
+  written down rather than re-derived per ADR.
+- **+** No string-eval in the bridge's mana path; `mana()` and
+  `max_mana()` are `&self`.
+- **+** `Vm::global` is the "purpose-built accessor" ADR-036
+  anticipated in place of re-exposing the globals table.
+- **~** Mana is a documented exception to the rule the project just
+  adopted. Honest but not tidy.
+- **−** The rule is a convention, not a constraint. Nothing in the
+  type system stops the next DSL pack from putting host-rendered
+  state in a lisp global.
+
+## ADR-038: Trial-deletion sweep for retained frame cycles — proposed (2026-07-28)
+
+**Status: proposed, not implemented.** Written so the residual ADR-033
+leaves has a designed fix on the shelf rather than a shrug. Pull
+trigger at the bottom.
+
+**Context**: ADR-033 reclaims frame slots from `Frame::drop`. That
+leaves one shape unreclaimed — a closure capturing the frame that owns
+its own slot:
+
+```
+store slot ──> Val::Clo ──> captured Env ──> Rc<Frame> ──> owns slot
+```
+
+The frame can't drop because the closure holds it; the slot can't be
+freed because only the frame's drop frees it. Costs one slot per
+recursive closure, per evaluation. This is ADR-021's cycle, third
+appearance: pinned there, dissolved-by-construction (incorrectly) in
+ADR-023, narrowed in ADR-033, still here.
+
+Refcounting cannot break a cycle. The options are to stop using
+refcounts for this edge, or to trace.
+
+**Proposed decision**: a trial-deletion sweep (Bacon–Rajan, restricted
+to the one shape that actually occurs), run at top-level form
+boundaries.
+
+Why that boundary: after a top-level form completes, the continuation
+is `K::Halt`. No `K` holds a `Val`, and no evaluation is in flight, so
+the only roots are the globals table, the Vm's root env, and any `Val`
+a host is holding. That makes the root set enumerable, which it is not
+mid-evaluation.
+
+Sketch:
+
+1. `Store` gains a `Weak<Frame>` alongside each slot, so a slot can
+   name its owner. (`Frame` would need to be reachable from `store`;
+   today the dependency runs the other way, so this is the invasive
+   part.)
+2. For each live slot holding a `Val::Clo`, walk the closure's env
+   chain and record which frames it reaches. Build a count per frame of
+   how many *store-held* closures reach it.
+3. A frame whose `Rc::strong_count` equals its store-held count is
+   referenced only from inside the store. Nothing outside can reach it,
+   so its slot group is garbage and can be freed.
+4. Freeing drops the closures, which drops the envs, which drops the
+   frames, which returns the remaining slots via the existing
+   `Frame::drop` path.
+
+Cost is O(live slots × env depth) per sweep, which at REPL and demo
+scale is noise. It could be made incremental (sweep only when the free
+list is empty and the store is about to grow) if it ever isn't.
+
+**Why this fails safe**: a `Val` held outside the store — by a host,
+by `Vm::global`'s returned clone — inflates the frame's strong count
+above the store-held count, so the frame is *not* collected. The error
+direction is retention, never premature free. That property is the
+reason this is worth doing at all; a tracing collector that can be
+wrong about liveness is a much bigger commitment.
+
+**Alternatives considered**:
+
+1. **Leave it pinned.** The status quo after ADR-033's amendment, and
+   defensible: the residual is bounded per closure, the preludes don't
+   hit it (they use top-level `define`, which lives in globals, not
+   frames), and the exposure is REPL sessions that repeatedly evaluate
+   `letrec`-bound recursive closures. The argument against is that this
+   is the third ADR to document-and-defer the same cycle.
+2. **Y-style desugaring of `letrec`** (ADR-021 option 3). Rewrites
+   self-reference so the closure body doesn't reach its own frame.
+   Fixes the self-recursive case; leaves mutual recursion, which is
+   half the measured residual, and adds a compile pass. Rejected as a
+   half-fix.
+3. **Weak edge from the store slot to the closure's env.** Would break
+   the cycle by construction, but a closure whose env has been weakened
+   is a closure that can be called after its captured bindings die.
+   Changes language semantics to fix an allocation problem.
+4. **Full tracing GC.** Correct and general, and a different project.
+   The whole appeal of trial deletion here is that it handles the one
+   shape that occurs, in ~100 lines, with a fail-safe error direction.
+5. **Arena-per-top-level-form.** Drop the whole store at each form
+   boundary and re-root survivors. Cheap to state, but "re-root
+   survivors" is tracing with extra steps, and it breaks closures that
+   legitimately outlive the form that made them.
+
+**Pull triggers** — any one un-defers this:
+
+1. A host that keeps one `Vm` alive across many user-authored `letrec`
+   forms and observes growth. The web REPL is the candidate; it
+   currently doesn't, because the labs' casts go through prelude
+   defines rather than user letrecs.
+2. The persistent/HAMT store from ADR-023 landing, which would touch
+   this surface anyway.
+3. Any decision to add first-class continuations, which would make `K`s
+   shared, invalidate ADR-035's `try_unwrap` fast path, and generally
+   put reachability back on the table.
+
+**Consequences if adopted**:
+- **+** Closes the ADR-021 cycle for real, rather than narrowing it a
+  fourth time.
+- **−** Introduces a garbage collector to a project whose selling point
+  is that the engine is five transition rules. The sweep would live in
+  `store.rs` and stay out of `step.rs`, but the honest description of
+  the system grows a clause.
+- **−** `Store` gaining a `Weak<Frame>` per slot inverts the current
+  dependency direction between `store.rs` and `env.rs`.

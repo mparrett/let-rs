@@ -262,7 +262,7 @@ pub fn compile(d: &Datum) -> Result<Expr, String> {
             }
             let compiled: Result<Vec<_>, _> =
                 items.iter().map(|i| compile(i).map(Rc::new)).collect();
-            Ok(Expr::App(compiled?))
+            Ok(Expr::App(compiled?.into()))
         }
     }
 }
@@ -282,7 +282,7 @@ fn compile_lambda(rest: &[Datum]) -> Result<Expr, String> {
         _ => return Err("lambda: params must be a list".into()),
     };
     let body = compile(&rest[1])?;
-    Ok(Expr::Lam(params, Rc::new(body)))
+    Ok(Expr::Lam(params.into(), Rc::new(body)))
 }
 
 fn compile_if(rest: &[Datum]) -> Result<Expr, String> {
@@ -322,18 +322,18 @@ pub fn datum_to_val(d: &Datum) -> Val {
 
 fn compile_let(rest: &[Datum]) -> Result<Expr, String> {
     let (names, inits, body) = split_bindings(rest, "let")?;
-    let lam = Expr::Lam(names, Rc::new(body));
+    let lam = Expr::Lam(names.into(), Rc::new(body));
     let mut app = vec![Rc::new(lam)];
     app.extend(inits.into_iter().map(Rc::new));
-    Ok(Expr::App(app))
+    Ok(Expr::App(app.into()))
 }
 
 fn compile_let_star(rest: &[Datum]) -> Result<Expr, String> {
     let (names, inits, body) = split_bindings(rest, "let*")?;
     let mut expr = body;
     for (name, init) in names.into_iter().zip(inits).rev() {
-        let lam = Expr::Lam(vec![name], Rc::new(expr));
-        expr = Expr::App(vec![Rc::new(lam), Rc::new(init)]);
+        let lam = Expr::Lam([name].into(), Rc::new(expr));
+        expr = Expr::App([Rc::new(lam), Rc::new(init)].into());
     }
     Ok(expr)
 }
@@ -431,11 +431,14 @@ fn compile_quasiquote_form(rest: &[Datum]) -> Result<Expr, String> {
 /// quasiquote / unquote / unquote-splicing forms where the head symbol
 /// must be preserved verbatim rather than fired.
 fn qq_wrap_form(tag: &'static str, inner: Expr) -> Expr {
-    Expr::App(vec![
-        Rc::new(Expr::Var("list".into())),
-        Rc::new(Expr::Quote(Rc::new(Val::Sym(tag.into())))),
-        Rc::new(inner),
-    ])
+    Expr::App(
+        [
+            Rc::new(Expr::Var("list".into())),
+            Rc::new(Expr::Quote(Rc::new(Val::Sym(tag.into())))),
+            Rc::new(inner),
+        ]
+        .into(),
+    )
 }
 
 /// Compile `(quasiquote DATUM)` to an Expr that constructs the value DATUM at
@@ -494,7 +497,7 @@ fn compile_qq(d: &Datum, depth: usize) -> Result<Expr, String> {
                 for item in items {
                     app.push(Rc::new(compile_qq(item, depth)?));
                 }
-                return Ok(Expr::App(app));
+                return Ok(Expr::App(app.into()));
             }
 
             let mut parts: Vec<Rc<Expr>> = Vec::new();
@@ -503,7 +506,7 @@ fn compile_qq(d: &Datum, depth: usize) -> Result<Expr, String> {
                 if !bucket.is_empty() {
                     let mut list_expr = vec![Rc::new(Expr::Var("list".into()))];
                     list_expr.append(bucket);
-                    parts.push(Rc::new(Expr::App(list_expr)));
+                    parts.push(Rc::new(Expr::App(list_expr.into())));
                 }
             };
             for item in items {
@@ -518,7 +521,7 @@ fn compile_qq(d: &Datum, depth: usize) -> Result<Expr, String> {
 
             let mut app = vec![Rc::new(Expr::Var("append".into()))];
             app.extend(parts);
-            Ok(Expr::App(app))
+            Ok(Expr::App(app.into()))
         }
     }
 }

@@ -51,12 +51,24 @@ pub struct Vm {
     /// reach back to it via `env.globals` use a `Weak`, so dropping
     /// this Vm collapses every closure stored here without leaks. See
     /// ADR-015.
-    pub globals: Globals,
+    ///
+    /// Private (ADR-036): the sole-strong-reference property above is
+    /// only true if nothing outside can clone the `Rc`. Hosts install
+    /// bindings through [`Vm::register_prim`] and [`Vm::eval_str`];
+    /// tests observe cell lifetime through [`Vm::global_cell_weak`].
+    globals: Globals,
     /// Lexical-binding heap (frame slots; `let`/`letrec`/lambda
     /// params). The fourth CESK register from ADR-023. Owned by `Vm`
     /// strong; reached by closures via `Env::store` as a `Weak`, so a
     /// closure can't keep the store alive past its Vm.
-    pub store: Rc<Store>,
+    ///
+    /// Private (ADR-036). `Store::set` writes any `Addr` without
+    /// checking that a live `Frame` owns it, which is sound only
+    /// because the engine never lets an `Addr` escape the `Env` that
+    /// keeps its frame alive (ADR-033). A `pub` handle here would have
+    /// been the way to break exactly that. Diagnostics go through
+    /// [`Vm::store_weak`].
+    store: Rc<Store>,
     /// CEK step budget, applied *per top-level form* — not per
     /// `eval_str` call. A source of N forms can therefore run up to
     /// N × `step_budget` steps in total; the budget bounds any single
@@ -94,6 +106,31 @@ impl Vm {
     /// drops with the Vm — proof that no closure rooted it.
     pub fn store_weak(&self) -> Weak<Store> {
         Rc::downgrade(&self.store)
+    }
+
+    /// Read the current value of top-level binding `name`, or `None` if
+    /// it isn't bound.
+    ///
+    /// This is the supported way for a host to read a lisp-side value.
+    /// Before it existed the WASM bridge read its mana counter with
+    /// `eval_str("mana")` — tokenize, compile to `Expr::Var`, run the
+    /// CEK machine — to do a hashmap lookup. Hosts that render
+    /// lisp-owned state (see the state-placement rule in ADR-037)
+    /// should reach for this rather than evaluating source.
+    ///
+    /// Takes `&self`: reading a binding is not evaluation and shouldn't
+    /// require a mutable borrow of the Vm.
+    pub fn global(&self, name: &str) -> Option<Val> {
+        self.globals.borrow().get(name).map(|c| c.borrow().clone())
+    }
+
+    /// `Weak` handle to the cell backing top-level binding `name`, or
+    /// `None` if it isn't bound. Diagnostic sibling of
+    /// [`Vm::store_weak`]: it lets a caller observe whether a binding's
+    /// cell outlives this Vm — the ADR-015 property — without holding
+    /// the cell (or the table) alive and thereby changing the answer.
+    pub fn global_cell_weak(&self, name: &str) -> Option<Weak<RefCell<Val>>> {
+        self.globals.borrow().get(name).map(Rc::downgrade)
     }
 
     /// Borrow the Vm's root environment. Exposed for the `macros`
@@ -158,6 +195,20 @@ impl Vm {
     /// sibling `macros` crate (ADR-024). Hosts that want macros wrap
     /// this Vm in `macros::MacroVm`.
     pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
+        let forms = parse::read_many(src)?;
+        self.eval_datums(&forms)
+    }
+
+    /// Evaluate already-read top-level forms. Same semantics as
+    /// [`Vm::eval_str`] — which is just `read_many` plus this — for
+    /// callers that hold `Datum`s rather than source text.
+    ///
+    /// This is the entry point for `macros::MacroVm`, whose whole job
+    /// is to hand the engine datums it has already expanded (ADR-034).
+    /// Without it, a macro host's only route back into the Vm was to
+    /// re-serialize its expansion to source and make the reader parse
+    /// it a second time.
+    pub fn eval_datums(&mut self, forms: &[Datum]) -> Result<Val, String> {
         // Binding-level rollback: if any form in the batch fails,
         // restore the globals *table* to its pre-call state. Pre-fix, a
         // failed define left a placeholder cell visible in env (e.g.
@@ -176,16 +227,14 @@ impl Vm {
         // turtle state, log entries — likewise stand. Undoing those
         // would need the persistent store ADR-023 leaves open.
         let saved_globals = self.globals.borrow().clone();
-        let result = self.eval_str_inner(src);
+        let result = self.eval_datums_inner(forms);
         if result.is_err() {
             *self.globals.borrow_mut() = saved_globals;
         }
         result
     }
 
-    fn eval_str_inner(&mut self, src: &str) -> Result<Val, String> {
-        let forms = parse::read_many(src)?;
-
+    fn eval_datums_inner(&mut self, forms: &[Datum]) -> Result<Val, String> {
         // Pre-pass: allocate placeholder cells in `globals` for every
         // top-level `(define name body)` in this batch. Bodies that
         // reference any sibling-define's name (or their own) resolve
@@ -194,7 +243,7 @@ impl Vm {
         // pre-allocation overwrites the first cell; both bodies then
         // write to the second cell. The first cell becomes garbage.
         let mut define_cells: HashMap<String, Rc<RefCell<Val>>> = HashMap::new();
-        for datum in &forms {
+        for datum in forms {
             if let Some(name) = extract_define_name(datum)? {
                 let cell = Rc::new(RefCell::new(Val::Bool(false)));
                 self.globals.borrow_mut().insert(name.clone(), cell.clone());
@@ -204,10 +253,10 @@ impl Vm {
 
         let mut last = Val::Bool(true);
         for datum in forms {
-            if self.try_register_define(&datum, &define_cells)? {
+            if self.try_register_define(datum, &define_cells)? {
                 continue;
             }
-            let expr = parse::compile(&datum)?;
+            let expr = parse::compile(datum)?;
             last = run_bounded(expr, self.env.clone(), self.step_budget)?;
         }
         Ok(last)
@@ -248,7 +297,7 @@ impl Vm {
         for a in args {
             app.push(Rc::new(Expr::Quote(Rc::new(a))));
         }
-        run_bounded(Expr::App(app), self.env.clone(), self.step_budget)
+        run_bounded(Expr::App(app.into()), self.env.clone(), self.step_budget)
     }
 }
 

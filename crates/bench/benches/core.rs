@@ -24,6 +24,26 @@ fn bench_tail_call_loop(c: &mut Criterion) {
     });
 }
 
+fn bench_apply_wide(c: &mut Criterion) {
+    // A 32-argument application, called in a loop. Guards the ADR-035
+    // shape: `K::App` used to clone its `evaled` and `remaining` vectors
+    // on *every* argument, so a call was quadratic in its arity. Nothing
+    // else in this suite has an arity above 3, which is why the
+    // quadratic term went unnoticed for eleven acts.
+    let args: String = (1..=32).map(|i| format!(" {i}")).collect();
+    let src = format!(
+        "(letrec ((wide (lambda () (+{args}))) \
+                  (rep  (lambda (n) (if (= n 0) 0 (let ((_ (wide))) (rep (- n 1))))))) \
+           (rep 200))"
+    );
+    c.bench_function("apply_32_args_x200", |b| {
+        b.iter(|| {
+            let mut vm = Vm::new();
+            black_box(vm.eval_str(black_box(&src)).unwrap())
+        })
+    });
+}
+
 fn bench_letrec_mutual(c: &mut Criterion) {
     // even?/odd? at N=500. Stresses letrec's placeholder-cell mechanism
     // and cross-binding lookups.
@@ -185,6 +205,7 @@ fn bench_macro_thread_first(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_tail_call_loop,
+    bench_apply_wide,
     bench_letrec_mutual,
     bench_env_deep_lookup,
     bench_list_map_1000,

@@ -290,7 +290,7 @@ impl Expander {
         let body_datum = self.expand_all(vm, items[3].clone())?;
         let body_expr = parse::compile(&body_datum)?;
         let closure = Val::Clo {
-            params,
+            params: params.into(),
             body: Rc::new(body_expr),
             env: vm.env().clone(),
         };
@@ -378,19 +378,15 @@ impl MacroVm {
             remaining.push(self.expander.expand_top_level(&mut self.vm, datum)?);
         }
 
-        // Hand the expanded datums to lisp::Vm by stringifying them.
-        // Stringify is lossless for our Datum set (Num/Ratio/Bool/Sym/
-        // List/Quote); the round-trip through the reader is the price
-        // of going through the public Vm::eval_str entry point.
+        // Hand the expanded datums straight to the engine. This used to
+        // re-serialize them to source text and make the reader parse
+        // them a second time — parse → expand → print → parse → compile
+        // — because `eval_str` was the only public way in. ADR-034 added
+        // `eval_datums`, which is that entry point without the detour.
         if remaining.is_empty() {
             return Ok(Val::Bool(true));
         }
-        let mut combined = String::new();
-        for d in &remaining {
-            datum_to_source(d, &mut combined);
-            combined.push('\n');
-        }
-        self.vm.eval_str(&combined)
+        self.vm.eval_datums(&remaining)
     }
 }
 
@@ -483,39 +479,8 @@ fn val_to_datum(v: &Val) -> Result<Datum, String> {
     }
 }
 
-/// Serialize a Datum back to source text so the engine's parser can
-/// re-read it. Lossless for our Datum set; matches `Val::Display` for
-/// the common cases.
-fn datum_to_source(d: &Datum, out: &mut String) {
-    use std::fmt::Write;
-    match d {
-        Datum::Num(n) => write!(out, "{n}").unwrap(),
-        Datum::Ratio(n, dn) => write!(out, "{n}/{dn}").unwrap(),
-        Datum::Bool(true) => out.push_str("#t"),
-        Datum::Bool(false) => out.push_str("#f"),
-        Datum::Sym(s) => out.push_str(s),
-        Datum::Str(s) => {
-            out.push('"');
-            for c in s.chars() {
-                match c {
-                    '"' => out.push_str("\\\""),
-                    '\\' => out.push_str("\\\\"),
-                    '\n' => out.push_str("\\n"),
-                    '\t' => out.push_str("\\t"),
-                    _ => out.push(c),
-                }
-            }
-            out.push('"');
-        }
-        Datum::List(items) => {
-            out.push('(');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(' ');
-                }
-                datum_to_source(item, out);
-            }
-            out.push(')');
-        }
-    }
-}
+// `datum_to_source` (Datum → source text, so the engine's reader could
+// parse the expansion a second time) was deleted in ADR-034. Its only
+// caller now uses `Vm::eval_datums`. It was also lossy: it emitted just
+// four string escapes, so a macro emitting a string with any other
+// control character produced source the tokenizer would reject.

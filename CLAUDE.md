@@ -38,22 +38,44 @@ The `lisp` core stays zero-deps.
 The five CEK transition rules live in `crates/lisp/src/step.rs` — read that
 file before anything else; the rest of the engine is decoration.
 
-- `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec | SetBang`
+- `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec | SetBang`.
+  `Lam` and `App` hold `Rc<[…]>`, not `Vec`, so the `K` that walks an
+  application shares the slice instead of copying it (ADR-035).
 - `val.rs` — runtime values: `Num | Ratio | Bool | Sym | Str | Nil | Cons | Clo | Prim`,
   plus `Arity` and `Display`. `Val::Prim` holds an
   `Rc<dyn Fn(&[Val]) -> Result<Val, String>>` so host prims can
   capture state at registration time without the engine knowing what
-  they capture (ADR-017).
+  they capture (ADR-017). `Val::Clo` holds `params: Rc<[Sym]>` —
+  `Val` is `Clone` and `Env::lookup` clones out of the store, so a
+  `Vec` here meant every mention of a function name allocated
+  (ADR-035). Keep new `Val` fields cheap to clone for the same reason.
 - `env.rs` — Rc-linked immutable frames. Post-ADR-023 (CESK) each
   frame carries a `Copy` `Addr` into the Vm's `Store` rather than an
   `Rc<RefCell<Val>>` per slot; the top-level `globals` table kept its
   `Rc<RefCell<Val>>` cells (for the ADR-015 `Weak` back-edge). Letrec
   placeholders live in the store.
-- `store.rs` — the CESK `Store` (ADR-023): an append-only
-  `Vec<Val>` addressed by `Addr(u32)`. Frame slots and letrec
+- `store.rs` — the CESK `Store` (ADR-023): a `Vec<Val>` addressed
+  by `Addr(u32)`, with a free list. Frame slots and letrec
   placeholders are `Addr`s into it, so a closure capturing an env
-  holds cheap `Copy` indices instead of refcounted cells.
-- `k.rs` — continuation variants: `Halt | App | If | Letrec | SetBang`
+  holds cheap `Copy` indices instead of refcounted cells. A frame
+  owns its slot: `Frame::drop` returns it to the free list, so the
+  arena is sized by live env depth, not by total evaluation
+  (ADR-033). `Store::len` is live slots; `Store::slots` is the
+  high-water mark. **Residual:** a closure capturing the frame that
+  owns its own slot keeps that frame alive, so `Frame::drop` never
+  fires and the slot is retained — one slot per recursive closure,
+  pinned by `recursive_closures_retain_their_slot`, fix sketched in
+  ADR-038. Don't restate reclamation as unconditional.
+  `alloc`/`get`/`set` are `pub(crate)` and `Addr`'s
+  index is private (ADR-036), so `Vm::store_weak` is a read-only
+  diagnostic handle — there's no way to mint an `Addr` outside the
+  engine and therefore nothing to read or write through it.
+- `k.rs` — continuation variants: `Halt | App | If | Letrec | SetBang`.
+  `apply_k` takes the `Rc<K>` **by value** and `Rc::try_unwrap`s it so
+  fields move out rather than being cloned — valid because there are no
+  first-class continuations, so every `K` is uniquely owned (ADR-035).
+  Don't change it back to matching on `&*k`: that reintroduces an
+  O(n²) clone per application.
 - `step.rs` — `step(State) -> Step` and the driver `run` loop. The
   engine no longer threads a `&World` through CEK state; that
   responsibility moved to host-owned prim closures (ADR-017).
@@ -71,9 +93,15 @@ host types.)
   syntax — works without macros installed.
 - `lib.rs` — `Vm`, top-level `define` registration. `eval_str` accepts
   a sequence of top-level forms; returns the last expression's value
-  (ADR-014). The engine is macro-unaware: `defmacro` lives in the
-  sibling `macros` crate (ADR-024). Hosts that want macros wrap a
-  `Vm` in `macros::MacroVm`.
+  (ADR-014). `eval_datums(&[Datum])` is the same thing for callers
+  that already hold read forms — `eval_str` is `read_many` plus it.
+  Hosts that build forms programmatically should use it rather than
+  `format!`-ing source (ADR-034). The engine is macro-unaware:
+  `defmacro` lives in the sibling `macros` crate (ADR-024). Hosts
+  that want macros wrap a `Vm` in `macros::MacroVm`. `globals` and
+  `store` are private (ADR-036) — reach them via `store_weak` /
+  `global_cell_weak`, and add a purpose-built accessor rather than
+  re-exposing either field.
 
 The spell, gene, and curve DSL packs live in sibling crates
 (`crates/spells/`, `crates/genes/`, `crates/curves/`) as of ADR-016
@@ -157,7 +185,10 @@ Sibling crates:
   bundles `lisp::Vm` + `Expander` with a macro-aware `eval_str`.
   Hosts that want macros wrap their `Vm` in `MacroVm`; hosts that
   don't (the CLI demos) stay on the raw engine. Depends only on
-  `lisp`. See ADR-024.
+  `lisp`. Expanded datums go to the engine via `Vm::eval_datums`;
+  they used to be re-serialized to source and re-read, which lost
+  any symbol the printer can't represent (ADR-034) — don't
+  reintroduce a printer on this path. See ADR-024, ADR-034.
 - `crates/wasm/` — JS-facing bridge (`wasm-bindgen` `cdylib`). Wraps
   `macros::MacroVm` (which wraps `lisp::Vm`) + `World` + `Turtle`,
   installs all three DSL packs at construction via
@@ -244,6 +275,15 @@ ships a larger bundle.
   `quasiquote`, `set!`) live in `parse.rs`. Everything else can be a macro.
   `set!` (ADR-026) is the only effecting form — everything else is
   expression-pure.
+- **Where state lives (ADR-037): state the host must read or render
+  lives in the host; state only lisp reads lives in lisp.** `World`
+  and `Turtle` follow it. The mana model doesn't — it's a lisp global
+  the UI renders — and is a *grandfathered exception*, not a
+  precedent; don't copy its shape for new state. The rule places the
+  cell, not the model: host-side storage is compatible with the DSL
+  owning its policy, exactly as `world-apply!` consumes a ctx that
+  lisp vocabulary built. Hosts read lisp-side values with
+  `Vm::global(name)` — never `eval_str("some-name")`.
 - Host prims are registered via `vm.register_prim(name, arity, |args|
   …)`. The callback is wrapped in `Rc<dyn Fn>` so it can capture host
   state (`Rc<RefCell<World>>`, an `Rc<RefCell<Counter>>`, whatever).

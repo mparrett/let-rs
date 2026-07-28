@@ -27,8 +27,12 @@ pub enum Val {
     Str(Rc<str>),
     Nil,
     Cons(Rc<Val>, Rc<Val>),
+    /// A closure. `params` is `Rc<[Sym]>` rather than `Vec<Sym>`
+    /// because `Val` is `Clone` and `Env::lookup` clones out of the
+    /// store — with a `Vec` every reference to a function name
+    /// allocated a fresh params vector (ADR-035).
     Clo {
-        params: Vec<Sym>,
+        params: Rc<[Sym]>,
         body: Rc<Expr>,
         env: Env,
     },

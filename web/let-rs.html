@@ -1376,9 +1376,9 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           The cleaner cure turned out to be one letter further down
           the alphabet. CEK threads three explicit registers
           (control, environment, continuation); CESK threads four.
-          The new register is a <strong>store</strong>: an
-          append-only heap of values owned by the <code>Vm</code>,
-          indexed by a <code>Copy</code> <code>Addr(u32)</code>.
+          The new register is a <strong>store</strong>: a heap of
+          values owned by the <code>Vm</code>, indexed by a
+          <code>Copy</code> <code>Addr(u32)</code>.
           Frame slots stop being <code>Rc&lt;RefCell&lt;Val&gt;&gt;</code>
           cells and become plain <code>Addr</code>s. The closure →
           env → frame → Addr → store path still exists; what's gone
@@ -1826,6 +1826,234 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           one part of a codebase that never fails a test. Both have
           tests underneath them now, which is the whole difference
           between writing a guarantee down and actually having one.
+        </p>
+      </div>
+    </section>
+
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">XI</span>
+        <span class="mark">⊘</span>
+      </div>
+      <div class="body">
+        <h2>Three things the record got wrong
+          <span class="tag">— a leak traded for a leak, a correctness bug filed under performance, and a vector per name</span>
+        </h2>
+        <p>
+          Act VII ends in triumph. The <code>letrec</code> cycle that
+          ADR-021 had pinned and parked dissolved by construction the
+          moment frame slots became <code>Addr</code>s instead of
+          <code>Rc&lt;RefCell&lt;Val&gt;&gt;</code> cells. The
+          diagnostic flipped from
+          <code>letrec_cycle_persists_after_drop</code> to
+          <code>letrec_does_not_leak</code>. 121 tests passed on the
+          first run.
+        </p>
+
+        <p>
+          The test was passing for the wrong reason. The cycle was
+          gone because <em>nothing was ever freed</em>.
+        </p>
+
+        <p>
+          The store as ADR-023 specified it was append-only. Slots
+          went in; no slot came out. Before the migration a frame's
+          cell died with the frame, and only the letrec cycle leaked.
+          After it, every binding the machine ever created stayed
+          allocated for the life of the <code>Vm</code>. A conditional
+          leak had been traded for an unconditional one — in exchange
+          for snapshot and undo capabilities that, four acts later,
+          still hadn't shipped.
+        </p>
+
+        <p>
+          Five lines of scratch test made it plain. A ten-thousand
+          iteration loop cost twenty thousand and two slots; running
+          it a second time cost twenty thousand and two more. Nothing
+          about that is subtle — it's the first thing you'd check if
+          you thought to check it. The Spell Lab drives
+          <code>(tick!)</code> on an interval in a page meant to be
+          left open; the browser REPL's budget is ten million steps,
+          so a single <code>(loop 1000000)</code> permanently added
+          two million values to a machine that lives as long as the
+          tab.
+        </p>
+
+        <h3 class="subact">Who owns a slot</h3>
+        <p>
+          The fix follows from a question the original design didn't
+          ask: <em>who owns a store slot?</em> A <code>Frame</code>
+          does, and uniquely — <code>extend_addr</code> is the only
+          place a frame is built, and every call site hands it a
+          freshly allocated address. So when the last <code>Env</code>
+          naming a frame drops, that slot is unreachable and can go
+          back on a free list. Forty lines. The eighty-thousand-slot
+          figure becomes a high-water mark of four.
+        </p>
+
+        <p>
+          The ADR said this restored the pre-CESK behavior exactly.
+          A reviewer disagreed, in three lines:
+          <code>(letrec ((f (lambda () (f)))) 0)</code>, evaluated a
+          hundred times, retains a hundred slots. The frame's
+          destructor is what frees the slot — and the closure sitting
+          <em>in</em> that slot captured the frame, so the destructor
+          never runs. Choosing the frame's death as the trigger made
+          the slot's liveness depend on the frame and the frame's
+          liveness depend on the slot's contents. That is the ADR-021
+          cycle, third sighting: pinned in one act, declared dissolved
+          in another, and still here.
+        </p>
+
+        <p>
+          It's bounded — one slot per recursive closure, not per
+          iteration — and it isn't a regression, since the append-only
+          store retained these too along with everything else. The
+          preludes never touch it; they build vocabulary with top-level
+          <code>define</code>, which lives in the globals table rather
+          than in frames. So the fix stands and the claim was wrong,
+          which are different things. The claim is now the narrow one,
+          the residual has a test asserting it so a future fix breaks
+          loudly, and the real cure — a trial-deletion sweep at
+          top-level form boundaries, where the continuation is
+          <code>Halt</code> and the roots are finally enumerable — is
+          written up and shelved.
+        </p>
+
+        <p>
+          The tell, in hindsight: the reclamation test exercised one
+          frame shape, a top-level define, whose closure captures the
+          root env and therefore <em>cannot</em> form the cycle. One
+          shape tested; the shape that mattered, not. It now covers
+          five.
+        </p>
+
+        <p>
+          Two things bite on the way. Releasing a slot drops the
+          value in it, and that value may be the last owner of a
+          closure whose env holds frames — which re-enters the free
+          path mid-<code>borrow_mut</code> and panics. Both
+          <code>free</code> and <code>set</code> now take the
+          displaced value out under the borrow and drop it after
+          releasing. And once slots are recycled, an <code>Addr</code>
+          that outlives its frame reads a <em>different</em> binding
+          instead of faulting. Nothing in the engine holds an
+          <code>Addr</code> without also holding the <code>Env</code>
+          that keeps its frame alive — except one public accessor,
+          added for diagnostic tests and never used by one. It's gone.
+        </p>
+
+        <h3 class="subact">The cost that was filed under the wrong heading</h3>
+        <p>
+          One layer up, the same afternoon, a second one. Act VIII
+          moved macros to their own crate, and because
+          <code>eval_str</code> was the only public door into the
+          engine, the expander had to hand its output back as
+          <em>source text</em> — serialize every expanded form and let
+          the reader parse it a second time. Act VIII noticed, wrote it
+          down as a cost, and deferred the fix: worth doing
+          <em>if a benchmark shows the round-trip is measurable</em>.
+        </p>
+
+        <p>
+          Which filed a correctness bug under performance. Act IX had
+          already written down the reason, in the first paragraph of
+          the ADR that added strings: a symbol with a space in it
+          <em>doesn't survive a round-trip through <code>read</code></em>.
+          Act VIII then made <code>read</code> the transport for macro
+          output. Two acts, each holding half the answer, neither
+          citing the other.
+        </p>
+
+        <p>
+          It takes one line of lisp to fall over.
+          <code>(string->symbol "a b")</code> builds a symbol the
+          printer can't represent;
+          <code>(quote |a b|)</code> prints as <code>(quote a b)</code>
+          and re-reads as a two-argument quote. Any macro that derives
+          a name from a string — which is what a
+          <code>defsomething</code> macro <em>is</em> — hits it. The
+          fix is the entry point Act VIII already knew it wanted:
+          <code>eval_datums</code>, the expander hands over datums, the
+          printer leaves the path. Preludes install about a fifth
+          faster, which is the part that would have shown up in the
+          benchmark, and the least interesting thing about it.
+        </p>
+
+        <p class="lift">
+          Act X was about guarantees that went stale: true when
+          written, false by the time anyone read them. These are worse
+          and more interesting. ADR-023 has an
+          alternatives-considered section with four entries and a
+          consequences list with eleven, and not one of them is
+          <em>the store never frees anything</em>. The document wasn't
+          overtaken by later work. It was incomplete on the day it
+          was written, and thorough enough that nobody went looking.
+          That's the failure mode of a good ADR habit: prose that
+          careful starts to feel like proof. No amount of it found
+          this. A five-line test did, in about a minute.
+        </p>
+
+        <h3 class="subact">What the machine allocates per name</h3>
+        <p>
+          Then the third one, which nobody had written down at all —
+          because nobody had asked the machine a question it could
+          answer. Not <em>is this correct</em> but <em>what does this
+          allocate</em>.
+        </p>
+
+        <p>
+          <code>Val::Clo</code> held its parameter names in a
+          <code>Vec</code>. <code>Val</code> is <code>Clone</code>, and
+          looking a name up copies the value out of the store — so
+          every <em>mention</em> of a function name, not every call,
+          heap-allocated a fresh vector of its parameter names.
+          Meanwhile <code>apply_k</code> matched the continuation by
+          reference, which left it no choice but to clone both of
+          <code>K::App</code>'s vectors on every single argument: an
+          n-argument call cost O(n²) value clones. It had survived
+          eleven acts because nothing in the benchmark suite takes more
+          than three arguments.
+        </p>
+
+        <p>
+          The fix is one idea applied in three places: share what's
+          immutable, own what's consumed. Parameter lists and
+          subexpression lists become <code>Rc&lt;[…]&gt;</code>, shared
+          between the AST and the continuation walking it. The
+          <code>remaining</code> field disappears entirely —
+          <code>evaled</code> fills left to right, so its length
+          <em>is</em> the index of the expression in flight. And
+          <code>apply_k</code> takes the continuation <em>by value</em>
+          and unwraps the <code>Rc</code>: with no first-class
+          continuations, every frame is uniquely owned by the one state
+          about to consume it, so the fields can simply move. Between
+          1.5× and 3× faster on every core workload, for a change with
+          no semantic surface at all.
+        </p>
+
+        <p class="lift">
+          Three findings, one shape. The first was a document
+          incomplete on the day it was written. The second was complete
+          and sized and attached to the wrong test for whether it
+          mattered — a benchmark that was never going to fire, for a
+          problem that was never about speed. The third was the one the
+          benchmarks would have caught, if any of them had passed more
+          than three arguments to anything. The record was good enough
+          to trust in all three cases. What it wasn't, in any of them,
+          was checked against the machine. The store had one honest
+          number in it the whole time; the expander had one line of
+          lisp; the CEK loop had a profiler and thirty-two arguments.
+        </p>
+
+        <p class="lift">
+          And then the ADR written to say so did it too, in the same
+          afternoon, and needed a reviewer with a three-line letrec to
+          find out. Which is the actual lesson, later than it should
+          have arrived: knowing the failure mode confers no immunity to
+          it. The only thing that has caught any of these is someone
+          running the code and looking at the number.
         </p>
       </div>
     </section>
