@@ -3479,3 +3479,60 @@ arity ≤ 3.
 **Note**: none of this was found by reading the code — it was found by
 asking what the machine allocates per variable reference. Same lesson
 as ADR-033 and ADR-034, third instance in one day.
+
+## ADR-036: `Vm` internals are private (2026-07-27)
+
+**Context**: `Vm::globals` and `Vm::store` were `pub`, and
+`Addr`'s index was a `pub` tuple field. Both `Vm` fields carry
+invariants stated in their own doc comments:
+
+- `globals` is documented as *"held by `Vm` as the sole strong
+  reference"* — the property ADR-015's `Weak` back-edge depends on.
+  Public access means any host can clone the `Rc` and falsify it.
+- `store` is only sound because the engine never lets an `Addr` escape
+  the `Env` that keeps its frame alive (ADR-033). `Store::set` writes
+  any address without checking that a live `Frame` owns it, so a
+  public handle plus a constructible `Addr` was a direct route to
+  corrupting an unrelated binding.
+
+Nothing outside the crate used either field except one test reaching
+into the globals table to take a `Weak` to a cell.
+
+**Decision**: Make both fields private. Narrow `Store::alloc`, `get`,
+and `set` to `pub(crate)`, and make `Addr`'s `u32` private.
+
+Two diagnostic accessors cover the legitimate uses:
+
+- `Vm::store_weak()` (already existed) — hands out a `Weak<Store>` for
+  observing `len` / `slots` / `is_empty`.
+- `Vm::global_cell_weak(name)` (new) — a `Weak` to one binding's cell,
+  so a test can watch whether it outlives the Vm without holding it
+  alive and changing the answer.
+
+The `Addr` change is what makes `store_weak` genuinely read-only:
+without a constructible `Addr`, a holder can ask the store how big it
+is but has nothing to read or write through it. Verified by compiling
+a probe that attempts all five — every one is a hard error.
+
+**Alternatives considered**:
+
+1. **Leave them public, document harder.** What was already being
+   done. The doc comments correctly stated the invariants; they just
+   weren't enforceable. Consistent with nothing else in the crate —
+   `Env`'s frame chain and `Store`'s cells were already private.
+2. **Expose a read-only `StoreView` newtype** instead of narrowing the
+   API. More machinery than the problem needs, now that `Addr` alone
+   is sufficient to gate access.
+
+**Consequences**:
+- **+** ADR-015's sole-strong-reference and ADR-033's addr-liveness
+  invariants are enforced by the type system rather than asserted in
+  prose. Given that this day's other three findings were all
+  "documentation asserting a property the code didn't have," that
+  distinction is the point.
+- **−** Breaking for any host reading `vm.globals` / `vm.store`, or
+  constructing an `Addr`. Nothing in-tree did except the one test.
+- **−** A future host with a genuine need to enumerate top-level
+  bindings (a REPL completer, say) will need a new accessor. That is
+  the right time to design one, rather than pre-emptively exposing the
+  whole table.

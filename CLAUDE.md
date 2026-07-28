@@ -61,7 +61,10 @@ file before anything else; the rest of the engine is decoration.
   owns its slot: `Frame::drop` returns it to the free list, so the
   arena is sized by live env depth, not by total evaluation
   (ADR-033). `Store::len` is live slots; `Store::slots` is the
-  high-water mark.
+  high-water mark. `alloc`/`get`/`set` are `pub(crate)` and `Addr`'s
+  index is private (ADR-036), so `Vm::store_weak` is a read-only
+  diagnostic handle — there's no way to mint an `Addr` outside the
+  engine and therefore nothing to read or write through it.
 - `k.rs` — continuation variants: `Halt | App | If | Letrec | SetBang`.
   `apply_k` takes the `Rc<K>` **by value** and `Rc::try_unwrap`s it so
   fields move out rather than being cloned — valid because there are no
@@ -90,7 +93,10 @@ host types.)
   Hosts that build forms programmatically should use it rather than
   `format!`-ing source (ADR-034). The engine is macro-unaware:
   `defmacro` lives in the sibling `macros` crate (ADR-024). Hosts
-  that want macros wrap a `Vm` in `macros::MacroVm`.
+  that want macros wrap a `Vm` in `macros::MacroVm`. `globals` and
+  `store` are private (ADR-036) — reach them via `store_weak` /
+  `global_cell_weak`, and add a purpose-built accessor rather than
+  re-exposing either field.
 
 The spell, gene, and curve DSL packs live in sibling crates
 (`crates/spells/`, `crates/genes/`, `crates/curves/`) as of ADR-016
