@@ -3536,3 +3536,114 @@ a probe that attempts all five — every one is a hard error.
   bindings (a REPL completer, say) will need a new accessor. That is
   the right time to design one, rather than pre-emptively exposing the
   whole table.
+
+## ADR-037: Where state lives (2026-07-28)
+
+**Context**: The project has two mechanisms for holding state across
+evaluations and no written rule for choosing between them.
+
+1. **Host-owned, prim-captured.** `World` (ADR-017/018) and `Turtle`
+   (ADR-019) live in `Rc<RefCell<…>>` handles the host owns; prims
+   close over a clone at registration time. The engine has no
+   awareness of either.
+2. **Lisp globals mutated by `set!`.** The mana model (ADR-028):
+   `max-mana` and `mana` are top-level defines that `cast!` and
+   `tick!` write through.
+
+Both are reasonable in isolation. Having both with no rule means the
+next piece of state gets placed by whichever ADR was written most
+recently, which is how mana ended up where it is.
+
+The symptom that surfaced it: `crates/wasm/src/lib.rs` was reading
+the mana counter with `eval_str("mana")` — tokenize, compile to
+`Expr::Var`, run the CEK machine — to perform what is a hashmap
+lookup, and `reset_world` called `eval_str("(reset-mana!)")` as a
+best-effort whose failure it discarded blind. A host doing string-eval
+RPC into the interpreter to read an integer is the shape of a
+misplaced boundary.
+
+**Decision**: The rule is
+
+> **State the host must read or render lives in the host. State only
+> lisp reads lives in lisp.**
+
+It classifies the existing cases correctly: the host renders the tile
+grid (`World` → host), the host renders the ASCII canvas (`Turtle` →
+host), the host renders a mana meter (`mana` → *should be* host).
+
+The rule governs **placement of the cell, not ownership of the
+model**. `World` is the precedent: the grid is a Rust struct, but
+every decision about what gets painted is lisp vocabulary building a
+ctx that `world-apply!` consumes. A host-side mana cell would keep
+`spell-cost`, the gate, and the regen rate in `PRELUDE_DEFINES`
+exactly as they are now. ADR-028's "the spell DSL owns its resource
+model" is preserved under either placement — that argument was never
+actually in tension with host-side storage.
+
+**Mana is grandfathered.** It works, it has ten tests, and migrating
+it is churn without a functional payoff. The rule governs new state.
+This is recorded rather than quietly tolerated so the inconsistency is
+a known exception instead of a precedent.
+
+**What changes now**: `Vm::global(name) -> Option<Val>` — the
+supported way for a host to read a lisp-side value. The bridge's
+`mana()` / `max_mana()` use it (and drop to `&self`, since reading a
+binding is not evaluation), and `reset_world` looks up `reset-mana!`
+and calls it via `Vm::call_value` instead of re-parsing a call. No
+string-eval remains in the mana path.
+
+**Note on how mana got here**, because the sequence is instructive.
+ADR-023 added the CESK store, justified partly by snapshot/undo
+capability that has still not shipped. ADR-026 observed that the store
+made `set!` cheap and added it. ADR-028 opens by noting that ADR-026
+and ADR-027 "were inert without a consumer" and supplies one. Each
+step is justified by the step before it; the chain is not justified by
+anything the project needed. ADR-028's alternatives list rejects
+host-side mana partly because it "doesn't exercise `set!`" — a reason
+to build a feature, not a reason a design is right. Its one
+substantive objection, that a Rust-side cap couldn't be rebound, does
+not hold: nothing rebinds `max-mana`, `web/spells.js` documents that
+its pip row would not react if anything did, and a host-side cap could
+expose a setter prim regardless.
+
+The mana model is also the **only** production consumer of `set!` in
+the tree — three occurrences, all in the spells prelude.
+
+**Alternatives considered**:
+
+1. **Migrate mana to a host `Caster` now.** The rule says it belongs
+   there. Deferred, not rejected: the payoff is consistency rather
+   than function, and it would leave `set!` with no production
+   consumer, which is a separate decision (see below) that shouldn't
+   be forced by a cleanup.
+2. **Rule: all state lives in the host.** Simpler to state and would
+   make the engine expression-pure again. Rejected as too strong — a
+   DSL that wants a counter only it reads shouldn't have to grow a
+   Rust type and a prim to hold it.
+3. **Rule: all state lives in lisp.** Would require `World` and
+   `Turtle` to become lisp values, which means growing vectors or a
+   mutable map in `Val` and putting rendering behind more prims
+   anyway. Strictly more engine surface for less capability.
+4. **No rule; decide case by case.** The status quo, which produced
+   the inconsistency this ADR exists to resolve.
+
+**Deferred**: whether `set!` survives. If mana ever migrates, `set!`
+has no production consumer and the engine could return to being
+expression-pure with host prims as the only effecting things. The
+argument for keeping it anyway is that it is one special form, it is
+genuinely part of "a real lisp," and removing shipped language surface
+has its own cost. Not decided here; recorded so the choice is visible
+if the migration ever happens.
+
+**Consequences**:
+- **+** New state has an unambiguous home, and the reasoning is
+  written down rather than re-derived per ADR.
+- **+** No string-eval in the bridge's mana path; `mana()` and
+  `max_mana()` are `&self`.
+- **+** `Vm::global` is the "purpose-built accessor" ADR-036
+  anticipated in place of re-exposing the globals table.
+- **~** Mana is a documented exception to the rule the project just
+  adopted. Honest but not tidy.
+- **−** The rule is a convention, not a constraint. Nothing in the
+  type system stops the next DSL pack from putting host-rendered
+  state in a lisp global.

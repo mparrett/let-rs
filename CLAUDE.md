@@ -270,6 +270,15 @@ ships a larger bundle.
   `quasiquote`, `set!`) live in `parse.rs`. Everything else can be a macro.
   `set!` (ADR-026) is the only effecting form — everything else is
   expression-pure.
+- **Where state lives (ADR-037): state the host must read or render
+  lives in the host; state only lisp reads lives in lisp.** `World`
+  and `Turtle` follow it. The mana model doesn't — it's a lisp global
+  the UI renders — and is a *grandfathered exception*, not a
+  precedent; don't copy its shape for new state. The rule places the
+  cell, not the model: host-side storage is compatible with the DSL
+  owning its policy, exactly as `world-apply!` consumes a ctx that
+  lisp vocabulary built. Hosts read lisp-side values with
+  `Vm::global(name)` — never `eval_str("some-name")`.
 - Host prims are registered via `vm.register_prim(name, arity, |args|
   …)`. The callback is wrapped in `Rc<dyn Fn>` so it can capture host
   state (`Rc<RefCell<World>>`, an `Rc<RefCell<Counter>>`, whatever).
