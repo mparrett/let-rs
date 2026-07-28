@@ -1,4 +1,4 @@
-use lisp::Vm;
+use lisp::{Val, Vm};
 
 fn eval(src: &str) -> String {
     let mut vm = Vm::new();
@@ -927,4 +927,39 @@ fn step_budget_applies_per_form_not_per_batch() {
     vm.set_step_budget(100_000);
     let batch = vec![loop_form; 50].join(" ");
     assert!(vm.eval_str(&batch).is_ok());
+}
+
+// ── Vm::global (ADR-037) ──────────────────────────────────────────
+
+#[test]
+fn global_reads_top_level_bindings() {
+    let mut vm = Vm::new();
+    vm.eval_str("(define x 41) (define f (lambda (n) (+ n 1)))")
+        .unwrap();
+    assert_eq!(format!("{}", vm.global("x").expect("x is defined")), "41");
+    assert!(vm.global("nope").is_none());
+    // Prims live in the same table (ADR-020), so they're readable too.
+    assert_eq!(
+        format!("{}", vm.global("+").expect("+ is a builtin")),
+        "#<prim +/at least 0>"
+    );
+    // A closure comes back callable, which is what lets a host invoke
+    // prelude entry points without evaluating source.
+    let f = vm.global("f").expect("f is defined");
+    assert_eq!(
+        format!("{}", vm.call_value(&f, vec![Val::Num(1)]).unwrap()),
+        "2"
+    );
+}
+
+#[test]
+fn global_sees_set_bang_updates() {
+    // The mana case: a host polls a lisp-owned counter that `set!`
+    // mutates. `global` must read the cell's current contents, not a
+    // snapshot from definition time.
+    let mut vm = Vm::new();
+    vm.eval_str("(define counter 10)").unwrap();
+    assert_eq!(format!("{}", vm.global("counter").unwrap()), "10");
+    vm.eval_str("(set! counter (- counter 3))").unwrap();
+    assert_eq!(format!("{}", vm.global("counter").unwrap()), "7");
 }

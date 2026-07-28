@@ -108,6 +108,22 @@ impl Vm {
         Rc::downgrade(&self.store)
     }
 
+    /// Read the current value of top-level binding `name`, or `None` if
+    /// it isn't bound.
+    ///
+    /// This is the supported way for a host to read a lisp-side value.
+    /// Before it existed the WASM bridge read its mana counter with
+    /// `eval_str("mana")` — tokenize, compile to `Expr::Var`, run the
+    /// CEK machine — to do a hashmap lookup. Hosts that render
+    /// lisp-owned state (see the state-placement rule in ADR-037)
+    /// should reach for this rather than evaluating source.
+    ///
+    /// Takes `&self`: reading a binding is not evaluation and shouldn't
+    /// require a mutable borrow of the Vm.
+    pub fn global(&self, name: &str) -> Option<Val> {
+        self.globals.borrow().get(name).map(|c| c.borrow().clone())
+    }
+
     /// `Weak` handle to the cell backing top-level binding `name`, or
     /// `None` if it isn't bound. Diagnostic sibling of
     /// [`Vm::store_weak`]: it lets a caller observe whether a binding's
