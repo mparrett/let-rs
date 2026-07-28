@@ -622,46 +622,126 @@ fn store_reclaims_frame_slots() {
     // second run cost 20k more. A long-lived host (the Spell Lab's
     // tick interval, the web REPL) grew without bound.
     //
-    // The property that matters isn't "small" — it's "flat". Slot
-    // count must be a function of live environment depth, not of how
-    // much evaluation has happened.
-    let mut vm = Vm::new();
-    let store = vm
-        .store_weak()
-        .upgrade()
-        .expect("store is alive while the Vm is");
-    vm.eval_str("(define count (lambda (n acc) (if (= n 0) acc (count (- n 1) (+ acc 1)))))")
-        .unwrap();
+    // The property that matters isn't "small" — it's "flat". For a
+    // binding that doesn't outlive its frame, slot count must be a
+    // function of live environment depth, not of how much evaluation
+    // has happened.
+    //
+    // Each case below is a *different* frame shape, because the first
+    // version of this test only exercised the top-level-define one —
+    // whose closure captures the root env and so can't form the
+    // retention cycle that `recursive_closures_retain_their_slot`
+    // pins. Reviewing that gap is what found the cycle.
+    let cases = [
+        // Closure params, called from a top-level define. The closure
+        // captures the *root* env: no frame involved in the capture.
+        (
+            "(define count (lambda (n acc) (if (= n 0) acc (count (- n 1) (+ acc 1)))))",
+            "(count 500 0)",
+        ),
+        // A closure created and called inside a lexical frame. The
+        // frame is real, but nothing self-references, so it dies.
+        ("", "(let ((g (lambda (x) (+ x 1)))) (g 1))"),
+        // A closure that captures an *enclosing* frame and mutates it.
+        // Still no self-reference — the slot holding `f` isn't reached
+        // from `f`'s own env.
+        ("", "(let ((s 0)) (let ((f (lambda () (set! s 1)))) (f)))"),
+        // letrec whose bindings aren't closures at all.
+        ("", "(letrec ((a 1) (b 2)) (+ a b))"),
+        // Nested lexical frames, several deep.
+        ("", "(let ((a 1)) (let ((b 2)) (let ((c 3)) (+ a b c))))"),
+    ];
 
-    assert_eq!(
-        format!("{}", vm.eval_str("(count 5000 0)").unwrap()),
-        "5000"
-    );
-    let live = store.len();
-    let high_water = store.slots();
+    for (setup, body) in cases {
+        let mut vm = Vm::new();
+        let store = vm
+            .store_weak()
+            .upgrade()
+            .expect("store is alive while the Vm is");
+        if !setup.is_empty() {
+            vm.eval_str(setup).unwrap();
+        }
 
-    for _ in 0..20 {
-        vm.eval_str("(count 5000 0)").unwrap();
+        vm.eval_str(body).unwrap();
+        let live = store.len();
+        let high_water = store.slots();
+
+        for _ in 0..20 {
+            vm.eval_str(body).unwrap();
+        }
+
+        assert_eq!(
+            store.len(),
+            live,
+            "{body}: live slot count grew across repeated evaluation — \
+             frame slots are no longer being reclaimed (ADR-033)"
+        );
+        assert_eq!(
+            store.slots(),
+            high_water,
+            "{body}: the store's high-water mark grew across repeated \
+             evaluation — freed slots are not being reused (ADR-033)"
+        );
+        assert!(
+            high_water < 32,
+            "{body}: high-water mark {high_water} is far above live env depth"
+        );
     }
+}
 
-    assert_eq!(
-        store.len(),
-        live,
-        "live slot count grew across repeated evaluation — frame slots \
-         are no longer being reclaimed (ADR-033)"
-    );
-    assert_eq!(
-        store.slots(),
-        high_water,
-        "the store's high-water mark grew across repeated evaluation — \
-         freed slots are not being reused (ADR-033)"
-    );
-    // 100k iterations' worth of bindings, bounded by the handful the
-    // deepest live env actually needs.
-    assert!(
-        high_water < 32,
-        "high-water mark {high_water} is far above live env depth"
-    );
+#[test]
+fn recursive_closures_retain_their_slot() {
+    // ADR-033's *known residual*, pinned the way ADR-021 pinned the
+    // cycle it descends from. This test asserts a limitation, not a
+    // feature: if a future change (the trial-deletion sweep sketched in
+    // ADR-038) makes these collectable, this test fails loudly and
+    // should be rewritten as a reclamation test, not deleted.
+    //
+    // The shape:
+    //
+    //   store slot -> Val::Clo -> captured Env -> Rc<Frame> -> owns slot
+    //
+    // `Frame::drop` frees the slot, but the closure sitting *in* that
+    // slot holds the frame alive, so the drop never runs. Refcounting
+    // cannot break this without tracing; ADR-033 chose the frame
+    // destructor and inherits the gap.
+    //
+    // This is not a regression — the append-only store retained these
+    // too, along with everything else. It is narrower than ADR-033
+    // originally claimed, which is why the claim was amended.
+    let cases: [(&str, usize); 3] = [
+        // Self-recursive letrec: one retained slot per evaluation.
+        ("(letrec ((f (lambda () (f)))) 0)", 1),
+        // Mutual recursion: one per binding in the cycle.
+        (
+            "(letrec ((e (lambda (n) (if (= n 0) #t (o (- n 1)))))
+                      (o (lambda (n) (if (= n 0) #f (e (- n 1))))))
+               (e 4))",
+            2,
+        ),
+        // The same cycle built with set! instead of letrec.
+        ("(let ((f 0)) (let ((_ (set! f (lambda () f)))) 0))", 1),
+    ];
+
+    for (src, per_eval) in cases {
+        let mut vm = Vm::new();
+        let store = vm
+            .store_weak()
+            .upgrade()
+            .expect("store is alive while the Vm is");
+        vm.eval_str(src).unwrap();
+        let after_one = store.len();
+        for _ in 0..9 {
+            vm.eval_str(src).unwrap();
+        }
+        assert_eq!(
+            store.len(),
+            after_one + per_eval * 9,
+            "{src}: expected {per_eval} retained slot(s) per evaluation. \
+             If this now retains *fewer*, the cycle is being collected — \
+             good news; see ADR-038 and rewrite this test."
+        );
+    }
 }
 
 #[test]

@@ -10,14 +10,30 @@
 //!
 //! Slots are reclaimed (ADR-033). Every `Addr` is owned by exactly one
 //! `Frame`, so `Frame::drop` returns the slot to a free list and the
-//! next `alloc` reuses it — slot lifetime tracks frame lifetime, the
-//! same as the pre-CESK `Rc<RefCell<Val>>` cells did. The store's
-//! high-water mark is therefore set by the deepest *live* environment,
-//! not by total allocations over the Vm's lifetime.
+//! next `alloc` reuses it. For any binding that doesn't outlive its
+//! frame — loop variables, parameters, `let` bindings — the high-water
+//! mark is set by the deepest *live* environment rather than by total
+//! allocations over the Vm's lifetime.
+//!
+//! **Known residual.** A closure that captures the frame owning its own
+//! slot is retained:
+//!
+//! ```text
+//! store slot ──> Val::Clo ──> captured Env ──> Rc<Frame> ──> owns slot
+//! ```
+//!
+//! `Frame::drop` frees the slot, but the closure *in* that slot holds
+//! the frame alive, so the drop never runs. This is the ADR-021 cycle
+//! in a new form, and refcounting can't break it without tracing. It
+//! costs one slot per recursive closure (not per iteration), it is
+//! bounded, and the append-only store retained these too — but it means
+//! reclamation is narrower than "slot lifetime tracks frame lifetime."
+//! Pinned by `recursive_closures_retain_their_slot`; the fix is the
+//! trial-deletion sweep in ADR-038.
 //!
 //! A persistent / HAMT-backed store (for cheap snapshots and undo) is
-//! still the open follow-on in ADR-023; reclamation doesn't close that
-//! door.
+//! still the open follow-on in ADR-023; neither reclamation nor the
+//! sweep closes that door.
 
 use std::cell::RefCell;
 

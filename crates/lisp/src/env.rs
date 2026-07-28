@@ -27,7 +27,9 @@ pub type Globals = Rc<RefCell<HashMap<Sym, Rc<RefCell<Val>>>>>;
 /// A frame owns its slot: when the last `Env` naming a frame drops,
 /// `Frame::drop` returns the slot to the store's free list (ADR-033).
 /// So a loop that allocates a binding per iteration reuses one slot
-/// rather than growing the arena without bound.
+/// rather than growing the arena without bound — *unless* the slot's
+/// value captures this very frame, which keeps it alive and defeats
+/// the drop. See the known-residual note in `store.rs` and ADR-038.
 ///
 /// `globals` is a `Weak` reference to the Vm's top-level table; any
 /// name not found in the frame chain falls back to it. `store` is the
@@ -54,8 +56,12 @@ struct Frame {
 impl Drop for Frame {
     /// A frame owns its store slot. When the last `Env` referencing
     /// this frame goes away the binding is unreachable, so the slot
-    /// returns to the free list — restoring the slot lifetime the
-    /// pre-CESK `Rc<RefCell<Val>>` cells had (ADR-033).
+    /// returns to the free list (ADR-033).
+    ///
+    /// This does not fire when the slot's own value reaches back here —
+    /// a recursive closure holds its frame alive, so the frame never
+    /// drops and the slot is never freed. Pinned by
+    /// `recursive_closures_retain_their_slot`; see ADR-038.
     ///
     /// An upgrade failure means the Vm dropped first and took the
     /// whole arena with it; there is nothing to reclaim into.
