@@ -12,12 +12,19 @@ pub enum K {
     /// Top of the chain: we're done.
     Halt,
 
-    /// In the middle of `(f a b c)`. `evaled` holds the function + already-evaluated
-    /// args; `remaining` is what's left. Each value we produce gets pushed onto
-    /// `evaled`, then we either advance to the next `remaining` or apply.
+    /// In the middle of `(f a b c)`. `args` is the whole application,
+    /// shared with the `Expr::App` it came from. `evaled` holds the
+    /// function plus the arguments evaluated so far — and because they
+    /// are filled strictly left to right, `evaled.len()` is also the
+    /// index into `args` of the subexpression currently in flight, so
+    /// no separate cursor can drift out of sync with it.
+    ///
+    /// Pre-ADR-035 this was `evaled` plus a `remaining: Vec<Rc<Expr>>`,
+    /// both cloned on every argument — O(n²) `Val` clones and 2n vector
+    /// allocations per application.
     App {
         evaled: Vec<Val>,
-        remaining: Vec<Rc<Expr>>,
+        args: Rc<[Rc<Expr>]>,
         env: Env,
         k: Rc<K>,
     },
@@ -30,15 +37,19 @@ pub enum K {
         k: Rc<K>,
     },
 
-    /// Letrec init evaluation in progress. The just-evaluated value gets written
-    /// to `addrs[next]` in the store; if `remaining` is empty we eval `body`,
-    /// else the next init. `env` already contains all the placeholder bindings,
-    /// so any closure produced by an init captures the recursive environment.
-    /// Post-ADR-023: `addrs` are `Copy` indices into the store, not Rc cells.
+    /// Letrec init evaluation in progress. The just-evaluated value gets
+    /// written to `addrs[next]` in the store; when `next` reaches the end
+    /// of `inits` we eval `body`, else the next init. `env` already
+    /// contains all the placeholder bindings, so any closure produced by
+    /// an init captures the recursive environment.
+    ///
+    /// Post-ADR-023: `addrs` are `Copy` indices into the store, not Rc
+    /// cells. Post-ADR-035: `addrs` and `inits` are shared slices walked
+    /// by `next`, rather than vectors re-cloned at every binding.
     Letrec {
-        addrs: Vec<Addr>,
+        addrs: Rc<[Addr]>,
+        inits: Rc<[Rc<Expr>]>,
         next: usize,
-        remaining: Vec<Rc<Expr>>,
         body: Rc<Expr>,
         env: Env,
         k: Rc<K>,

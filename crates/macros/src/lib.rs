@@ -290,7 +290,7 @@ impl Expander {
         let body_datum = self.expand_all(vm, items[3].clone())?;
         let body_expr = parse::compile(&body_datum)?;
         let closure = Val::Clo {
-            params,
+            params: params.into(),
             body: Rc::new(body_expr),
             env: vm.env().clone(),
         };

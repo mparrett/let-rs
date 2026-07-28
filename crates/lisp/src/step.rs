@@ -52,7 +52,7 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
         }
         Expr::Lam(params, body) => {
             let clo = Val::Clo {
-                params: params.clone(),
+                params: Rc::clone(params),
                 body: body.clone(),
                 env: env.clone(),
             };
@@ -77,11 +77,13 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
             if exprs.is_empty() {
                 return Err("empty application".into());
             }
-            let mut remaining: Vec<Rc<Expr>> = exprs.to_vec();
-            let first = remaining.remove(0);
+            // Share the subexpression slice with the K rather than
+            // copying it out; only `evaled` needs to be owned.
+            let args = Rc::clone(exprs);
+            let first = Rc::clone(&args[0]);
             let new_k = Rc::new(K::App {
-                evaled: Vec::with_capacity(exprs.len()),
-                remaining,
+                evaled: Vec::with_capacity(args.len()),
+                args,
                 env: env.clone(),
                 k,
             });
@@ -122,12 +124,12 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
                 }));
             }
 
-            let mut remaining: Vec<Rc<Expr>> = bindings.iter().map(|(_, e)| e.clone()).collect();
-            let first = remaining.remove(0);
+            let inits: Rc<[Rc<Expr>]> = bindings.iter().map(|(_, e)| e.clone()).collect();
+            let first = Rc::clone(&inits[0]);
             let new_k = Rc::new(K::Letrec {
-                addrs,
+                addrs: addrs.into(),
+                inits,
                 next: 0,
-                remaining,
                 body: body.clone(),
                 env: env_rec.clone(),
                 k,
@@ -141,28 +143,43 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
 }
 
 fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
-    match &*k {
+    // Take the continuation by value. This engine has no first-class
+    // continuations — each `K` is owned by exactly one `State` or one
+    // child `K`, and the frame we're consuming here is at the end of
+    // that chain — so `try_unwrap` succeeds and every field below can
+    // be *moved* out. Pre-ADR-035 this matched on `&*k` and cloned:
+    // `evaled` and `remaining` were copied on every single argument,
+    // making an n-argument call O(n²) in `Val` clones.
+    //
+    // The clone arm is a correctness fallback, not a hot path. If
+    // `call/cc` or continuation marks ever land, `K`s become shared
+    // and this keeps working (more slowly) rather than misbehaving.
+    let k = match Rc::try_unwrap(k) {
+        Ok(owned) => owned,
+        Err(shared) => (*shared).clone(),
+    };
+
+    match k {
         K::Halt => Ok(Step::Done(v)),
 
         K::App {
-            evaled,
-            remaining,
+            mut evaled,
+            args,
             env,
             k: outer,
         } => {
-            let mut evaled = evaled.clone();
             evaled.push(v);
-            if remaining.is_empty() {
-                apply(evaled, outer.clone())
+            // `evaled` is filled left to right, so its length is the
+            // index of the next subexpression to evaluate.
+            if evaled.len() == args.len() {
+                apply(evaled, outer)
             } else {
-                let mut remaining = remaining.clone();
-                let next = remaining.remove(0);
-                let env = env.clone();
+                let next = Rc::clone(&args[evaled.len()]);
                 let new_k = Rc::new(K::App {
                     evaled,
-                    remaining,
+                    args,
                     env: env.clone(),
-                    k: outer.clone(),
+                    k: outer,
                 });
                 Ok(Step::Continue(State {
                     mode: Mode::Eval(next, env),
@@ -178,13 +195,13 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
             k: outer,
         } => {
             let branch = if v.is_truthy() {
-                then_branch.clone()
+                then_branch
             } else {
-                else_branch.clone()
+                else_branch
             };
             Ok(Step::Continue(State {
-                mode: Mode::Eval(branch, env.clone()),
-                k: outer.clone(),
+                mode: Mode::Eval(branch, env),
+                k: outer,
             }))
         }
 
@@ -193,17 +210,17 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
             env,
             k: outer,
         } => {
-            env.set(name, v.clone())?;
+            env.set(&name, v.clone())?;
             Ok(Step::Continue(State {
                 mode: Mode::Apply(v),
-                k: outer.clone(),
+                k: outer,
             }))
         }
 
         K::Letrec {
             addrs,
+            inits,
             next,
-            remaining,
             body,
             env,
             k: outer,
@@ -211,25 +228,25 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
             let store = env
                 .store_handle()
                 .expect("store dropped during letrec patch");
-            store.set(addrs[*next], v);
-            if remaining.is_empty() {
+            store.set(addrs[next], v);
+            let next = next + 1;
+            if next == inits.len() {
                 Ok(Step::Continue(State {
-                    mode: Mode::Eval(body.clone(), env.clone()),
-                    k: outer.clone(),
+                    mode: Mode::Eval(body, env),
+                    k: outer,
                 }))
             } else {
-                let mut remaining = remaining.clone();
-                let next_expr = remaining.remove(0);
+                let next_expr = Rc::clone(&inits[next]);
                 let new_k = Rc::new(K::Letrec {
-                    addrs: addrs.clone(),
-                    next: next + 1,
-                    remaining,
-                    body: body.clone(),
+                    addrs,
+                    inits,
+                    next,
+                    body,
                     env: env.clone(),
-                    k: outer.clone(),
+                    k: outer,
                 });
                 Ok(Step::Continue(State {
-                    mode: Mode::Eval(next_expr, env.clone()),
+                    mode: Mode::Eval(next_expr, env),
                     k: new_k,
                 }))
             }
@@ -237,10 +254,12 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
     }
 }
 
-fn apply(evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
-    let mut it = evaled.into_iter();
-    let f = it.next().expect("apply with no fn");
-    let args: Vec<Val> = it.collect();
+fn apply(mut evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
+    // Shift the callee off the front and reuse the same allocation for
+    // the argument vector, rather than draining into a second one.
+    assert!(!evaled.is_empty(), "apply with no fn");
+    let f = evaled.remove(0);
+    let args = evaled;
     // Borrow rather than move out of `f`: `Val` implements `Drop` (to
     // dismantle cons spines iteratively), which forbids by-value
     // destructuring. Clo/Prim aren't cons cells, so their `Drop` is a

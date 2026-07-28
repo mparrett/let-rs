@@ -260,7 +260,7 @@ impl Vm {
         for a in args {
             app.push(Rc::new(Expr::Quote(Rc::new(a))));
         }
-        run_bounded(Expr::App(app), self.env.clone(), self.step_budget)
+        run_bounded(Expr::App(app.into()), self.env.clone(), self.step_budget)
     }
 }
 
