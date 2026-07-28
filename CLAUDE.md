@@ -61,7 +61,12 @@ file before anything else; the rest of the engine is decoration.
   owns its slot: `Frame::drop` returns it to the free list, so the
   arena is sized by live env depth, not by total evaluation
   (ADR-033). `Store::len` is live slots; `Store::slots` is the
-  high-water mark. `alloc`/`get`/`set` are `pub(crate)` and `Addr`'s
+  high-water mark. **Residual:** a closure capturing the frame that
+  owns its own slot keeps that frame alive, so `Frame::drop` never
+  fires and the slot is retained — one slot per recursive closure,
+  pinned by `recursive_closures_retain_their_slot`, fix sketched in
+  ADR-038. Don't restate reclamation as unconditional.
+  `alloc`/`get`/`set` are `pub(crate)` and `Addr`'s
   index is private (ADR-036), so `Vm::store_weak` is a read-only
   diagnostic handle — there's no way to mint an `Addr` outside the
   engine and therefore nothing to read or write through it.

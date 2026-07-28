@@ -1888,10 +1888,45 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           place a frame is built, and every call site hands it a
           freshly allocated address. So when the last <code>Env</code>
           naming a frame drops, that slot is unreachable and can go
-          back on a free list. Slot lifetime tracks frame lifetime,
-          which is exactly what the pre-CESK cells did. Forty lines.
-          The eighty-thousand-slot figure becomes a high-water mark
-          of four.
+          back on a free list. Forty lines. The eighty-thousand-slot
+          figure becomes a high-water mark of four.
+        </p>
+
+        <p>
+          The ADR said this restored the pre-CESK behavior exactly.
+          A reviewer disagreed, in three lines:
+          <code>(letrec ((f (lambda () (f)))) 0)</code>, evaluated a
+          hundred times, retains a hundred slots. The frame's
+          destructor is what frees the slot — and the closure sitting
+          <em>in</em> that slot captured the frame, so the destructor
+          never runs. Choosing the frame's death as the trigger made
+          the slot's liveness depend on the frame and the frame's
+          liveness depend on the slot's contents. That is the ADR-021
+          cycle, third sighting: pinned in one act, declared dissolved
+          in another, and still here.
+        </p>
+
+        <p>
+          It's bounded — one slot per recursive closure, not per
+          iteration — and it isn't a regression, since the append-only
+          store retained these too along with everything else. The
+          preludes never touch it; they build vocabulary with top-level
+          <code>define</code>, which lives in the globals table rather
+          than in frames. So the fix stands and the claim was wrong,
+          which are different things. The claim is now the narrow one,
+          the residual has a test asserting it so a future fix breaks
+          loudly, and the real cure — a trial-deletion sweep at
+          top-level form boundaries, where the continuation is
+          <code>Halt</code> and the roots are finally enumerable — is
+          written up and shelved.
+        </p>
+
+        <p>
+          The tell, in hindsight: the reclamation test exercised one
+          frame shape, a top-level define, whose closure captures the
+          root env and therefore <em>cannot</em> form the cycle. One
+          shape tested; the shape that mattered, not. It now covers
+          five.
         </p>
 
         <p>
@@ -2010,6 +2045,15 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
           was checked against the machine. The store had one honest
           number in it the whole time; the expander had one line of
           lisp; the CEK loop had a profiler and thirty-two arguments.
+        </p>
+
+        <p class="lift">
+          And then the ADR written to say so did it too, in the same
+          afternoon, and needed a reviewer with a three-line letrec to
+          find out. Which is the actual lesson, later than it should
+          have arrived: knowing the failure mode confers no immunity to
+          it. The only thing that has caught any of these is someone
+          running the code and looking at the number.
         </p>
       </div>
     </section>

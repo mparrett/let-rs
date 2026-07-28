@@ -3211,12 +3211,18 @@ because nothing was ever freed.
 **Decision**: Give `Store` a free list, and reclaim slots from
 `Frame::drop`.
 
+> **Amended 2026-07-28 after review.** The claim in the next paragraph
+> — "slot lifetime tracks frame lifetime again, exactly as the pre-CESK
+> cells did" — **is false for closures that capture the frame owning
+> their own slot.** See "Known residual" below. The decision stands and
+> the measurements below are real; the scope of the claim was wrong.
+
 A `Frame` owns its `Addr` uniquely — `Env::extend_addr` is the sole
 constructor and every call site passes a freshly-allocated address — so
 when the last `Env` naming a frame drops, that slot is unreachable and
 returns to the free list. `Store::alloc` pops the free list before
-growing the backing vector. Slot lifetime tracks frame lifetime again,
-exactly as the pre-CESK cells did.
+growing the backing vector. For any binding that doesn't outlive its
+frame, slot lifetime tracks frame lifetime as the pre-CESK cells did.
 
 Two implementation hazards, both handled:
 
@@ -3237,8 +3243,57 @@ is the number that must stay bounded; `Store::slots` exposes the
 high-water mark for diagnostics.
 
 **Result**: the 80,008-slot figure above becomes a high-water mark of 4.
-Slot count is now a function of live environment depth, not of how much
-evaluation has happened.
+For bindings that don't outlive their frame, slot count is a function
+of live environment depth rather than of how much evaluation has
+happened.
+
+**Known residual** (found in review of PR #12, 2026-07-28). A closure
+that captures the frame owning its own slot is never reclaimed:
+
+```
+store slot ──> Val::Clo ──> captured Env ──> Rc<Frame> ──> owns slot
+```
+
+`Frame::drop` is what frees the slot, but the closure sitting *in* that
+slot holds the frame alive, so the drop never runs. Measured, 100
+evaluations each:
+
+| form | retained |
+|---|---|
+| `(letrec ((f (lambda () (f)))) 0)` | 100 slots |
+| mutual-recursive letrec pair | 200 slots |
+| `(let ((f 0)) (set! f (lambda () f)) …)` | 100 slots |
+| top-level define + 100 calls | 0 |
+| `let` + non-recursive closure | 0 |
+
+This is ADR-021's cycle in a new form. By choosing the frame destructor
+as the reclamation mechanism, this ADR made the slot's liveness depend
+on the frame and the frame's liveness depend on the slot's contents.
+Refcounting cannot break that without tracing.
+
+Three things keep it from being a blocker:
+
+- **It is not a regression.** The append-only store retained these too,
+  along with everything else. `(count 20000 0)` still goes from 20,002
+  slots per run to a high-water of 4.
+- **It is bounded per closure, not per iteration** — one slot for a
+  self-recursive letrec, two for a mutual pair. It doesn't accumulate
+  within an evaluation, only across repeated ones.
+- **The preludes don't hit it.** They define vocabulary with top-level
+  `define`, which lives in the globals table, not in frames. The
+  exposure is REPL code and demos that use `letrec` directly.
+
+Pinned by `recursive_closures_retain_their_slot`, in the ADR-021
+tradition: the test asserts the limitation so that a future fix flips
+it loudly rather than silently. The fix is ADR-038.
+
+**Why this got shipped**: the original `store_reclaims_frame_slots`
+exercised only a top-level define, whose closure captures the root env
+and therefore cannot form the cycle. One frame shape, tested; the one
+that mattered, not. The test now covers five shapes. Worth noting on an
+ADR whose siblings are about records asserting properties the code
+doesn't have — this one did it too, and a reviewer caught it with a
+three-line reproduction.
 
 **Alternatives considered**:
 
@@ -3261,14 +3316,18 @@ evaluation has happened.
    the HAMT door.
 
 **Consequences**:
-- **+** Memory profile returns to pre-CESK behavior. Long-lived hosts
-  (the tick loop, the browser REPL, any future game loop) stop growing.
-- **+** Pinned by two tests: `store_reclaims_frame_slots` asserts both
-  live count and high-water mark stay flat across 20 repeated 5,000-
-  iteration runs, and `escaped_closures_survive_slot_reuse` asserts the
-  converse — that a closure's captured slot is *not* freed while it is
-  still reachable, with free-list churn in between to catch premature
-  reuse.
+- **+** Memory profile returns to pre-CESK behavior for non-escaping
+  bindings. Long-lived hosts (the tick loop, the browser REPL, any
+  future game loop) stop growing on ordinary evaluation; a REPL session
+  that repeatedly evaluates `letrec`-bound recursive closures still
+  accrues one slot each (see Known residual).
+- **+** Pinned by three tests: `store_reclaims_frame_slots` asserts
+  live count and high-water mark stay flat across five different frame
+  shapes (the first version tested only one, which is how the residual
+  shipped); `escaped_closures_survive_slot_reuse` asserts the converse
+  — a closure's captured slot is *not* freed while still reachable,
+  with free-list churn in between to catch premature reuse; and
+  `recursive_closures_retain_their_slot` pins the residual above.
 - **−** Each `Frame` grows a `Weak<Store>` (8 bytes plus a weak-count
   bump per frame construction). Frames are already `Rc`-allocated; this
   is noise next to that allocation, but it is on the call path.
@@ -3647,3 +3706,110 @@ if the migration ever happens.
 - **−** The rule is a convention, not a constraint. Nothing in the
   type system stops the next DSL pack from putting host-rendered
   state in a lisp global.
+
+## ADR-038: Trial-deletion sweep for retained frame cycles — proposed (2026-07-28)
+
+**Status: proposed, not implemented.** Written so the residual ADR-033
+leaves has a designed fix on the shelf rather than a shrug. Pull
+trigger at the bottom.
+
+**Context**: ADR-033 reclaims frame slots from `Frame::drop`. That
+leaves one shape unreclaimed — a closure capturing the frame that owns
+its own slot:
+
+```
+store slot ──> Val::Clo ──> captured Env ──> Rc<Frame> ──> owns slot
+```
+
+The frame can't drop because the closure holds it; the slot can't be
+freed because only the frame's drop frees it. Costs one slot per
+recursive closure, per evaluation. This is ADR-021's cycle, third
+appearance: pinned there, dissolved-by-construction (incorrectly) in
+ADR-023, narrowed in ADR-033, still here.
+
+Refcounting cannot break a cycle. The options are to stop using
+refcounts for this edge, or to trace.
+
+**Proposed decision**: a trial-deletion sweep (Bacon–Rajan, restricted
+to the one shape that actually occurs), run at top-level form
+boundaries.
+
+Why that boundary: after a top-level form completes, the continuation
+is `K::Halt`. No `K` holds a `Val`, and no evaluation is in flight, so
+the only roots are the globals table, the Vm's root env, and any `Val`
+a host is holding. That makes the root set enumerable, which it is not
+mid-evaluation.
+
+Sketch:
+
+1. `Store` gains a `Weak<Frame>` alongside each slot, so a slot can
+   name its owner. (`Frame` would need to be reachable from `store`;
+   today the dependency runs the other way, so this is the invasive
+   part.)
+2. For each live slot holding a `Val::Clo`, walk the closure's env
+   chain and record which frames it reaches. Build a count per frame of
+   how many *store-held* closures reach it.
+3. A frame whose `Rc::strong_count` equals its store-held count is
+   referenced only from inside the store. Nothing outside can reach it,
+   so its slot group is garbage and can be freed.
+4. Freeing drops the closures, which drops the envs, which drops the
+   frames, which returns the remaining slots via the existing
+   `Frame::drop` path.
+
+Cost is O(live slots × env depth) per sweep, which at REPL and demo
+scale is noise. It could be made incremental (sweep only when the free
+list is empty and the store is about to grow) if it ever isn't.
+
+**Why this fails safe**: a `Val` held outside the store — by a host,
+by `Vm::global`'s returned clone — inflates the frame's strong count
+above the store-held count, so the frame is *not* collected. The error
+direction is retention, never premature free. That property is the
+reason this is worth doing at all; a tracing collector that can be
+wrong about liveness is a much bigger commitment.
+
+**Alternatives considered**:
+
+1. **Leave it pinned.** The status quo after ADR-033's amendment, and
+   defensible: the residual is bounded per closure, the preludes don't
+   hit it (they use top-level `define`, which lives in globals, not
+   frames), and the exposure is REPL sessions that repeatedly evaluate
+   `letrec`-bound recursive closures. The argument against is that this
+   is the third ADR to document-and-defer the same cycle.
+2. **Y-style desugaring of `letrec`** (ADR-021 option 3). Rewrites
+   self-reference so the closure body doesn't reach its own frame.
+   Fixes the self-recursive case; leaves mutual recursion, which is
+   half the measured residual, and adds a compile pass. Rejected as a
+   half-fix.
+3. **Weak edge from the store slot to the closure's env.** Would break
+   the cycle by construction, but a closure whose env has been weakened
+   is a closure that can be called after its captured bindings die.
+   Changes language semantics to fix an allocation problem.
+4. **Full tracing GC.** Correct and general, and a different project.
+   The whole appeal of trial deletion here is that it handles the one
+   shape that occurs, in ~100 lines, with a fail-safe error direction.
+5. **Arena-per-top-level-form.** Drop the whole store at each form
+   boundary and re-root survivors. Cheap to state, but "re-root
+   survivors" is tracing with extra steps, and it breaks closures that
+   legitimately outlive the form that made them.
+
+**Pull triggers** — any one un-defers this:
+
+1. A host that keeps one `Vm` alive across many user-authored `letrec`
+   forms and observes growth. The web REPL is the candidate; it
+   currently doesn't, because the labs' casts go through prelude
+   defines rather than user letrecs.
+2. The persistent/HAMT store from ADR-023 landing, which would touch
+   this surface anyway.
+3. Any decision to add first-class continuations, which would make `K`s
+   shared, invalidate ADR-035's `try_unwrap` fast path, and generally
+   put reachability back on the table.
+
+**Consequences if adopted**:
+- **+** Closes the ADR-021 cycle for real, rather than narrowing it a
+  fourth time.
+- **−** Introduces a garbage collector to a project whose selling point
+  is that the engine is five transition rules. The sweep would live in
+  `store.rs` and stay out of `step.rs`, but the honest description of
+  the system grows a clause.
+- **−** `Store` gaining a `Weak<Frame>` per slot inverts the current
+  dependency direction between `store.rs` and `env.rs`.
