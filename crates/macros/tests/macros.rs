@@ -450,3 +450,42 @@ fn empty_list_inside_quoted_data_is_untouched() {
         .expect("quoted data containing () should expand cleanly");
     assert_eq!(format!("{v}"), "(a ())");
 }
+
+/// ADR-034 regression. Expanded datums used to reach the engine by
+/// being re-serialized to source text and read a second time, which
+/// made expansion only as faithful as the printer. `string->symbol`
+/// can build a symbol the reader cannot round-trip: printing
+/// `(quote |a b|)` emits `(quote a b)`, which re-reads as a two-argument
+/// quote and dies with "quote: expected (quote datum)".
+///
+/// Handing datums to `Vm::eval_datums` directly removes the printer
+/// from the path, so the symbol survives intact.
+#[test]
+fn macro_output_survives_symbols_the_printer_cannot_round_trip() {
+    let mut vm = MacroVm::with_stdlib();
+    vm.eval_str("(defmacro weird () (list 'quote (string->symbol \"a b\")))")
+        .expect("defmacro should register");
+    let v = vm
+        .eval_str("(weird)")
+        .expect("a symbol containing a space must survive expansion");
+    assert_eq!(format!("{v}"), "a b");
+}
+
+/// The same property one level up: a macro that emits a *list* built
+/// from such symbols. Nothing here is exotic — it's the shape any
+/// `defsomething` macro takes when it derives names from strings.
+///
+/// The expected `(x y x y)` is two symbols, each `x y`. That the
+/// printed form is ambiguous is the whole point: a printer that can't
+/// distinguish them can't be the transport between expander and engine.
+#[test]
+fn derived_symbol_names_survive_expansion() {
+    let mut vm = MacroVm::with_stdlib();
+    let v = vm
+        .eval_str(
+            "(defmacro pair-of (s) (list 'quote (list (string->symbol s) (string->symbol s))))
+             (pair-of \"x y\")",
+        )
+        .expect("derived names must survive expansion");
+    assert_eq!(format!("{v}"), "(x y x y)");
+}

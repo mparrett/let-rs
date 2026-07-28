@@ -158,6 +158,20 @@ impl Vm {
     /// sibling `macros` crate (ADR-024). Hosts that want macros wrap
     /// this Vm in `macros::MacroVm`.
     pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
+        let forms = parse::read_many(src)?;
+        self.eval_datums(&forms)
+    }
+
+    /// Evaluate already-read top-level forms. Same semantics as
+    /// [`Vm::eval_str`] — which is just `read_many` plus this — for
+    /// callers that hold `Datum`s rather than source text.
+    ///
+    /// This is the entry point for `macros::MacroVm`, whose whole job
+    /// is to hand the engine datums it has already expanded (ADR-034).
+    /// Without it, a macro host's only route back into the Vm was to
+    /// re-serialize its expansion to source and make the reader parse
+    /// it a second time.
+    pub fn eval_datums(&mut self, forms: &[Datum]) -> Result<Val, String> {
         // Binding-level rollback: if any form in the batch fails,
         // restore the globals *table* to its pre-call state. Pre-fix, a
         // failed define left a placeholder cell visible in env (e.g.
@@ -176,16 +190,14 @@ impl Vm {
         // turtle state, log entries — likewise stand. Undoing those
         // would need the persistent store ADR-023 leaves open.
         let saved_globals = self.globals.borrow().clone();
-        let result = self.eval_str_inner(src);
+        let result = self.eval_datums_inner(forms);
         if result.is_err() {
             *self.globals.borrow_mut() = saved_globals;
         }
         result
     }
 
-    fn eval_str_inner(&mut self, src: &str) -> Result<Val, String> {
-        let forms = parse::read_many(src)?;
-
+    fn eval_datums_inner(&mut self, forms: &[Datum]) -> Result<Val, String> {
         // Pre-pass: allocate placeholder cells in `globals` for every
         // top-level `(define name body)` in this batch. Bodies that
         // reference any sibling-define's name (or their own) resolve
@@ -194,7 +206,7 @@ impl Vm {
         // pre-allocation overwrites the first cell; both bodies then
         // write to the second cell. The first cell becomes garbage.
         let mut define_cells: HashMap<String, Rc<RefCell<Val>>> = HashMap::new();
-        for datum in &forms {
+        for datum in forms {
             if let Some(name) = extract_define_name(datum)? {
                 let cell = Rc::new(RefCell::new(Val::Bool(false)));
                 self.globals.borrow_mut().insert(name.clone(), cell.clone());
@@ -204,10 +216,10 @@ impl Vm {
 
         let mut last = Val::Bool(true);
         for datum in forms {
-            if self.try_register_define(&datum, &define_cells)? {
+            if self.try_register_define(datum, &define_cells)? {
                 continue;
             }
-            let expr = parse::compile(&datum)?;
+            let expr = parse::compile(datum)?;
             last = run_bounded(expr, self.env.clone(), self.step_budget)?;
         }
         Ok(last)
