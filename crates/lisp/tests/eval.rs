@@ -616,6 +616,77 @@ fn letrec_does_not_leak() {
     );
 }
 
+#[test]
+fn store_reclaims_frame_slots() {
+    // ADR-033 regression. Before reclamation the CESK store was
+    // append-only: every binding ever created stayed allocated for the
+    // life of the Vm, so a 10k-iteration loop cost 20k slots and a
+    // second run cost 20k more. A long-lived host (the Spell Lab's
+    // tick interval, the web REPL) grew without bound.
+    //
+    // The property that matters isn't "small" — it's "flat". Slot
+    // count must be a function of live environment depth, not of how
+    // much evaluation has happened.
+    let mut vm = Vm::new();
+    let store = vm
+        .store_weak()
+        .upgrade()
+        .expect("store is alive while the Vm is");
+    vm.eval_str("(define count (lambda (n acc) (if (= n 0) acc (count (- n 1) (+ acc 1)))))")
+        .unwrap();
+
+    assert_eq!(
+        format!("{}", vm.eval_str("(count 5000 0)").unwrap()),
+        "5000"
+    );
+    let live = store.len();
+    let high_water = store.slots();
+
+    for _ in 0..20 {
+        vm.eval_str("(count 5000 0)").unwrap();
+    }
+
+    assert_eq!(
+        store.len(),
+        live,
+        "live slot count grew across repeated evaluation — frame slots \
+         are no longer being reclaimed (ADR-033)"
+    );
+    assert_eq!(
+        store.slots(),
+        high_water,
+        "the store's high-water mark grew across repeated evaluation — \
+         freed slots are not being reused (ADR-033)"
+    );
+    // 100k iterations' worth of bindings, bounded by the handful the
+    // deepest live env actually needs.
+    assert!(
+        high_water < 32,
+        "high-water mark {high_water} is far above live env depth"
+    );
+}
+
+#[test]
+fn escaped_closures_survive_slot_reuse() {
+    // The other half of ADR-033: reclamation must not free a slot that
+    // a live closure still names. `burn` churns the free list between
+    // captures, so if `mk`'s parameter slot were released while the
+    // returned closure still referenced it, `a` and `b` would read
+    // recycled bindings and the sum would come out wrong (or equal).
+    assert_eq!(
+        eval(
+            "(letrec ((mk   (lambda (n) (lambda () n)))
+                      (burn (lambda (k) (if (= k 0) 0 (burn (- k 1))))))
+               (let ((a (mk 1)))
+                 (let ((_ (burn 200)))
+                   (let ((b (mk 2)))
+                     (let ((__ (burn 200)))
+                       (+ (a) (b)))))))"
+        ),
+        "3"
+    );
+}
+
 // ── set! (ADR-026) ────────────────────────────────────────────────
 
 // Engine-level tests can't use `begin` (it lives in the macros crate)
