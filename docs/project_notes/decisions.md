@@ -1666,22 +1666,27 @@ else is the test body.
 
 ## ADR-022: Structured parse errors with source spans (2026-05-31)
 
-> **Status: DESIGNED, NEVER IMPLEMENTED.** No code has ever landed for
-> this ADR. There is no `error.rs`, no `LispErr`, and no `Span` in the
-> workspace; `eval_str` still returns `Result<Val, String>` and a
-> multi-line form with a missing close paren — the motivating example
-> in the Context section below — reports exactly `unclosed (`. That
-> string has been in `parse.rs` since the initial commit, so nothing
-> here changed even the message text.
+> **Status: IMPLEMENTED 2026-07-29 by ADR-039** — read that ADR for what
+> actually shipped, including where it deviates from the design below.
+> The short version: Phase 1 landed as designed, plus the slice of
+> Phase 2 covering `Expr::Var` and `Expr::App` (the only variants that
+> can fail at run time), plus two items this ADR deferred —
+> `LispErr::render` and macro-expansion span tracking. `Span` uses
+> character columns rather than the byte columns hinted at below, because
+> rune and trigram literals are multi-byte.
 >
-> The commit that added this ADR (`1059b68`) says so in its own
-> message: *"Draft only — no code touched."* It was
-> `docs/project_notes/core-followups.md` that later recorded it as
-> "partially resolved," in `58d09ab` — a commit titled *"docs: refresh
-> stale references."* Corrected 2026-07-29 (audit finding A5).
+> **History, kept because it's the more useful lesson.** For two months
+> this banner read *"DESIGNED, NEVER IMPLEMENTED"* — and before that,
+> `core-followups.md` recorded the ADR as "partially resolved — parse
+> errors now carry source spans," which was false in every particular.
+> The commit that added this ADR (`1059b68`) said *"Draft only — no code
+> touched."* The false resolution was introduced by `58d09ab`, *"docs:
+> refresh stale references"* — a doc-accuracy pass that invented the
+> staleness it was meant to remove. Audit finding A5 corrected it on
+> 2026-07-29; the fix landed the same day.
 >
-> Everything below is the design as written and still stands as a
-> design. Read it as a proposal, not a record.
+> Everything below is the design as originally written. Read it as the
+> proposal it was; ADR-039 is the record.
 
 **Context**: Every error in `lisp` is a flat `Result<_, String>`.
 Tokenizer, reader, compiler, macro-expander, CEK step, and built-in
@@ -3830,3 +3835,276 @@ wrong about liveness is a much bigger commitment.
   the system grows a clause.
 - **−** `Store` gaining a `Weak<Frame>` per slot inverts the current
   dependency direction between `store.rs` and `env.rs`.
+
+## ADR-039: Structured errors with source spans (2026-07-29)
+
+> Implements ADR-022's design, which had been **designed and never
+> implemented** since 2026-05-31. Also takes a scoped slice of that ADR's
+> deferred Phase 2 — see "Deviations" below. ADR-022's status banner now
+> points here.
+
+**Context**: Every error in the workspace was a bare `String`. A missing
+close paren in a 40-line prelude reported exactly `unclosed (`. An
+unbound variable reported exactly `unbound variable: foo`. Both messages
+are true and neither tells you where to look.
+
+This was the top item in `web/let-rs.html`'s "what comes after" coda from
+day one, and the gap that most separates "toy" from "I would debug real
+code in this." ADR-022 designed the fix and shipped nothing; a later
+doc-accuracy pass recorded it as partially resolved, which audit finding
+A5 corrected on 2026-07-29.
+
+**Decision**: `LispErr { msg: String, span: Option<Span> }` replaces
+`String` on the parse / compile / eval path. `Span` is a 1-indexed
+`line` / `col` plus a `len`, per ADR-022's rejection of byte offsets
+(every host wants to display line:col; converting once at construction
+beats making each host do it).
+
+Two rules keep the plumbing honest, and both are load-bearing:
+
+1. **Innermost span wins.** `LispErr::with_span` fills a span *only if
+   one isn't already set*. That single property means the whole compiler
+   needs exactly one annotation point —
+   `compile_inner(d).map_err(|e| e.with_span(d.span))` — and every helper
+   gets positions for free. Without it, an error inside a nested `if`
+   would get re-annotated by each enclosing form on its way out and end
+   up reported at the top-level form's line 1. That failure mode is the
+   reason to prefer a combinator over assignment.
+2. **`None` is a real answer.** Macro output and host-built forms have no
+   source text. They report unpositioned and render exactly as they did
+   before spans existed. `host_built_forms_report_without_a_position`
+   pins it: pointing at a caller's line for a form the caller never wrote
+   would be worse than saying nothing.
+
+`From<String> for LispErr` means prims, `Env::set`, and every host
+callback keep their existing signatures and propagate through `?`
+unchanged. `PrimFn` stays `Rc<dyn Fn(&[Val]) -> Result<Val, String>>`,
+which matters because it's the interface `world` / `genes` / `curves` and
+any future host implement against.
+
+`Datum` becomes `{ kind: DatumKind, span: Option<Span> }`. That's the
+wide part of the change (~70 sites across `parse.rs` and `macros`), and
+it's what makes compile errors positioned.
+
+`render_span(src, span, msg)` draws the source line with a caret run
+under the span. ADR-022 deferred this as host-side; it's 20 lines, it's
+the actual UX payoff, and putting it next to `Span` means the REPL, the
+WASM bridge, and the `:step` debugger share one implementation. It takes
+`src` as an argument rather than storing it: errors outlive the string
+they came from, and retaining source per error would keep every REPL line
+alive for the life of the `Vm`.
+
+**Deviations from ADR-022**:
+
+- **Part of Phase 2 shipped.** ADR-022 deferred runtime spans entirely
+  and its planned test (`runtime_error_has_no_span_yet`) asserted their
+  *absence*. But `unbound variable` with no position is the error that
+  actually makes a prelude hard to debug, so `Expr::Var` and `Expr::App`
+  carry spans — the only two variants that can fail at run time. That
+  covers unbound variables, non-callable heads, arity mismatches, and
+  every prim error, since prims have no position of their own and
+  `step::apply` attaches the call site. Two variants rather than nine, so
+  this is not the "plumb Span through every Expr" change ADR-022 sized.
+- **`K::App` carries the span too**, which incidentally makes the
+  continuation chain a backtrace. ADR-040 uses it.
+- **Macro-expansion span tracking landed**, which ADR-022 listed as a
+  future ADR. `expand_macro_call` stamps the call site on every datum in
+  the expansion, so an error inside an expansion reports the line the
+  user wrote. Deliberately coarse, and coarse for an unavoidable reason
+  as well as a convenient one: macro arguments round-trip through `Val`
+  on their way into the closure, and `Val` carries no spans, so even user
+  code passed through a macro comes back position-less.
+- **`render` shipped** rather than being deferred host-side (above).
+
+**Consequences**:
+
+- **+** Reader, compile, and the common runtime errors all carry
+  `line:col`. The REPL and web REPL draw a caret under the offending
+  token.
+- **+** Columns count *characters*, not bytes, so carets align under the
+  trigram and rune literals this project reads. `columns_count_characters_not_bytes`
+  pins it; a byte column would have been the easy wrong choice.
+- **−** Breaking: `eval_str`, `eval_datums`, `call_value`, `parse::*`,
+  `step::*`, `MacroVm::eval_str`, and `install_stdlib` return
+  `Result<_, LispErr>`. In-tree the fix was `.msg` on ~20 test
+  assertions.
+- **−** `Datum`'s shape changed; pattern matches go through `.kind` or
+  the new `as_list` / `as_sym` helpers.
+- **−** WASM bundle 199K → 224K, together with ADR-040.
+- **−** The WASM bridge now has two error paths: `LispErr::render` for
+  user-authored source (`eval`) and `generated_err` for source the bridge
+  assembled (every `cast*`), which strips the span because it names a
+  line in generated text. Any new bridge entry point has to pick one.
+
+**The reader had to become iterative.** `MAX_DEPTH` bounded nesting *and*
+served as the native-stack guard, because `read_datum` recursed once per
+level. Adding spans grew the frame by roughly half, and 1024 levels
+stopped fitting in the 2 MiB a Rust test thread gets:
+`deeply_nested_input_errors_instead_of_overflowing` aborted the test
+binary rather than failing. `read_datum` now uses an explicit `Open`
+stack for both lists and reader prefixes (`'`, `` ` ``, `,`, `,@` — which
+nest just as freely), so `MAX_DEPTH` bounds a heap `Vec` and the two
+concerns are separate. Same precedent as `Val::Drop` and `write_pair`,
+both already iterative for the same reason.
+
+Error positions are unchanged by that rewrite: nested unclosed parens
+still report the *innermost* one, because the recursive version's
+innermost frame was the one that errored first.
+
+**Residual, measured while fixing the above**: `compile` is still
+recursive and gives out between 500 and 750 levels on a 2 MiB stack —
+verified identical at `main` and on this branch, so a standing limit
+rather than a regression. It means the reader's 1024 cap is not a bound
+the rest of the pipeline can honor: input nested 1024 deep reads fine and
+then overflows in `compile`. Recorded in `core-followups.md`; not fixed
+here, and *not* worked around by lowering `MAX_DEPTH`, which would have
+hidden it.
+
+**Alternatives considered**:
+
+1. **Keep `Datum` an enum, add span to `List` only.** Cheapest, and wrong
+   in the common case: `lambda: param must be a symbol` wants to point at
+   the atom.
+2. **Add a trailing span field to every `Datum` variant** rather than a
+   `kind`/`span` struct. Fewer edits at match sites (`, _`), more at
+   construction sites, and uglier at both. Rejected on readability.
+3. **Spans on all nine `Expr` variants** (ADR-022's full Phase 2). Larger
+   change to `step.rs` for errors that can't occur — a literal never
+   fails.
+4. **Span on `PrimFn`'s error type.** Would mean changing the signature
+   every host crate implements against, to report a position prims don't
+   have. The call site is the useful position and only the machine knows
+   it.
+5. **A `trace: Vec<Span>` on `LispErr`, filled from the `K` chain.** The
+   natural next thought, and it doesn't work: `step` consumes its `State`
+   by value, so building a trace at error time means retaining the `K`
+   per step, which makes every `K` shared and silently defeats ADR-035's
+   `try_unwrap` fast path. See ADR-040, which gets the backtrace from a
+   *paused* machine instead — where nothing is in flight and it's free.
+
+## ADR-040: A CEK machine you can stop and restart (2026-07-29)
+
+**Context**: The engine is a state machine whose entire state is one
+`State` value — that is what a CEK machine *is*, and `decisions.md` has
+claimed "trivially pausable / serializable / time-travel debuggable"
+since ADR-001. Nothing exercised it. The only way to drive the machine
+was `run_bounded`, a loop that ran to completion or returned
+`Err("execution exceeded step budget")` and discarded the work.
+
+That shape forces bad behavior on every host that can't block. The WASM
+bridge set a 10M-step budget and froze the page for however long 10M
+steps took, then reported an error, with no progress indication and no
+way to cancel. The step budget was the *only* defense against
+nonterminating input, so it had to be doing two unrelated jobs at once:
+pacing and safety.
+
+**Decision**: `step::Machine` owns a `State` and exposes `run(budget)` /
+`step_once()`, returning `Progress::{Done(Val), Paused}`.
+
+**Pausing is not an error.** That's the whole design: `Paused` means "the
+allowance ran out, here is the machine back," and the caller decides
+whether to resume. `run_bounded` becomes a wrapper that turns `Paused`
+into today's error string, so every existing caller and test is
+unaffected by the change.
+
+`Vm::start` / `Vm::resume` lift this to a batch of top-level forms via a
+`Session` holding the forms, the define pre-pass cells, and the rollback
+snapshot. `Session` holds **no borrow of the `Vm`**, which is the
+property that makes it usable: a host parks one in a struct field between
+event-loop turns.
+
+`eval_datums` is now `start_datums` plus one unbounded `resume`. One
+implementation of the batch semantics — pre-pass, per-form budget,
+rollback — rather than two that drift.
+
+**Two limits, deliberately separate**:
+
+- **`slice`** (per `resume` call) is *cooperative*: how much work the host
+  will do before it wants control back.
+- **`step_budget`** stays a *per-form safety net* against code that never
+  terminates.
+
+Conflating them is the mistake this design exists to avoid: a host
+pumping 50k-step slices to hold a frame budget must not thereby trip the
+runaway guard. `a_slice_is_not_the_form_budget` and
+`the_form_budget_still_catches_a_runaway` pin both directions.
+
+**Introspection**: `depth`, `position`, `value`, `backtrace`. The
+backtrace reads straight off the continuation chain — ADR-039's `K::App`
+spans are what make it a list of real source locations rather than
+opaque frames.
+
+**Only while paused, never post-mortem.** `step` consumes its `State` by
+value, so a machine that errors has no state left to inspect. Keeping a
+copy per step would make every `K` shared and silently degrade ADR-035's
+`Rc::try_unwrap` fast path to the cloning fallback, taking n-argument
+application back to O(n²) — a performance cliff in exchange for a
+debugging convenience. Errors carry a span instead (ADR-039), which costs
+nothing. This is the same constraint that killed alternative 5 in
+ADR-039, from the other side.
+
+**Cancelling is not a rollback.** Abandoning a session leaves completed
+`define`s bound and host effects applied, exactly as a *failed* batch
+already leaves `set!` and prim effects standing (see the `eval_datums`
+note). Abandoning is a decision, not a failure. The property that matters
+is that the `Vm` stays usable afterwards — otherwise "cancel the runaway
+cast" means "throw away the interpreter."
+
+**Hosts adopting it**:
+
+- `examples/repl.rs` `:step` — a stepping debugger: step count,
+  continuation depth, the expression in flight with a caret in the user's
+  own source, and the enclosing call sites. Cost is `step_once` plus a
+  print, because the machine was already the debugger.
+- The WASM bridge: `eval_start` / `eval_resume` / `eval_cancel` /
+  `eval_steps`, driven from `requestAnimationFrame` in `web/common.js` at
+  50k steps per frame. The page keeps painting, a step counter ticks, and
+  cancel works.
+- `MacroVm::start`. Expansion happens entirely up front — it evaluates
+  macro bodies through `call_value`, which runs to completion and can't
+  be sliced, so deferring it would leave nothing to interleave. What a
+  session paces is evaluation of already-expanded code.
+
+**Consequences**:
+
+- **+** A browser host no longer has to choose between blocking and
+  refusing to run something.
+- **+** ADR-001's pausability claim is now exercised by 19 tests instead
+  of asserted.
+- **+** `tail_calls_do_not_grow_machine_depth` observes the tail-call
+  property *directly* (depth stays flat over 500 calls) rather than
+  inferring it from the absence of a stack overflow.
+- **+** `eval_steps` gives hosts a cost signal for free — useful for the
+  spell-cost model, which currently has no way to know what a cast cost.
+- **−** `eval_steps` returns `f64`, not `u64`: a `u64` crosses into JS as
+  a `BigInt` and can't be formatted or compared alongside plain numbers
+  without ceremony. Exact well past any browser-host budget, but it is a
+  lie about the type.
+- **−** Two ways to evaluate (`eval_str` and `start`/`resume`) where
+  there was one. Mitigated by the former being implemented as the latter,
+  but hosts now have a choice to get wrong.
+- **−** A session the host neither finishes nor errors holds its rollback
+  snapshot until dropped. Bounded by `globals.len()` per live session and
+  Rc-shared, but it is retention that didn't exist before.
+- **−** WASM bundle 199K → 224K, together with ADR-039.
+
+**Alternatives considered**:
+
+1. **Return the `State` in the error** (`Err((LispErr, State))`) so
+   post-mortem inspection works. Makes the common error path pay for a
+   rare debugging case, and `Result` ergonomics degrade at every `?`.
+2. **A `slice` that also serves as the safety net** — one budget, pause
+   instead of erroring when it runs out. Simpler surface; loses the
+   ability to distinguish "the host is pacing me" from "this code never
+   terminates," which is exactly what a host needs to decide whether to
+   resume.
+3. **Threads or a Worker for the browser case.** ADR-009 rules out
+   `SharedArrayBuffer` / COI, which is most of the point of the web
+   demo's design. Also solves nothing for the debugger.
+4. **`Machine` as an `Iterator`.** Reads nicely, but resumption across
+   host turns wants `&mut self` on a parked value, not a consuming
+   adapter chain.
+5. **Serializable state (the "time-travel" half of ADR-001's claim).**
+   Out of scope: `Val::Prim` holds `Rc<dyn Fn>`, so a `State` is not
+   serializable without a story for host closures. Pausing needed none of
+   that, which is why it landed and this didn't.

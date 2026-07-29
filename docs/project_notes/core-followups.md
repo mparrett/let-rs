@@ -352,6 +352,35 @@ shouldn't accidentally break them.
 
 ## High-impact (engine-level) — open
 
+### Pausable machine — **DONE (ADR-040, 2026-07-29)**
+
+> `step::Machine` (`run(budget)` / `step_once`, returning
+> `Progress::{Done, Paused}`) plus `Vm::start` / `Vm::resume` over a
+> `Session` for whole batches. `run_bounded` is now a wrapper that turns
+> `Paused` back into the old budget error, so nothing existing changed.
+> The web REPL evaluates from `requestAnimationFrame` and can be
+> cancelled; `examples/repl.rs` gained a `:step` debugger. 19 tests.
+>
+> Two things this leaves open, both genuinely useful and neither
+> attempted:
+>
+> - **Serializable state** — the other half of ADR-001's "trivially
+>   pausable / serializable / time-travel debuggable" claim. Blocked on
+>   `Val::Prim` holding `Rc<dyn Fn>`: a `State` can't be serialized
+>   without a story for host closures. Pausing needed none of that,
+>   which is why it landed first. Related to the CESK snapshot item
+>   below, and to `issue_3.md`.
+> - **Step counts as a cost signal.** `eval_steps` now reports what a
+>   form actually cost. The spell model prices casts by a hand-written
+>   `spell-cost` table with no relationship to work done. Metering mana
+>   by CEK steps is a one-line change to the gate and a genuinely
+>   different game — noted, not proposed.
+>
+> And one caution: post-mortem inspection of a *failed* machine is not
+> available and should not be added naively. See ADR-040's alternative 1
+> and ADR-039's alternative 5 — both roads end at retaining the `K` per
+> step, which defeats ADR-035's `try_unwrap` fast path.
+
 ### CESK upgrade — time-travel / undo via a reified Store
 
 **Problem.** Today's CEK machine has no Store register: bindings
@@ -469,35 +498,44 @@ gene work. Listed for context so we don't duplicate them:
 - **Persistent maps (`Val::Map`).** Both demos use alist ctxs,
   which is fine at <30 keys. A real game would want better
   scaling.
-- **Structured errors.** `eval_str` returns `Result<Val,
-  String>`. The web REPL and gene/spell labs surface those
-  strings raw. For a real REPL, line/column info would be nice.
-  **Fully open. ADR-022 was designed and never implemented** —
-  corrected 2026-07-29 (audit finding A5); see the status banner
-  on that ADR.
+- **Structured errors.** **Resolved 2026-07-29 (ADR-039).**
+  `LispErr { msg, span }` replaces `String` on the parse / compile /
+  eval path; reader, compile, unbound-variable, arity, not-callable
+  and prim errors all carry `line:col`, and `render_span` draws a
+  caret under the offending token in the REPL, the web REPL, and the
+  `:step` debugger. Ten tests in `eval.rs` pin positions, the
+  innermost-span rule, the unpositioned case, caret rendering, and
+  character (not byte) columns.
 
-  This entry previously read *"Partially resolved 2026-05-31
-  (ADR-022) — parse errors now carry source spans."* No part of
-  that was true. There is no `error.rs`, no `LispErr`, and no
-  `Span` anywhere in the workspace; every error is still a bare
-  `String`. ADR-022's own motivating example — a multi-line form
-  with a missing close paren — reports exactly `unclosed (`, with
-  no line, column, or context. `parse.rs` has emitted that string
-  since the initial commit, so the ADR changed nothing at all, not
-  even the message text.
+  This entry claimed the opposite twice, in both directions — first
+  "partially resolved" when no line of it existed, then "fully open"
+  once that was corrected. Per the instruction that stood here, it is
+  *not* re-marked resolved without a test asserting a span appears in
+  a message; there are ten. See ADR-039's deviations section for what
+  shipped beyond ADR-022's Phase 1, and ADR-022's banner for the
+  history.
 
-  Worth recording how the claim arose, because it is the same
-  failure mode the ADR-033 amendment describes. `1059b68` committed
-  the ADR with the message *"Draft only — no code touched"* and
-  touched one file, `decisions.md`. The false entry was then
-  introduced by `58d09ab`, **"docs: refresh stale references"** — a
-  doc-accuracy pass that invented the staleness it was meant to
-  remove. Nothing regressed; a design was silently promoted to a
-  resolution.
+- **Reader depth exceeds what `compile` can survive.** *New,
+  measured 2026-07-29 while implementing ADR-039.* `MAX_DEPTH` lets
+  the reader accept 1024 levels of nesting, but `compile` is
+  recursive and overflows between 500 and 750 levels on a 2 MiB
+  stack — the default for a Rust test thread, and tighter under
+  wasm. So input nested 1024 deep reads cleanly and then aborts the
+  process in `compile`.
 
-  Either implement ADR-022 Phase 1 or leave this open, but do not
-  re-mark it resolved without a test that asserts a span appears in
-  a message.
+  Verified identical at `main` and after ADR-039, so it is a
+  standing limit rather than a regression, and it predates spans:
+  the cap was calibrated against the reader's frame alone, and no
+  test ever exercised the compile path at depth.
+  `deeply_nested_input_errors_instead_of_overflowing` now pins 500
+  levels as safe and says why it doesn't pin more.
+
+  Fix is either an iterative `compile` (the reader went this way in
+  ADR-039, with `Val::Drop` and `write_pair` as precedent) or a
+  second, lower cap applied at compile time. Lowering `MAX_DEPTH` to
+  match would hide it rather than fix it, and would narrow accepted
+  source ~2.7× for no gain. Matters only at the untrusted boundary,
+  which is the web REPL.
 - **The play loop.** Listed in the docs/let-rs.html "what comes
   after" — turn-based render/input/spell/world tick. The engine
   is ready; this is host-side work.
