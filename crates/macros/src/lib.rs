@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use lisp::{Datum, DatumKind, LispErr, Span, Sym, Val, Vm, parse};
+use lisp::{Datum, DatumKind, LispErr, Session, Span, Sym, Val, Vm, parse};
 use std::rc::Rc;
 
 /// Recursion ceiling for macro expansion. Sits above the reader's own
@@ -422,6 +422,43 @@ impl MacroVm {
             return Ok(Val::Bool(true));
         }
         self.vm.eval_datums(&remaining)
+    }
+
+    /// Macro-aware [`lisp::Vm::start`]: register `defmacro`s, expand
+    /// everything else, and hand the result to the engine as a resumable
+    /// [`Session`]. Drive it with `mvm.vm.resume(&mut session, slice)`.
+    ///
+    /// All expansion happens here, up front. That's not just convenient —
+    /// expansion *evaluates* macro bodies through `call_value`, which runs
+    /// to completion and can't be sliced, so there'd be nothing to
+    /// interleave even if it were deferred. What a session paces is the
+    /// evaluation of already-expanded code.
+    ///
+    /// A batch with no evaluable forms (all `defmacro`) yields a session
+    /// that finishes on its first `resume` with `#t`, matching `eval_str`.
+    pub fn start(&mut self, src: &str) -> Result<Session, LispErr> {
+        let saved = self.expander.snapshot();
+        let result = self.start_inner(src);
+        if result.is_err() {
+            // Same atomicity as `eval_str`: a batch that fails during
+            // registration or expansion leaves no macros behind. Failures
+            // *after* this point are engine-level and don't touch the
+            // macro table, so `resume` has nothing to restore.
+            self.expander.restore(saved);
+        }
+        result
+    }
+
+    fn start_inner(&mut self, src: &str) -> Result<Session, LispErr> {
+        let forms = parse::read_many(src)?;
+        let mut remaining: Vec<Datum> = Vec::with_capacity(forms.len());
+        for datum in forms {
+            if self.expander.try_register_defmacro(&mut self.vm, &datum)? {
+                continue;
+            }
+            remaining.push(self.expander.expand_top_level(&mut self.vm, datum)?);
+        }
+        self.vm.start_datums(&remaining)
     }
 }
 

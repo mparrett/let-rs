@@ -34,10 +34,10 @@ pub mod store;
 pub mod val;
 
 pub use env::{Env, Globals};
-pub use error::{LispErr, Span};
+pub use error::{LispErr, Span, render_span};
 pub use expr::{Expr, Sym};
 pub use parse::{Datum, DatumKind};
-pub use step::{Step, run, run_bounded};
+pub use step::{Machine, Progress, Step, run, run_bounded};
 pub use store::{Addr, Store};
 pub use val::Val;
 
@@ -228,15 +228,52 @@ impl Vm {
         // and leaves `x` at 99. Host prim effects — painted tiles,
         // turtle state, log entries — likewise stand. Undoing those
         // would need the persistent store ADR-023 leaves open.
-        let saved_globals = self.globals.borrow().clone();
-        let result = self.eval_datums_inner(forms);
-        if result.is_err() {
-            *self.globals.borrow_mut() = saved_globals;
+        // Driving a `Session` rather than a private copy of the same loop
+        // keeps one implementation of define pre-passes, per-form budgets
+        // and rollback. `u64::MAX` as the slice means it never pauses, so
+        // the `Paused` arm is unreachable — but `unreachable!` here would
+        // be a panic reachable from a host, so it degrades to the budget
+        // error instead.
+        let mut session = self.start_datums(forms)?;
+        match self.resume(&mut session, u64::MAX)? {
+            Progress::Done(v) => Ok(v),
+            Progress::Paused => Err(LispErr::new("execution exceeded step budget")),
         }
-        result
     }
 
-    fn eval_datums_inner(&mut self, forms: &[Datum]) -> Result<Val, LispErr> {
+    /// Begin a resumable top-level evaluation of `src` without running
+    /// any of it. See [`Vm::resume`].
+    pub fn start(&mut self, src: &str) -> Result<Session, LispErr> {
+        let forms = parse::read_many(src)?;
+        self.start_datums(&forms)
+    }
+
+    /// [`Vm::start`] for callers that already hold read forms — the
+    /// `eval_datums` counterpart of `start`.
+    ///
+    /// Reading and the define pre-pass both happen here, before any
+    /// evaluation, so a syntax error surfaces from `start` rather than
+    /// from the first `resume`.
+    pub fn start_datums(&mut self, forms: &[Datum]) -> Result<Session, LispErr> {
+        // Binding-level rollback: if any form in the batch fails,
+        // restore the globals *table* to its pre-call state. Pre-fix, a
+        // failed define left a placeholder cell visible in env (e.g.
+        // `(define + (/ 1 0))` masking the builtin `+` with `#f`),
+        // which then took every subsequent REPL line down.
+        //
+        // Snapshotting the HashMap clones it but Rc-bumps each cell,
+        // so cost is O(globals.len()) and unchanged-cells are shared.
+        //
+        // This is *not* transactional rollback of effects, and the
+        // sharing is exactly why: the snapshot restores which cell each
+        // name points at, not what's inside those cells. `set!`
+        // (ADR-026, which postdates this rollback) writes through the
+        // shared `RefCell`, so `(set! x 99) (car 5)` fails the batch
+        // and leaves `x` at 99. Host prim effects — painted tiles,
+        // turtle state, log entries — likewise stand. Undoing those
+        // would need the persistent store ADR-023 leaves open.
+        let saved_globals = self.globals.borrow().clone();
+
         // Pre-pass: allocate placeholder cells in `globals` for every
         // top-level `(define name body)` in this batch. Bodies that
         // reference any sibling-define's name (or their own) resolve
@@ -245,49 +282,135 @@ impl Vm {
         // pre-allocation overwrites the first cell; both bodies then
         // write to the second cell. The first cell becomes garbage.
         let mut define_cells: HashMap<String, Rc<RefCell<Val>>> = HashMap::new();
-        for datum in forms {
-            if let Some(name) = extract_define_name(datum)? {
-                let cell = Rc::new(RefCell::new(Val::Bool(false)));
-                self.globals.borrow_mut().insert(name.clone(), cell.clone());
-                define_cells.insert(name.to_string(), cell);
+        let mut pre_pass = || -> Result<(), LispErr> {
+            for datum in forms {
+                if let Some(name) = extract_define_name(datum)? {
+                    let cell = Rc::new(RefCell::new(Val::Bool(false)));
+                    self.globals.borrow_mut().insert(name.clone(), cell.clone());
+                    define_cells.insert(name.to_string(), cell);
+                }
             }
+            Ok(())
+        };
+        if let Err(e) = pre_pass() {
+            // A malformed define in the batch has to undo the cells the
+            // pre-pass already installed for its well-formed siblings.
+            *self.globals.borrow_mut() = saved_globals;
+            return Err(e);
         }
 
-        let mut last = Val::Bool(true);
-        for datum in forms {
-            if self.try_register_define(datum, &define_cells)? {
-                continue;
-            }
-            let expr = parse::compile(datum)?;
-            last = run_bounded(expr, self.env.clone(), self.step_budget)?;
-        }
-        Ok(last)
+        Ok(Session {
+            forms: forms.to_vec(),
+            next: 0,
+            define_cells,
+            machine: None,
+            pending_define: None,
+            form_steps: 0,
+            last: Val::Bool(true),
+            saved_globals: Some(saved_globals),
+        })
     }
 
-    /// Evaluate `(define name body)` against `self.env`, then write
-    /// the result into the cell pre-allocated for `name` by the
-    /// `eval_str` pre-pass. Returns `Ok(false)` if `d` isn't a
-    /// `define` form, propagating non-define forms to the caller.
-    fn try_register_define(
-        &mut self,
-        d: &Datum,
-        cells: &HashMap<String, Rc<RefCell<Val>>>,
-    ) -> Result<bool, LispErr> {
-        let name = match extract_define_name(d)? {
-            Some(n) => n,
-            None => return Ok(false),
-        };
-        let items = d
-            .as_list()
-            .expect("extract_define_name returned Some, so d is a List");
-        let body_expr = parse::compile(&items[2])?;
-        let val = run_bounded(body_expr, self.env.clone(), self.step_budget)?;
-        cells
-            .get(name.as_ref())
-            .expect("pre-pass should have allocated a cell for this define")
-            .borrow_mut()
-            .clone_from(&val);
-        Ok(true)
+    /// Advance `session` by at most `slice` CEK steps, returning
+    /// [`Progress::Paused`] if it runs out with work left.
+    ///
+    /// Two independent limits apply, and conflating them is the mistake to
+    /// avoid: `slice` is *cooperative* — how much work the host is willing
+    /// to do before it wants control back — while the Vm's
+    /// [`step_budget`](Vm::set_step_budget) is a *safety net* against a
+    /// form that never terminates, and is still enforced per form. A host
+    /// pumping 50k-step slices to keep a frame budget will pause many
+    /// times over one form without ever tripping the budget.
+    ///
+    /// On error the globals table is rolled back exactly as
+    /// [`Vm::eval_datums`] does. A session the host simply stops resuming
+    /// is *not* rolled back — abandoning is a decision, not a failure, and
+    /// the effects already applied stand the same way a failed batch's
+    /// prim effects do.
+    pub fn resume(&mut self, session: &mut Session, slice: u64) -> Result<Progress, LispErr> {
+        let result = self.resume_inner(session, slice);
+        if result.is_err()
+            && let Some(saved) = session.saved_globals.take()
+        {
+            *self.globals.borrow_mut() = saved;
+        }
+        result
+    }
+
+    fn resume_inner(&mut self, session: &mut Session, slice: u64) -> Result<Progress, LispErr> {
+        let mut left = slice;
+        loop {
+            // Start the next form if we're between forms.
+            if session.machine.is_none() {
+                let Some(datum) = session.forms.get(session.next) else {
+                    // Every form done: the batch's value is the last
+                    // expression's, or `#t` if it was all defines.
+                    session.saved_globals = None;
+                    return Ok(Progress::Done(session.last.clone()));
+                };
+                session.next += 1;
+                session.form_steps = 0;
+                let (expr, define) = match extract_define_name(datum)? {
+                    Some(name) => {
+                        let items = datum
+                            .as_list()
+                            .expect("extract_define_name returned Some, so datum is a List");
+                        (parse::compile(&items[2])?, Some(name))
+                    }
+                    None => (parse::compile(datum)?, None),
+                };
+                session.pending_define = define;
+                session.machine = Some(Machine::new(expr, self.env.clone()));
+            }
+
+            let machine = session
+                .machine
+                .as_mut()
+                .expect("just ensured a machine is present");
+
+            // The form's own budget and the caller's slice are both
+            // ceilings; run to whichever comes first and tell them apart
+            // by which one we hit.
+            let form_left = self.step_budget.saturating_sub(session.form_steps);
+            if form_left == 0 {
+                return Err(LispErr::new("execution exceeded step budget"));
+            }
+            let chunk = left.min(form_left);
+            let before = machine.steps();
+            let progress = machine.run(chunk);
+            let taken = machine.steps() - before;
+            session.form_steps += taken;
+            left -= taken;
+
+            match progress? {
+                Progress::Done(v) => {
+                    session.machine = None;
+                    match session.pending_define.take() {
+                        // A define's value goes to the cell the pre-pass
+                        // allocated, and doesn't become the batch value.
+                        Some(name) => session
+                            .define_cells
+                            .get(name.as_ref())
+                            .expect("pre-pass should have allocated a cell for this define")
+                            .borrow_mut()
+                            .clone_from(&v),
+                        None => session.last = v,
+                    }
+                }
+                Progress::Paused => {
+                    // Distinguish "the host's slice ran out" from "this
+                    // form blew its budget": only the latter is an error.
+                    if session.form_steps >= self.step_budget {
+                        return Err(LispErr::new("execution exceeded step budget"));
+                    }
+                    return Ok(Progress::Paused);
+                }
+            }
+
+            if left == 0 && session.next < session.forms.len() {
+                return Ok(Progress::Paused);
+            }
+        }
     }
 
     /// Apply a callable `Val` (closure or prim) to `args`. Exposed for
@@ -313,6 +436,73 @@ impl Vm {
 impl Default for Vm {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A top-level evaluation in progress: the batch of forms, which one is
+/// running, and the [`Machine`] running it.
+///
+/// Created by [`Vm::start`] and advanced by [`Vm::resume`]. It holds no
+/// borrow of the `Vm`, so a host can park one in a struct field between
+/// event-loop turns — which is the entire point, since that's how you
+/// evaluate on a thread you aren't allowed to block.
+///
+/// A `Session` owns its forms and the define cells the pre-pass allocated,
+/// but not the bindings themselves: those live in the `Vm`, so effects
+/// from completed forms are visible immediately, mid-session.
+pub struct Session {
+    forms: Vec<Datum>,
+    /// Index of the next form to start; `forms.len()` once all are begun.
+    next: usize,
+    define_cells: HashMap<String, Rc<RefCell<Val>>>,
+    /// The form currently in flight, or `None` between forms.
+    machine: Option<Machine>,
+    /// Set when the in-flight form is a `define`, naming the cell its
+    /// value belongs in.
+    pending_define: Option<Sym>,
+    /// Steps spent on the in-flight form, for the per-form budget. Reset
+    /// per form, unlike `Machine::steps`.
+    form_steps: u64,
+    last: Val,
+    /// Pre-call globals table, dropped once the batch completes. `Some`
+    /// means a rollback is still owed if something fails.
+    saved_globals: Option<HashMap<Sym, Rc<RefCell<Val>>>>,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("forms_done", &self.forms_done())
+            .field("forms_total", &self.forms_total())
+            .field("machine", &self.machine)
+            .finish()
+    }
+}
+
+impl Session {
+    /// Forms in the batch that have finished.
+    pub fn forms_done(&self) -> usize {
+        if self.machine.is_some() {
+            self.next - 1
+        } else {
+            self.next
+        }
+    }
+
+    pub fn forms_total(&self) -> usize {
+        self.forms.len()
+    }
+
+    /// The machine running the current form, for introspection while
+    /// paused — depth, position, backtrace. `None` between forms.
+    pub fn machine(&self) -> Option<&Machine> {
+        self.machine.as_ref()
+    }
+
+    /// Value of the last expression to finish. Meaningful before the
+    /// batch completes: a host can show intermediate results.
+    pub fn last_value(&self) -> &Val {
+        &self.last
     }
 }
 
