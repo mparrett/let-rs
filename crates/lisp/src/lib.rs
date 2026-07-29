@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 pub mod env;
+pub mod error;
 pub mod expr;
 pub mod k;
 pub mod parse;
@@ -33,8 +34,9 @@ pub mod store;
 pub mod val;
 
 pub use env::{Env, Globals};
+pub use error::{LispErr, Span};
 pub use expr::{Expr, Sym};
-pub use parse::Datum;
+pub use parse::{Datum, DatumKind};
 pub use step::{Step, run, run_bounded};
 pub use store::{Addr, Store};
 pub use val::Val;
@@ -194,7 +196,7 @@ impl Vm {
     /// `(defmacro …)` is *not* recognized here — macros live in the
     /// sibling `macros` crate (ADR-024). Hosts that want macros wrap
     /// this Vm in `macros::MacroVm`.
-    pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
+    pub fn eval_str(&mut self, src: &str) -> Result<Val, LispErr> {
         let forms = parse::read_many(src)?;
         self.eval_datums(&forms)
     }
@@ -208,7 +210,7 @@ impl Vm {
     /// Without it, a macro host's only route back into the Vm was to
     /// re-serialize its expansion to source and make the reader parse
     /// it a second time.
-    pub fn eval_datums(&mut self, forms: &[Datum]) -> Result<Val, String> {
+    pub fn eval_datums(&mut self, forms: &[Datum]) -> Result<Val, LispErr> {
         // Binding-level rollback: if any form in the batch fails,
         // restore the globals *table* to its pre-call state. Pre-fix, a
         // failed define left a placeholder cell visible in env (e.g.
@@ -234,7 +236,7 @@ impl Vm {
         result
     }
 
-    fn eval_datums_inner(&mut self, forms: &[Datum]) -> Result<Val, String> {
+    fn eval_datums_inner(&mut self, forms: &[Datum]) -> Result<Val, LispErr> {
         // Pre-pass: allocate placeholder cells in `globals` for every
         // top-level `(define name body)` in this batch. Bodies that
         // reference any sibling-define's name (or their own) resolve
@@ -270,15 +272,14 @@ impl Vm {
         &mut self,
         d: &Datum,
         cells: &HashMap<String, Rc<RefCell<Val>>>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, LispErr> {
         let name = match extract_define_name(d)? {
             Some(n) => n,
             None => return Ok(false),
         };
-        let items = match d {
-            Datum::List(items) => items,
-            _ => unreachable!("extract_define_name returned Some, so d is a List"),
-        };
+        let items = d
+            .as_list()
+            .expect("extract_define_name returned Some, so d is a List");
         let body_expr = parse::compile(&items[2])?;
         let val = run_bounded(body_expr, self.env.clone(), self.step_budget)?;
         cells
@@ -292,12 +293,20 @@ impl Vm {
     /// Apply a callable `Val` (closure or prim) to `args`. Exposed for
     /// the `macros` crate to call macro closures; hosts generally don't
     /// need this — top-level evaluation goes through [`Vm::eval_str`].
-    pub fn call_value(&self, f: &Val, args: Vec<Val>) -> Result<Val, String> {
+    pub fn call_value(&self, f: &Val, args: Vec<Val>) -> Result<Val, LispErr> {
         let mut app: Vec<Rc<Expr>> = vec![Rc::new(Expr::Quote(Rc::new(f.clone())))];
         for a in args {
             app.push(Rc::new(Expr::Quote(Rc::new(a))));
         }
-        run_bounded(Expr::App(app.into()), self.env.clone(), self.step_budget)
+        // No span: this application has no source text. Errors from it
+        // report unpositioned, which is correct — pointing at a caller's
+        // line for a form the caller never wrote would be worse than
+        // saying nothing.
+        run_bounded(
+            Expr::App(app.into(), None),
+            self.env.clone(),
+            self.step_budget,
+        )
     }
 }
 
@@ -311,20 +320,26 @@ impl Default for Vm {
 /// return the bound name. Used by `eval_str`'s pre-pass (to allocate
 /// placeholder cells) and `try_register_define` (to validate the
 /// form structure and find its cell).
-fn extract_define_name(d: &Datum) -> Result<Option<Sym>, String> {
-    let items = match d {
-        Datum::List(items) => items,
-        _ => return Ok(None),
+fn extract_define_name(d: &Datum) -> Result<Option<Sym>, LispErr> {
+    let items = match d.as_list() {
+        Some(items) => items,
+        None => return Ok(None),
     };
-    match items.first() {
-        Some(Datum::Sym(s)) if &**s == "define" => {}
+    match items.first().and_then(Datum::as_sym) {
+        Some(s) if &**s == "define" => {}
         _ => return Ok(None),
     }
     if items.len() != 3 {
-        return Err("define: expected (define name value)".into());
+        return Err(LispErr::maybe_at(
+            "define: expected (define name value)",
+            d.span,
+        ));
     }
-    match &items[1] {
-        Datum::Sym(s) => Ok(Some(s.clone())),
-        _ => Err("define: name must be a symbol".into()),
+    match items[1].as_sym() {
+        Some(s) => Ok(Some(s.clone())),
+        None => Err(LispErr::maybe_at(
+            "define: name must be a symbol",
+            items[1].span,
+        )),
     }
 }

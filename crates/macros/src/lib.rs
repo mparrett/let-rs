@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use lisp::{Datum, Sym, Val, Vm, parse};
+use lisp::{Datum, DatumKind, LispErr, Span, Sym, Val, Vm, parse};
 use std::rc::Rc;
 
 /// Recursion ceiling for macro expansion. Sits above the reader's own
@@ -64,7 +64,7 @@ impl Expander {
     /// this — otherwise the expander's invariant "no nested define"
     /// would forbid the expansion even at the top of an `eval_str`
     /// batch.
-    pub fn expand_top_level(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, String> {
+    pub fn expand_top_level(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, LispErr> {
         self.expand_top_level_at(vm, d, 0)
     }
 
@@ -73,13 +73,12 @@ impl Expander {
         vm: &mut Vm,
         d: Datum,
         depth: usize,
-    ) -> Result<Datum, String> {
+    ) -> Result<Datum, LispErr> {
         if depth > MAX_EXPANSION_DEPTH {
-            return Err("macro expansion too deep".into());
+            return Err(LispErr::maybe_at("macro expansion too deep", d.span));
         }
-        if let Datum::List(items) = &d
-            && !items.is_empty()
-            && let Datum::Sym(head) = &items[0]
+        if let Some(items) = d.as_list()
+            && let Some(head) = items.first().and_then(Datum::as_sym)
         {
             let name_str = &**head;
             // (define name body...) at top level: keep the define form
@@ -91,13 +90,13 @@ impl Expander {
                 for i in &items[2..] {
                     out.push(self.expand_all_at(vm, i.clone(), depth + 1)?);
                 }
-                return Ok(Datum::List(out));
+                return Ok(Datum::list(out, d.span));
             }
             // Top-level macro call: expand once, then re-enter at top
             // level so a macro that expands to `(define …)` is allowed.
             let mac = self.macros.get(name_str).cloned();
             if let Some(m) = mac {
-                let expansion = self.expand_macro_call(vm, &m, &items[1..])?;
+                let expansion = self.expand_macro_call(vm, &m, &items[1..], d.span)?;
                 return self.expand_top_level_at(vm, expansion, depth + 1);
             }
         }
@@ -106,7 +105,7 @@ impl Expander {
 
     /// Recursively expand macro calls inside `d`. Returns the expanded
     /// datum (or `d` unchanged if no macros apply).
-    pub fn expand_all(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, String> {
+    pub fn expand_all(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, LispErr> {
         self.expand_all_at(vm, d, 0)
     }
 
@@ -116,13 +115,12 @@ impl Expander {
     /// expansion — and a macro that emits deeply nested output recurses
     /// structurally. Both funnel through here, so one depth cap converts either
     /// into a clean error instead of a stack-overflow abort (fatal in wasm).
-    fn expand_all_at(&mut self, vm: &mut Vm, d: Datum, depth: usize) -> Result<Datum, String> {
+    fn expand_all_at(&mut self, vm: &mut Vm, d: Datum, depth: usize) -> Result<Datum, LispErr> {
         if depth > MAX_EXPANSION_DEPTH {
-            return Err("macro expansion too deep".into());
+            return Err(LispErr::maybe_at("macro expansion too deep", d.span));
         }
-        if let Datum::List(items) = &d
-            && !items.is_empty()
-            && let Datum::Sym(head) = &items[0]
+        if let Some(items) = d.as_list()
+            && let Some(head) = items.first().and_then(Datum::as_sym)
         {
             let name = head.clone();
             let name_str = &*name;
@@ -134,7 +132,7 @@ impl Expander {
             // Quasiquote: descend, but unquoted parts get full macro expansion.
             if name_str == "quasiquote" && items.len() == 2 {
                 let inside = self.expand_in_qq(vm, items[1].clone(), 1)?;
-                return Ok(Datum::List(vec![items[0].clone(), inside]));
+                return Ok(Datum::list(vec![items[0].clone(), inside], d.span));
             }
             // Lambda: don't macro-expand the params list (it's symbols).
             if (name_str == "lambda" || name_str == "λ") && items.len() >= 3 {
@@ -142,149 +140,186 @@ impl Expander {
                 for i in &items[2..] {
                     out.push(self.expand_all_at(vm, i.clone(), depth + 1)?);
                 }
-                return Ok(Datum::List(out));
+                return Ok(Datum::list(out, d.span));
             }
             // set!: don't macro-expand the name slot (it's a binding
             // reference, like the head of a `define` or a let pair).
             // The value position gets normal expression-level expansion.
             if name_str == "set!" && items.len() == 3 {
-                return Ok(Datum::List(vec![
-                    items[0].clone(),
-                    items[1].clone(),
-                    self.expand_all_at(vm, items[2].clone(), depth + 1)?,
-                ]));
+                return Ok(Datum::list(
+                    vec![
+                        items[0].clone(),
+                        items[1].clone(),
+                        self.expand_all_at(vm, items[2].clone(), depth + 1)?,
+                    ],
+                    d.span,
+                ));
             }
             // Let-family: don't macro-expand binding-name positions.
             if matches!(name_str, "let" | "let*" | "letrec") && items.len() >= 3 {
-                let bindings_out = match &items[1] {
-                    Datum::List(pairs) => {
+                let bindings_out = match items[1].as_list() {
+                    Some(pairs) => {
                         let mut new_pairs = Vec::with_capacity(pairs.len());
                         for p in pairs {
-                            if let Datum::List(pair) = p
-                                && pair.len() == 2
-                            {
-                                new_pairs.push(Datum::List(vec![
-                                    pair[0].clone(),
-                                    self.expand_all_at(vm, pair[1].clone(), depth + 1)?,
-                                ]));
-                            } else {
-                                new_pairs.push(p.clone());
+                            match p.as_list() {
+                                Some(pair) if pair.len() == 2 => {
+                                    new_pairs.push(Datum::list(
+                                        vec![
+                                            pair[0].clone(),
+                                            self.expand_all_at(vm, pair[1].clone(), depth + 1)?,
+                                        ],
+                                        p.span,
+                                    ));
+                                }
+                                _ => new_pairs.push(p.clone()),
                             }
                         }
-                        Datum::List(new_pairs)
+                        Datum::list(new_pairs, items[1].span)
                     }
-                    other => other.clone(),
+                    None => items[1].clone(),
                 };
                 let mut out = vec![items[0].clone(), bindings_out];
                 for i in &items[2..] {
                     out.push(self.expand_all_at(vm, i.clone(), depth + 1)?);
                 }
-                return Ok(Datum::List(out));
+                return Ok(Datum::list(out, d.span));
             }
             // Defmacro / define inside other code: refuse so silent
             // misregistration doesn't bite us.
             if name_str == "defmacro" {
-                return Err("defmacro only valid at top level".into());
+                return Err(LispErr::maybe_at(
+                    "defmacro only valid at top level",
+                    d.span,
+                ));
             }
             if name_str == "define" {
-                return Err("define only valid at top level".into());
+                return Err(LispErr::maybe_at("define only valid at top level", d.span));
             }
 
             // Macro lookup
             let mac = self.macros.get(name_str).cloned();
             if let Some(m) = mac {
-                let expansion = self.expand_macro_call(vm, &m, &items[1..])?;
+                let expansion = self.expand_macro_call(vm, &m, &items[1..], d.span)?;
                 return self.expand_all_at(vm, expansion, depth + 1);
             }
         }
 
-        match d {
-            Datum::List(items) => {
+        let span = d.span;
+        match d.kind {
+            DatumKind::List(items) => {
                 let mut new_items = Vec::with_capacity(items.len());
                 for i in items {
                     new_items.push(self.expand_all_at(vm, i, depth + 1)?);
                 }
-                Ok(Datum::List(new_items))
+                Ok(Datum::list(new_items, span))
             }
-            other => Ok(other),
+            other => Ok(Datum::new(other, span)),
         }
     }
 
-    fn expand_in_qq(&mut self, vm: &mut Vm, d: Datum, depth: usize) -> Result<Datum, String> {
+    fn expand_in_qq(&mut self, vm: &mut Vm, d: Datum, depth: usize) -> Result<Datum, LispErr> {
         if depth == 0 {
             return self.expand_all(vm, d);
         }
-        if let Datum::List(items) = &d
+        if let Some(items) = d.as_list()
             && !items.is_empty()
         {
-            if let Datum::Sym(s) = &items[0] {
+            if let Some(s) = items[0].as_sym() {
                 let name = &**s;
                 if name == "quasiquote" && items.len() == 2 {
                     let inside = self.expand_in_qq(vm, items[1].clone(), depth + 1)?;
-                    return Ok(Datum::List(vec![items[0].clone(), inside]));
+                    return Ok(Datum::list(vec![items[0].clone(), inside], d.span));
                 }
                 if (name == "unquote" || name == "unquote-splicing") && items.len() == 2 {
                     let inside = self.expand_in_qq(vm, items[1].clone(), depth - 1)?;
-                    return Ok(Datum::List(vec![items[0].clone(), inside]));
+                    return Ok(Datum::list(vec![items[0].clone(), inside], d.span));
                 }
             }
             let mut new_items = Vec::with_capacity(items.len());
             for i in items {
                 new_items.push(self.expand_in_qq(vm, i.clone(), depth)?);
             }
-            return Ok(Datum::List(new_items));
+            return Ok(Datum::list(new_items, d.span));
         }
         Ok(d)
     }
 
+    /// Call a macro closure with the call site's raw argument datums and
+    /// convert its returned value back into a datum.
+    ///
+    /// `call_span` is the position of the macro *call*, and every datum in
+    /// the expansion is stamped with it. That is deliberately coarse: an
+    /// error anywhere inside an expansion reports the line the user
+    /// actually wrote, rather than reporting nothing at all (which is
+    /// what ADR-022 left as a deferred item). It's coarse for a second,
+    /// unavoidable reason too — macro arguments round-trip through `Val`
+    /// on their way into the closure, and `Val` carries no spans, so even
+    /// user code passed through a macro comes back position-less.
     fn expand_macro_call(
         &mut self,
         vm: &mut Vm,
         m: &Macro,
         raw_args: &[Datum],
-    ) -> Result<Datum, String> {
+        call_span: Option<Span>,
+    ) -> Result<Datum, LispErr> {
         let arg_vals: Vec<Val> = raw_args.iter().map(parse::datum_to_val).collect();
         let args_to_pass = if m.variadic {
             vec![Val::list_from(&arg_vals)]
         } else {
             arg_vals
         };
-        let result = vm.call_value(&m.closure, args_to_pass)?;
-        val_to_datum(&result)
+        let result = vm
+            .call_value(&m.closure, args_to_pass)
+            .map_err(|e| e.with_span(call_span))?;
+        val_to_datum(&result, call_span)
     }
 
     /// If `d` is `(defmacro name params body)`, register the macro and
     /// return `Ok(true)`. Otherwise return `Ok(false)` and leave `d` for
     /// the caller to handle.
-    pub fn try_register_defmacro(&mut self, vm: &mut Vm, d: &Datum) -> Result<bool, String> {
-        let items = match d {
-            Datum::List(items) => items,
-            _ => return Ok(false),
+    pub fn try_register_defmacro(&mut self, vm: &mut Vm, d: &Datum) -> Result<bool, LispErr> {
+        let items = match d.as_list() {
+            Some(items) => items,
+            None => return Ok(false),
         };
-        match items.first() {
-            Some(Datum::Sym(s)) if &**s == "defmacro" => {}
+        match items.first().and_then(Datum::as_sym) {
+            Some(s) if &**s == "defmacro" => {}
             _ => return Ok(false),
         }
         if items.len() != 4 {
-            return Err("defmacro: expected (defmacro name params body)".into());
+            return Err(LispErr::maybe_at(
+                "defmacro: expected (defmacro name params body)",
+                d.span,
+            ));
         }
-        let name: Sym = match &items[1] {
-            Datum::Sym(s) => s.clone(),
-            _ => return Err("defmacro: name must be a symbol".into()),
+        let name: Sym = match items[1].as_sym() {
+            Some(s) => s.clone(),
+            None => {
+                return Err(LispErr::maybe_at(
+                    "defmacro: name must be a symbol",
+                    items[1].span,
+                ));
+            }
         };
-        let (params, variadic): (Vec<Sym>, bool) = match &items[2] {
-            Datum::Sym(s) => (vec![s.clone()], true),
-            Datum::List(ps) => {
-                let names: Result<Vec<Sym>, String> = ps
+        let (params, variadic): (Vec<Sym>, bool) = match &items[2].kind {
+            DatumKind::Sym(s) => (vec![s.clone()], true),
+            DatumKind::List(ps) => {
+                let names: Result<Vec<Sym>, LispErr> = ps
                     .iter()
-                    .map(|p| match p {
-                        Datum::Sym(s) => Ok(s.clone()),
-                        _ => Err("defmacro: param must be a symbol".into()),
+                    .map(|p| {
+                        p.as_sym().cloned().ok_or_else(|| {
+                            LispErr::maybe_at("defmacro: param must be a symbol", p.span)
+                        })
                     })
                     .collect();
                 (names?, false)
             }
-            _ => return Err("defmacro: params must be a symbol or a list".into()),
+            _ => {
+                return Err(LispErr::maybe_at(
+                    "defmacro: params must be a symbol or a list",
+                    items[2].span,
+                ));
+            }
         };
         // Expand macros inside the body so macros can use other macros.
         let body_datum = self.expand_all(vm, items[3].clone())?;
@@ -352,7 +387,7 @@ impl MacroVm {
     ///
     /// Atomic semantics: if any form fails, the macro table is restored
     /// in addition to whatever `lisp::Vm::eval_str` restores on its end.
-    pub fn eval_str(&mut self, src: &str) -> Result<Val, String> {
+    pub fn eval_str(&mut self, src: &str) -> Result<Val, LispErr> {
         let saved = self.expander.snapshot();
         let result = self.eval_str_inner(src);
         if result.is_err() {
@@ -361,7 +396,7 @@ impl MacroVm {
         result
     }
 
-    fn eval_str_inner(&mut self, src: &str) -> Result<Val, String> {
+    fn eval_str_inner(&mut self, src: &str) -> Result<Val, LispErr> {
         let forms = parse::read_many(src)?;
 
         // Split out defmacro forms (register them) and collect the rest.
@@ -448,34 +483,44 @@ pub const STDLIB: &str = r#"
 
 /// Install [`STDLIB`] macros into `vm`'s expander. Mirrors the
 /// `spells::install` / `world::world_prim::install` pattern.
-pub fn install_stdlib(vm: &mut MacroVm) -> Result<(), String> {
+pub fn install_stdlib(vm: &mut MacroVm) -> Result<(), LispErr> {
     vm.eval_str(STDLIB).map(|_| ())
 }
 
-fn val_to_datum(v: &Val) -> Result<Datum, String> {
+/// Macro output (a `Val`) back into a datum the compiler can see, with
+/// `span` stamped on every node — see [`Expander::expand_macro_call`].
+fn val_to_datum(v: &Val, span: Option<Span>) -> Result<Datum, LispErr> {
     match v {
-        Val::Num(n) => Ok(Datum::Num(*n)),
-        Val::Ratio(n, d) => Ok(Datum::Ratio(*n, *d)),
-        Val::Bool(b) => Ok(Datum::Bool(*b)),
-        Val::Sym(s) => Ok(Datum::Sym(s.clone())),
-        Val::Str(s) => Ok(Datum::Str(s.clone())),
-        Val::Nil => Ok(Datum::List(vec![])),
+        Val::Num(n) => Ok(Datum::num(*n, span)),
+        Val::Ratio(n, d) => Ok(Datum::new(DatumKind::Ratio(*n, *d), span)),
+        Val::Bool(b) => Ok(Datum::bool(*b, span)),
+        Val::Sym(s) => Ok(Datum::sym(s.clone(), span)),
+        Val::Str(s) => Ok(Datum::str(s.clone(), span)),
+        Val::Nil => Ok(Datum::list(vec![], span)),
         Val::Cons(_, _) => {
             let mut items = Vec::new();
             let mut cur = v;
             loop {
                 match cur {
                     Val::Cons(h, t) => {
-                        items.push(val_to_datum(h)?);
+                        items.push(val_to_datum(h, span)?);
                         cur = t;
                     }
                     Val::Nil => break,
-                    other => return Err(format!("non-proper list in macro expansion: {other}")),
+                    other => {
+                        return Err(LispErr::maybe_at(
+                            format!("non-proper list in macro expansion: {other}"),
+                            span,
+                        ));
+                    }
                 }
             }
-            Ok(Datum::List(items))
+            Ok(Datum::list(items, span))
         }
-        other => Err(format!("can't convert {other} back to a datum")),
+        other => Err(LispErr::maybe_at(
+            format!("can't convert {other} back to a datum"),
+            span,
+        )),
     }
 }
 

@@ -317,7 +317,7 @@ fn express_numeric_overflow_errors_instead_of_panicking() {
                                                (cons 9223372036854775807 #t)))))",
         )
         .expect_err("summing two i64::MAX alleles should error");
-    assert!(err.contains("overflow"), "unexpected message: {err}");
+    assert!(err.msg.contains("overflow"), "unexpected message: {err}");
 }
 
 #[test]

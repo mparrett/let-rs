@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use crate::env::Env;
+use crate::error::{LispErr, Span};
 use crate::expr::Expr;
 use crate::k::K;
 use crate::val::Val;
@@ -20,14 +21,14 @@ pub enum Step {
     Done(Val),
 }
 
-pub fn step(s: State) -> Result<Step, String> {
+pub fn step(s: State) -> Result<Step, LispErr> {
     match s.mode {
         Mode::Eval(c, env) => eval_expr(c, env, s.k),
         Mode::Apply(v) => apply_k(v, s.k),
     }
 }
 
-fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
+fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, LispErr> {
     match &*c {
         Expr::Num(n) => Ok(Step::Continue(State {
             mode: Mode::Apply(Val::Num(*n)),
@@ -41,10 +42,10 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
             mode: Mode::Apply((**v).clone()),
             k,
         })),
-        Expr::Var(name) => {
+        Expr::Var(name, span) => {
             let v = env
                 .lookup(name)
-                .ok_or_else(|| format!("unbound variable: {name}"))?;
+                .ok_or_else(|| LispErr::maybe_at(format!("unbound variable: {name}"), *span))?;
             Ok(Step::Continue(State {
                 mode: Mode::Apply(v),
                 k,
@@ -73,9 +74,9 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
                 k: new_k,
             }))
         }
-        Expr::App(exprs) => {
+        Expr::App(exprs, span) => {
             if exprs.is_empty() {
-                return Err("empty application".into());
+                return Err(LispErr::maybe_at("empty application", *span));
             }
             // Share the subexpression slice with the K rather than
             // copying it out; only `evaled` needs to be owned.
@@ -85,6 +86,7 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
                 evaled: Vec::with_capacity(args.len()),
                 args,
                 env: env.clone(),
+                span: *span,
                 k,
             });
             Ok(Step::Continue(State {
@@ -142,7 +144,7 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, String> {
     }
 }
 
-fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
+fn apply_k(v: Val, k: Rc<K>) -> Result<Step, LispErr> {
     // Take the continuation by value. This engine has no first-class
     // continuations — each `K` is owned by exactly one `State` or one
     // child `K`, and the frame we're consuming here is at the end of
@@ -166,19 +168,21 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
             mut evaled,
             args,
             env,
+            span,
             k: outer,
         } => {
             evaled.push(v);
             // `evaled` is filled left to right, so its length is the
             // index of the next subexpression to evaluate.
             if evaled.len() == args.len() {
-                apply(evaled, outer)
+                apply(evaled, span, outer)
             } else {
                 let next = Rc::clone(&args[evaled.len()]);
                 let new_k = Rc::new(K::App {
                     evaled,
                     args,
                     env: env.clone(),
+                    span,
                     k: outer,
                 });
                 Ok(Step::Continue(State {
@@ -254,7 +258,15 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, String> {
     }
 }
 
-fn apply(mut evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
+/// Apply the callee in `evaled[0]` to the rest. `span` is the call site,
+/// used for every error raised here: an arity mismatch, a non-callable
+/// head, and — the important one — whatever the prim itself returns.
+/// Prims keep the `Result<Val, String>` signature that host crates
+/// implement against (`PrimFn`), so they have no way to report a
+/// position; the position that helps is the call site anyway, and only
+/// the machine knows it. `with_span` rather than `at`, so if a prim ever
+/// does grow a way to report its own span, the inner one wins.
+fn apply(mut evaled: Vec<Val>, span: Option<Span>, k: Rc<K>) -> Result<Step, LispErr> {
     // Shift the callee off the front and reuse the same allocation for
     // the argument vector, rather than draining into a second one.
     assert!(!evaled.is_empty(), "apply with no fn");
@@ -267,10 +279,13 @@ fn apply(mut evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
     match &f {
         Val::Clo { params, body, env } => {
             if params.len() != args.len() {
-                return Err(format!(
-                    "arity: closure expected {}, got {}",
-                    params.len(),
-                    args.len()
+                return Err(LispErr::maybe_at(
+                    format!(
+                        "arity: closure expected {}, got {}",
+                        params.len(),
+                        args.len()
+                    ),
+                    span,
                 ));
             }
             let env = env.extend_many(params.iter().cloned().zip(args));
@@ -287,23 +302,22 @@ fn apply(mut evaled: Vec<Val>, k: Rc<K>) -> Result<Step, String> {
             f: prim,
         } => {
             if !arity.accepts(args.len()) {
-                return Err(format!(
-                    "{name}: arity {}, got {}",
-                    arity.describe(),
-                    args.len()
+                return Err(LispErr::maybe_at(
+                    format!("{name}: arity {}, got {}", arity.describe(), args.len()),
+                    span,
                 ));
             }
-            let v = prim(&args)?;
+            let v = prim(&args).map_err(|m| LispErr::new(m).with_span(span))?;
             Ok(Step::Continue(State {
                 mode: Mode::Apply(v),
                 k,
             }))
         }
-        other => Err(format!("not callable: {other}")),
+        other => Err(LispErr::maybe_at(format!("not callable: {other}"), span)),
     }
 }
 
-pub fn run(expr: Expr, env: Env) -> Result<Val, String> {
+pub fn run(expr: Expr, env: Env) -> Result<Val, LispErr> {
     run_bounded(expr, env, u64::MAX)
 }
 
@@ -311,7 +325,7 @@ pub fn run(expr: Expr, env: Env) -> Result<Val, String> {
 /// effectively unbounded. The budget guards against nonterminating
 /// expressions in hosted environments (REPL, WASM bridge) where the
 /// caller can't otherwise interrupt evaluation.
-pub fn run_bounded(expr: Expr, env: Env, budget: u64) -> Result<Val, String> {
+pub fn run_bounded(expr: Expr, env: Env, budget: u64) -> Result<Val, LispErr> {
     let mut s = State {
         mode: Mode::Eval(Rc::new(expr), env),
         k: Rc::new(K::Halt),
@@ -319,7 +333,7 @@ pub fn run_bounded(expr: Expr, env: Env, budget: u64) -> Result<Val, String> {
     let mut steps_left = budget;
     loop {
         if steps_left == 0 {
-            return Err("execution exceeded step budget".into());
+            return Err(LispErr::new("execution exceeded step budget"));
         }
         steps_left -= 1;
         match step(s)? {

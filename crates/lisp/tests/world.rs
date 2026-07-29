@@ -50,7 +50,7 @@ fn world_set_tile_rejects_out_of_range_coord() {
     let mut vm = vm_with_world(7, 5);
     let r = vm.eval_str("(world-set-tile! 5000000000 0 'fire)");
     assert!(
-        matches!(&r, Err(e) if e.contains("u32 range")),
+        matches!(&r, Err(e) if e.msg.contains("u32 range")),
         "expected u32-range error, got {r:?}"
     );
 }

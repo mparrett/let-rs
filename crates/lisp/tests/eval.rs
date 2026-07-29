@@ -1,4 +1,4 @@
-use lisp::{Val, Vm};
+use lisp::{LispErr, Span, Val, Vm};
 
 fn eval(src: &str) -> String {
     let mut vm = Vm::new();
@@ -77,7 +77,7 @@ fn rational_overflow_errors_cleanly() {
     let mut vm = Vm::new();
     let r = vm.eval_str("(* 9223372036854775807 9223372036854775807 9223372036854775807)");
     assert!(
-        matches!(&r, Err(e) if e.contains("numeric overflow")),
+        matches!(&r, Err(e) if e.msg.contains("numeric overflow")),
         "expected overflow error, got {r:?}"
     );
 }
@@ -328,7 +328,7 @@ fn step_budget_catches_nonterminating_eval() {
     vm.set_step_budget(10_000);
     let r = vm.eval_str("(letrec ((f (lambda () (f)))) (f))");
     assert!(
-        matches!(&r, Err(e) if e.contains("step budget")),
+        matches!(&r, Err(e) if e.msg.contains("step budget")),
         "expected step-budget error, got {r:?}"
     );
 }
@@ -570,7 +570,7 @@ fn define_over_prim_then_call_errors() {
     vm.eval_str("(define + 5)").unwrap();
     let r = vm.eval_str("(+ 1 2)");
     assert!(
-        r.as_ref().is_err_and(|e| e.starts_with("not callable")),
+        r.as_ref().is_err_and(|e| e.msg.starts_with("not callable")),
         "expected 'not callable' error, got {r:?}",
     );
 }
@@ -799,7 +799,7 @@ fn set_bang_unbound_errors() {
     let mut vm = Vm::new();
     let r = vm.eval_str("(set! nope 5)");
     assert!(
-        matches!(&r, Err(e) if e.contains("unbound") && e.contains("nope")),
+        matches!(&r, Err(e) if e.msg.contains("unbound") && e.msg.contains("nope")),
         "expected unbound error, got {r:?}"
     );
 }
@@ -937,11 +937,36 @@ fn deeply_nested_input_errors_instead_of_overflowing() {
     let mut vm = Vm::new();
     let r = vm.eval_str(&src);
     assert!(
-        matches!(&r, Err(e) if e.contains("nesting too deep")),
+        matches!(&r, Err(e) if e.msg.contains("nesting too deep")),
         "expected nesting error, got {r:?}"
     );
     // A modestly nested (legal) form still evaluates.
     assert_eq!(eval("(car (cdr (cons 1 (cons 2 '()))))"), "2");
+
+    // Reader prefixes nest as freely as parens, and used to recurse the
+    // same way. `'`×N is the shape that has no closing token to count.
+    let r = vm.eval_str(&"'".repeat(100_000));
+    assert!(
+        matches!(&r, Err(e) if e.msg.contains("nesting too deep")),
+        "expected nesting error, got {r:?}"
+    );
+
+    // Reading is a heap bound now, not a stack one (ADR-039). Before
+    // `read_datum` became iterative, 1024 levels of *spanned* datums no
+    // longer fit in the 2 MiB a Rust test thread gets, and this test
+    // aborted the binary rather than failing.
+    //
+    // 500 rather than something near MAX_DEPTH on purpose: `compile` is
+    // still recursive, and on a 2 MiB stack it gives out somewhere
+    // between 500 and 750 levels — measured identical before and after
+    // this change, so it's a standing limit and not a regression. That
+    // means the reader's 1024 cap is *not* a bound the rest of the
+    // pipeline can honor; see the residual note in `core-followups.md`.
+    let deep = format!("{}1{}", "(list ".repeat(500), ")".repeat(500));
+    assert!(
+        vm.eval_str(&deep).is_ok(),
+        "500 levels should read, compile, and run"
+    );
 }
 
 #[test]
@@ -950,7 +975,7 @@ fn mod_min_by_neg_one_errors_instead_of_panicking() {
     let mut vm = Vm::new();
     let r = vm.eval_str("(mod -9223372036854775808 -1)");
     assert!(
-        matches!(&r, Err(e) if e.contains("overflow")),
+        matches!(&r, Err(e) if e.msg.contains("overflow")),
         "expected overflow error, got {r:?}"
     );
     // Ordinary modulo still works.
@@ -1044,48 +1069,158 @@ fn global_sees_set_bang_updates() {
     assert_eq!(format!("{}", vm.global("counter").unwrap()), "7");
 }
 
-// ── ADR-022 status pin ────────────────────────────────────────────
+// ── Source spans (ADR-039, implementing ADR-022) ──────────────────
+//
+// These replace `parse_errors_carry_no_source_position`, which pinned
+// ADR-022 as designed-and-never-implemented. It said to delete it when
+// Phase 1 landed and to update ADR-022's status banner plus
+// `core-followups.md`; all three happened together.
 
 #[test]
-fn parse_errors_carry_no_source_position() {
-    // ADR-022 (structured parse errors with source spans) was designed
-    // and never implemented. This pins that, so the *next* person to
-    // implement it gets a loud failure pointing at the docs that
-    // describe its status — rather than shipping spans and leaving
-    // `core-followups.md` to drift again in the other direction.
-    //
-    // Background: the followups doc recorded this ADR as "partially
-    // resolved — parse errors now carry source spans" for two months.
-    // No code had ever landed. Corrected 2026-07-29; this test is the
-    // part of that correction that can't rot.
-    //
-    // When Phase 1 lands: delete this test, and update both
-    // `core-followups.md` and ADR-022's status banner.
+fn unmatched_open_paren_reports_the_paren_that_never_closed() {
+    // ADR-022's own motivating example. The interesting part is *which*
+    // position: the end of input is where the reader noticed, but the
+    // opening paren on line 1 is the thing to go fix.
     let mut vm = Vm::new();
-
-    // ADR-022's own motivating example: a multi-line form with a
-    // missing close paren. The user gets no idea which paren or line.
     let err = vm
         .eval_str("(let ((a 1)\n      (b 2)\n  (+ a b))")
         .expect_err("unbalanced parens should fail");
-    assert_eq!(
-        err, "unclosed (",
-        "parse errors gained detail — if they now carry a line/column, \
-         ADR-022 Phase 1 has landed and its status docs need updating"
-    );
+    assert_eq!(err.msg, "unclosed (");
+    let span = err.span.expect("parse errors carry a span");
+    assert_eq!((span.line, span.col), (1, 1));
+    assert_eq!(err.to_string(), "1:1: unclosed (");
+}
 
-    // And the general property: no parse error mentions a position.
-    for src in [
-        "(define x\n  (+ 1\n",
-        "(+ 1 2))",
-        "\"unterminated",
-        "(+ 1 \"a\\q\")",
+#[test]
+fn reader_errors_carry_positions() {
+    let mut vm = Vm::new();
+    for (src, msg, line, col) in [
+        // Stray close paren: at the paren itself.
+        ("(+ 1 2))", "unexpected )", 1u32, 8u32),
+        // Unclosed string: at the opening quote, not end of input.
+        ("(+ 1\n   \"oops)", "unclosed string literal", 2, 4),
+        // Bad escape: at the backslash.
+        ("(+ 1 \"a\\q\")", "unknown string escape \\q", 1, 8),
+        // Nested unclosed parens report the *innermost* one — that's the
+        // form the reader was still filling when input ran out.
+        ("(define x\n  (+ 1\n", "unclosed (", 2, 3),
+        // Nothing open to blame: a dangling reader prefix points at the
+        // end of input, which is all that's known.
+        ("(+ 1 2)\n'", "unexpected eof", 2, 2),
     ] {
-        let e = vm.eval_str(src).expect_err("should fail");
-        assert!(
-            !e.contains("line") && !e.chars().any(|c| c.is_ascii_digit()),
-            "{src:?} produced {e:?}, which looks like it carries a \
-             source position — see ADR-022's status banner"
-        );
+        let err = vm.eval_str(src).expect_err("should fail");
+        assert_eq!(err.msg, msg, "for {src:?}");
+        let span = err.span.unwrap_or_else(|| panic!("no span for {src:?}"));
+        assert_eq!((span.line, span.col), (line, col), "for {src:?}");
     }
+}
+
+#[test]
+fn compile_errors_report_the_innermost_form() {
+    // The whole point of `LispErr::with_span` filling only empty spans:
+    // the bad `if` is on line 3, and the enclosing `define` and `lambda`
+    // must not overwrite that as the error propagates out to line 1.
+    let mut vm = Vm::new();
+    let err = vm
+        .eval_str("(define f\n  (lambda (x)\n    (if x 1)))")
+        .expect_err("two-armed if should fail");
+    assert_eq!(err.msg, "if: expected (if cond then else)");
+    let span = err.span.expect("compile errors carry a span");
+    assert_eq!((span.line, span.col), (3, 5));
+}
+
+#[test]
+fn unbound_variable_carries_its_own_position() {
+    // ADR-022 deferred runtime spans to Phase 2 and its planned test
+    // (`runtime_error_has_no_span_yet`) asserted this was *absent*.
+    // ADR-039 shipped the slice of Phase 2 that covers `Var` and `App`,
+    // because "unbound variable" with no position was the error that
+    // actually made a 40-line prelude hard to debug.
+    let mut vm = Vm::new();
+    let err = vm
+        .eval_str("(define n 1)\n(+ n\n   mama)")
+        .expect_err("unbound variable should fail");
+    assert_eq!(err.msg, "unbound variable: mama");
+    let span = err.span.expect("runtime var errors carry a span");
+    assert_eq!((span.line, span.col, span.len), (3, 4, 4));
+}
+
+#[test]
+fn call_site_errors_carry_the_call_position() {
+    let mut vm = Vm::new();
+
+    // Arity mismatch on a closure: reported at the call, not the lambda.
+    let err = vm
+        .eval_str("(define f (lambda (a b) a))\n(f 1)")
+        .expect_err("arity mismatch should fail");
+    assert_eq!(err.msg, "arity: closure expected 2, got 1");
+    assert_eq!(err.span.map(|s| (s.line, s.col)), Some((2, 1)));
+
+    // Non-callable head.
+    let err = vm
+        .eval_str("(define x 5)\n(x 1)")
+        .expect_err("5 isn't callable");
+    assert_eq!(err.msg, "not callable: 5");
+    assert_eq!(err.span.map(|s| (s.line, s.col)), Some((2, 1)));
+
+    // A prim's own complaint. Prims return bare strings and have no
+    // source of their own; `apply` attaches the call site, which is the
+    // position that helps anyway.
+    let err = vm
+        .eval_str("(car\n  '())")
+        .expect_err("car of nil should fail");
+    assert_eq!(err.span.map(|s| (s.line, s.col)), Some((1, 1)));
+}
+
+#[test]
+fn host_built_forms_report_without_a_position() {
+    // `None` is a real answer, not a gap: pointing at a caller's line for
+    // a form the caller never wrote would be worse than saying nothing.
+    let mut vm = Vm::new();
+    let f = vm.eval_str("(lambda (a b) a)").unwrap();
+    let err = vm.call_value(&f, vec![Val::Num(1)]).expect_err("arity");
+    assert_eq!(err.span, None);
+    assert_eq!(err.to_string(), "arity: closure expected 2, got 1");
+}
+
+#[test]
+fn render_underlines_the_offending_source() {
+    let mut vm = Vm::new();
+    let src = "(define n 1)\n(+ n mama)";
+    let err = vm.eval_str(src).expect_err("unbound");
+    assert_eq!(
+        err.render(src),
+        "2:6: unbound variable: mama\n  |\n2 | (+ n mama)\n  |      ^^^^"
+    );
+}
+
+#[test]
+fn render_falls_back_when_there_is_nothing_to_point_at() {
+    // No span, or a span naming a line this source doesn't have: fall
+    // back to plain Display rather than panicking or drawing a caret
+    // under the wrong text.
+    let plain = LispErr::new("boom");
+    assert_eq!(plain.render("(+ 1 2)"), "boom");
+    let far = LispErr::at("boom", Span::new(99, 1, 1));
+    assert_eq!(far.render("(+ 1 2)"), "99:1: boom");
+}
+
+#[test]
+fn columns_count_characters_not_bytes() {
+    // The rune and trigram tapes this project reads are multi-byte, so a
+    // byte column would put the caret in the wrong place — and every
+    // host renders line:col directly.
+    let mut vm = Vm::new();
+    let src = "(list '☰ '☱ nope)";
+    let err = vm.eval_str(src).expect_err("unbound");
+    assert_eq!(err.msg, "unbound variable: nope");
+    // `nope` is the 13th character but the 19th byte.
+    assert_eq!(err.span.map(|s| s.col), Some(13));
+    let rendered = err.render(src);
+    let caret_line = rendered.lines().last().unwrap();
+    assert_eq!(
+        caret_line,
+        format!("  | {}^^^^", " ".repeat(12)),
+        "caret misaligned in:\n{rendered}"
+    );
 }
