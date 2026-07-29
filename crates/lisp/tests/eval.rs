@@ -1043,3 +1043,49 @@ fn global_sees_set_bang_updates() {
     vm.eval_str("(set! counter (- counter 3))").unwrap();
     assert_eq!(format!("{}", vm.global("counter").unwrap()), "7");
 }
+
+// ── ADR-022 status pin ────────────────────────────────────────────
+
+#[test]
+fn parse_errors_carry_no_source_position() {
+    // ADR-022 (structured parse errors with source spans) was designed
+    // and never implemented. This pins that, so the *next* person to
+    // implement it gets a loud failure pointing at the docs that
+    // describe its status — rather than shipping spans and leaving
+    // `core-followups.md` to drift again in the other direction.
+    //
+    // Background: the followups doc recorded this ADR as "partially
+    // resolved — parse errors now carry source spans" for two months.
+    // No code had ever landed. Corrected 2026-07-29; this test is the
+    // part of that correction that can't rot.
+    //
+    // When Phase 1 lands: delete this test, and update both
+    // `core-followups.md` and ADR-022's status banner.
+    let mut vm = Vm::new();
+
+    // ADR-022's own motivating example: a multi-line form with a
+    // missing close paren. The user gets no idea which paren or line.
+    let err = vm
+        .eval_str("(let ((a 1)\n      (b 2)\n  (+ a b))")
+        .expect_err("unbalanced parens should fail");
+    assert_eq!(
+        err, "unclosed (",
+        "parse errors gained detail — if they now carry a line/column, \
+         ADR-022 Phase 1 has landed and its status docs need updating"
+    );
+
+    // And the general property: no parse error mentions a position.
+    for src in [
+        "(define x\n  (+ 1\n",
+        "(+ 1 2))",
+        "\"unterminated",
+        "(+ 1 \"a\\q\")",
+    ] {
+        let e = vm.eval_str(src).expect_err("should fail");
+        assert!(
+            !e.contains("line") && !e.chars().any(|c| c.is_ascii_digit()),
+            "{src:?} produced {e:?}, which looks like it carries a \
+             source position — see ADR-022's status banner"
+        );
+    }
+}

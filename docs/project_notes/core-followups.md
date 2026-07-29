@@ -472,9 +472,32 @@ gene work. Listed for context so we don't duplicate them:
 - **Structured errors.** `eval_str` returns `Result<Val,
   String>`. The web REPL and gene/spell labs surface those
   strings raw. For a real REPL, line/column info would be nice.
-  **Partially resolved 2026-05-31 (ADR-022)** — parse errors now
-  carry source spans; runtime errors still come back as plain
-  strings. Runtime structured errors remain open.
+  **Fully open. ADR-022 was designed and never implemented** —
+  corrected 2026-07-29 (audit finding A5); see the status banner
+  on that ADR.
+
+  This entry previously read *"Partially resolved 2026-05-31
+  (ADR-022) — parse errors now carry source spans."* No part of
+  that was true. There is no `error.rs`, no `LispErr`, and no
+  `Span` anywhere in the workspace; every error is still a bare
+  `String`. ADR-022's own motivating example — a multi-line form
+  with a missing close paren — reports exactly `unclosed (`, with
+  no line, column, or context. `parse.rs` has emitted that string
+  since the initial commit, so the ADR changed nothing at all, not
+  even the message text.
+
+  Worth recording how the claim arose, because it is the same
+  failure mode the ADR-033 amendment describes. `1059b68` committed
+  the ADR with the message *"Draft only — no code touched"* and
+  touched one file, `decisions.md`. The false entry was then
+  introduced by `58d09ab`, **"docs: refresh stale references"** — a
+  doc-accuracy pass that invented the staleness it was meant to
+  remove. Nothing regressed; a design was silently promoted to a
+  resolution.
+
+  Either implement ADR-022 Phase 1 or leave this open, but do not
+  re-mark it resolved without a test that asserts a span appears in
+  a message.
 - **The play loop.** Listed in the docs/let-rs.html "what comes
   after" — turn-based render/input/spell/world tick. The engine
   is ready; this is host-side work.

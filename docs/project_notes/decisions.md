@@ -1666,6 +1666,23 @@ else is the test body.
 
 ## ADR-022: Structured parse errors with source spans (2026-05-31)
 
+> **Status: DESIGNED, NEVER IMPLEMENTED.** No code has ever landed for
+> this ADR. There is no `error.rs`, no `LispErr`, and no `Span` in the
+> workspace; `eval_str` still returns `Result<Val, String>` and a
+> multi-line form with a missing close paren — the motivating example
+> in the Context section below — reports exactly `unclosed (`. That
+> string has been in `parse.rs` since the initial commit, so nothing
+> here changed even the message text.
+>
+> The commit that added this ADR (`1059b68`) says so in its own
+> message: *"Draft only — no code touched."* It was
+> `docs/project_notes/core-followups.md` that later recorded it as
+> "partially resolved," in `58d09ab` — a commit titled *"docs: refresh
+> stale references."* Corrected 2026-07-29 (audit finding A5).
+>
+> Everything below is the design as written and still stands as a
+> design. Read it as a proposal, not a record.
+
 **Context**: Every error in `lisp` is a flat `Result<_, String>`.
 Tokenizer, reader, compiler, macro-expander, CEK step, and built-in
 prims all return bare strings. The web REPL surfaces those strings
