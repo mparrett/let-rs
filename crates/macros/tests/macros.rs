@@ -394,7 +394,7 @@ fn self_referential_macro_errors_instead_of_overflowing() {
     vm.eval_str("(defmacro foo (x) `(foo ,x))").unwrap();
     let r = vm.eval_str("(foo 1)");
     assert!(
-        matches!(&r, Err(e) if e.contains("expansion too deep")),
+        matches!(&r, Err(e) if e.msg.contains("expansion too deep")),
         "expected expansion-depth error, got {r:?}"
     );
     // A well-behaved macro alongside it still expands normally.
@@ -413,7 +413,10 @@ fn macro_returning_nil_errors_with_a_pointer_to_the_workaround() {
     let err = vm
         .eval_str("(defmacro nada () '()) (nada)")
         .expect_err("a macro expanding to () should error");
-    assert!(err.contains("'()"), "message should name the fix: {err}");
+    assert!(
+        err.msg.contains("'()"),
+        "message should name the fix: {err}"
+    );
 }
 
 #[test]

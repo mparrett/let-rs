@@ -32,7 +32,10 @@ fn main() {
         }
         match vm.eval_str(line) {
             Ok(v) => println!("{v}"),
-            Err(e) => println!("error: {e}"),
+            // The user typed this line, so a caret under the offending
+            // token is meaningful here (ADR-039). `render` falls back to
+            // the plain message when the error has no span.
+            Err(e) => println!("error: {}", e.render(line)),
         }
     }
 }

@@ -32,8 +32,19 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
 use curves::Turtle;
+use lisp::LispErr;
 use macros::MacroVm;
 use world::World;
+
+/// Error from source *this bridge* assembled — a cast pipeline, a
+/// `genes::seeded` wrapper, the curve `begin` form. Drops the span
+/// deliberately: it names a line and column in generated text the user
+/// never saw, so reporting it would be worse than reporting nothing.
+/// User-authored source goes through `LispErr::render` instead; see
+/// `eval` below.
+fn generated_err(e: LispErr) -> JsValue {
+    JsValue::from_str(&e.msg)
+}
 
 #[wasm_bindgen(js_name = "Vm")]
 pub struct WasmVm {
@@ -94,7 +105,10 @@ impl WasmVm {
         self.inner
             .eval_str(src)
             .map(|v| format!("{v}"))
-            .map_err(|e| JsValue::from_str(&e))
+            // The REPL is the one surface where the user wrote the text
+            // we evaluated, so it's the one place a rendered span with a
+            // caret under the offending token is meaningful (ADR-039).
+            .map_err(|e| JsValue::from_str(&e.render(src)))
     }
 
     /// Translate a rune tape and cast at `(x, y)`. Routes through
@@ -116,9 +130,7 @@ impl WasmVm {
                  (assoc-set 'ty {y} \
                    (thread (start) {list_expr}))))"
         );
-        self.inner
-            .eval_str(&src)
-            .map_err(|e| JsValue::from_str(&e))?;
+        self.inner.eval_str(&src).map_err(generated_err)?;
         // safety: see ADR-005 — no callback primitives, so a JS handler cannot
         // re-enter Vm during this borrow.
         let log = &self.world.borrow().log;
@@ -133,7 +145,7 @@ impl WasmVm {
         self.inner
             .eval_str("(tick!)")
             .map(|v| format!("{v}"))
-            .map_err(|e| JsValue::from_str(&e))
+            .map_err(generated_err)
     }
 
     /// Read a lisp-side integer global, or 0 if it's unbound or not a
@@ -198,10 +210,7 @@ impl WasmVm {
             .map_err(|e| JsValue::from_str(&format!("codon (parent B): {e}")))?;
         let body = format!("(express! (breed! seed (thread '() {la}) (thread '() {lb})))");
         let src = genes::seeded(seed, &body);
-        let phenotype = self
-            .inner
-            .eval_str(&src)
-            .map_err(|e| JsValue::from_str(&e))?;
+        let phenotype = self.inner.eval_str(&src).map_err(generated_err)?;
         Ok(genes::render_creature(&phenotype))
     }
 
@@ -217,10 +226,7 @@ impl WasmVm {
         // ADR-012.
         let body = format!("(express! (thread '() {list_expr}))");
         let src = genes::seeded(seed, &body);
-        let phenotype = self
-            .inner
-            .eval_str(&src)
-            .map_err(|e| JsValue::from_str(&e))?;
+        let phenotype = self.inner.eval_str(&src).map_err(generated_err)?;
         Ok(genes::render_creature(&phenotype))
     }
 
@@ -258,6 +264,6 @@ impl WasmVm {
         self.inner
             .eval_str(&src)
             .map(|v| format!("{v}"))
-            .map_err(|e| JsValue::from_str(&e))
+            .map_err(generated_err)
     }
 }

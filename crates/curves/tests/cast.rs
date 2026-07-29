@@ -90,7 +90,7 @@ fn truly_unknown_symbol_still_errors() {
     let (mut vm, _t) = fresh_vm();
     let r = vm.eval_str("(draw! '(F foo F))");
     assert!(
-        matches!(&r, Err(e) if e.contains("unknown stroke")),
+        matches!(&r, Err(e) if e.msg.contains("unknown stroke")),
         "got {r:?}"
     );
 }
@@ -101,7 +101,7 @@ fn unmatched_pop_errors() {
     let list = tape_to_sexpr("F]").unwrap();
     let r = vm.eval_str(&format!("(draw! {list})"));
     assert!(
-        matches!(&r, Err(e) if e.contains("pop on empty")),
+        matches!(&r, Err(e) if e.msg.contains("pop on empty")),
         "got {r:?}"
     );
 }
@@ -209,5 +209,5 @@ fn render_prim_surfaces_the_cap_as_an_eval_error() {
     let mut vm = Vm::new();
     install(&mut vm, turtle);
     let err = vm.eval_str("(render!)").expect_err("render! should error");
-    assert!(err.contains("exceeds"), "unexpected message: {err}");
+    assert!(err.msg.contains("exceeds"), "unexpected message: {err}");
 }

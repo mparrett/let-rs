@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use crate::env::Env;
+use crate::error::Span;
 use crate::expr::{Expr, Sym};
 use crate::store::Addr;
 use crate::val::Val;
@@ -22,10 +23,17 @@ pub enum K {
     /// Pre-ADR-035 this was `evaled` plus a `remaining: Vec<Rc<Expr>>`,
     /// both cloned on every argument — O(n²) `Val` clones and 2n vector
     /// allocations per application.
+    ///
+    /// `span` is the call site's position, carried from the `Expr::App`.
+    /// It's what `apply` attaches to arity mismatches and to prim errors,
+    /// which have no source position of their own (ADR-039). It also
+    /// makes the continuation chain a backtrace: walking `k` from a
+    /// paused or failed state yields the enclosing call sites in order.
     App {
         evaled: Vec<Val>,
         args: Rc<[Rc<Expr>]>,
         env: Env,
+        span: Option<Span>,
         k: Rc<K>,
     },
 
