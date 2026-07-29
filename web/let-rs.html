@@ -2058,6 +2058,232 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       </div>
     </section>
 
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">XII</span>
+        <span class="mark">⏸</span>
+      </div>
+      <div class="body">
+        <h2>Two claims, unspent
+          <span class="tag">— an error that wouldn't say where, and a machine that could always stop</span>
+        </h2>
+        <p>
+          Both of these had been sitting in the coda below. One of them
+          — structured errors — has been the first item on that list
+          since the day it was written, and for two months the project
+          notes said it was half-finished, which it wasn't; not one line
+          of it existed. The other was never on the list at all, because
+          ADR-001 had already claimed it. The very first design document
+          describes the machine as <em>trivially pausable, serializable,
+          time-travel debuggable</em>. That sentence had been true and
+          unexercised for eleven acts.
+        </p>
+
+        <p>
+          Acts X and XI were about a record that had drifted from the
+          code. This is the opposite failure and a cheaper one: a record
+          that was accurate about capabilities nobody had spent. The
+          engine really could stop between any two transitions. Nothing
+          had ever asked it to.
+        </p>
+
+        <h3 class="subact">An error that wouldn't say where</h3>
+        <p>
+          Every error in the workspace was a <code>String</code>. A
+          missing paren in a forty-line prelude reported exactly
+          <code>unclosed (</code>. An unbound variable reported exactly
+          <code>unbound variable: foo</code>. Both messages are true,
+          and neither tells you where to look — which is the difference
+          between a language you can demo and one you can debug in.
+        </p>
+
+        <p>
+          The mechanical part is a struct with a message and an optional
+          span. The part that decides whether the whole thing works is
+          one method: attach a position <em>only if there isn't one
+          already</em>. With that, the compiler needs exactly one place
+          that annotates anything —
+          <code>compile_inner(d).map_err(|e| e.with_span(d.span))</code>
+          — and every helper below it inherits positions for free. Without
+          it, an error raised inside a nested <code>if</code> gets
+          re-stamped by the enclosing <code>lambda</code>, then by the
+          enclosing <code>define</code>, and arrives reported at line 1.
+          The obvious spelling of that line is assignment, and assignment
+          is how you build a compiler that thinks every mistake happened
+          at the top of the file.
+        </p>
+
+        <p>
+          The second decision was admitting that <em>no position</em> is
+          a real answer rather than a gap to be filled. Macro expansions
+          and forms a host assembled in Rust have no source text. They
+          report without a position, and the WASM bridge does the same
+          thing deliberately: <code>eval</code> renders a caret into
+          source the user typed, while every <code>cast</code> strips the
+          span, because it would name a line and column in a string the
+          bridge generated and the user never saw. Pointing confidently
+          at the wrong place is worse than declining to point.
+        </p>
+
+        <p>
+          ADR-022 had scoped runtime positions out — a Phase 2, deferred,
+          on the grounds that spans on all nine expression variants was a
+          bigger change than parse errors were worth waiting behind. That
+          reasoning holds, and the conclusion still came out wrong,
+          because <code>unbound variable</code> is the error that actually
+          makes a prelude hard to debug. Only two variants can fail at
+          run time: a variable reference, and a call. Give those two a
+          span and you have covered unbound names, arity mismatches,
+          non-callable heads, and every complaint any primitive will ever
+          make — because a primitive has no source of its own, and the
+          call site is the position that helps anyway. Two variants, not
+          nine. The deferred phase was mostly the part nobody needed.
+        </p>
+
+        <h3 class="subact">A machine that could always stop</h3>
+        <p>
+          The pausable machine required no new mechanism whatsoever. A
+          CEK machine's entire state is one value; that is what the
+          architecture <em>is</em>. What existed was a loop that owned
+          that value and refused to give it back: run to a result, or
+          exhaust the step budget and return an error, discarding the
+          work.
+        </p>
+
+        <p>
+          That shape forced bad behavior on the one host that couldn't
+          tolerate it. The browser evaluates on the main thread, so the
+          budget from Act X was the only defense against a loop that
+          never ends — and using it meant freezing the tab for however
+          long ten million transitions take, then reporting a failure,
+          with no progress shown and no way to stop. The budget was
+          quietly doing two unrelated jobs: deciding how long the host
+          should be blocked, and deciding what counts as runaway code.
+        </p>
+
+        <p>
+          Separating them is the whole design. A slice is
+          <em>cooperative</em> — how much work the host will do before it
+          wants control back. The budget stays a safety net against code
+          that doesn't terminate. Running out of a slice is not an error;
+          it hands the machine back and lets the caller decide. Fifty
+          thousand steps per animation frame, and the REPL keeps
+          painting, counts steps as it goes, and cancels when asked. The
+          old entry point survives as five lines that turn a pause back
+          into the error it used to be, so nothing that existed had to
+          change.
+        </p>
+
+        <p>
+          What the two acts buy together is more than either alone. The
+          continuation chain was always a call stack; the spans are what
+          make it a <em>readable</em> one. So the REPL gained
+          <code>:step</code> for the cost of a print statement — step
+          count, continuation depth, the expression in flight with a
+          caret under it in your own source, and the enclosing call
+          sites. Tail calls not growing the stack has been a test since
+          Act II, asserted by the absence of a crash. It is now something
+          you can sit and watch not happen.
+        </p>
+
+        <h3 class="subact">The feature that would have cost 3×</h3>
+        <p>
+          One thing did not get built, and the reason is the most useful
+          paragraph here.
+        </p>
+
+        <p>
+          If an error carries a position, the obvious next want is a
+          backtrace — walk the continuation chain at the moment of
+          failure and list the calls. The chain is right there. It takes
+          about fifteen lines. It cannot be done. <code>step</code>
+          consumes its state by value, so building a trace at failure
+          time means holding a copy of the continuation across every
+          transition, which makes every frame <em>shared</em> — and
+          Act XI's fix depends on every frame being uniquely owned. The
+          reference count would come back as two, the unwrap would fall
+          through to the cloning path, and n-argument application would
+          quietly return to costing O(n²). Nothing would break. Nothing
+          would fail a test. The engine would just be three times slower
+          for a debugging convenience.
+        </p>
+
+        <p>
+          The backtrace exists, off a <em>paused</em> machine, where
+          nothing is in flight and reading the chain is free. Which is
+          the same information at a different moment, and the moment is
+          the entire cost difference.
+        </p>
+
+        <h3 class="subact">And one cap measured against nothing</h3>
+        <p>
+          Adding a span to every datum made the reader's stack frame
+          about half again as large. Somewhere in the reader is a
+          constant capping nesting depth at 1024, with a comment
+          explaining that it sits far below the overflow point and well
+          above any realistic source. The first half of that was a
+          measurement of a stack frame nobody had written down, taken
+          once, implicitly. Sixteen bytes per datum later it was false,
+          and a legal thousand-deep form no longer fit the two megabytes
+          a Rust test thread gets.
+        </p>
+
+        <p>
+          The test caught it — by aborting the process rather than
+          failing, which is what a stack overflow does. And the honest
+          fix was not to lower the cap, because that would have restored
+          the coupling that caused the problem: one number serving as
+          both <em>how much nesting we accept</em> and <em>how much stack
+          we have</em>. The reader now uses an explicit stack, for lists
+          and for the quote prefixes that nest just as freely, so the
+          constant bounds a heap vector and means only what it says.
+          <code>Val</code>'s destructor and the list printer had both
+          already been rewritten this way, for this reason. It's the
+          third time.
+        </p>
+
+        <p>
+          Measuring that turned up something worse, which is recorded and
+          not fixed: <code>compile</code> is still recursive, and it
+          gives out somewhere between 500 and 750 levels. So the reader
+          accepts 1024 levels of nesting and then the compiler overflows
+          on what the reader just handed it. That is not a regression —
+          it measures identically before this work — and it predates
+          spans by a year of commits. The cap was calibrated against the
+          reader's frame alone, and no test had ever run the compiler at
+          depth. A limit that only one of three stages honors is not a
+          limit; it's a number that happened to be true where someone
+          looked.
+        </p>
+
+        <p class="lift">
+          Two acts ago the lesson was that careful prose starts to feel
+          like proof. This time the prose paid off, once, in the one
+          place it was written as a warning rather than a description:
+          ADR-035 says <em>don't change this back, it reintroduces an
+          O(n²) clone</em>, and that sentence is the only reason a
+          fifteen-line backtrace didn't silently undo an act's worth of
+          work. Everything else here was a note that described something
+          true. The one that changed an outcome described what would
+          happen if you touched it.
+        </p>
+
+        <p class="lift">
+          The deleted test deserves a line too. Act XI left behind
+          <code>parse_errors_carry_no_source_position</code>, written to
+          assert a limitation and to fail loudly the day someone fixed
+          it, with instructions in the comment for what to update when
+          that happened. It failed. The instructions were correct. Ten
+          tests replaced it. For a codebase whose recurring failure is
+          documentation that outlives its truth, a test that breaks when
+          the docs go stale is the only version of a note that can't rot
+          — and this is the first act where one of them got to do its
+          job.
+        </p>
+      </div>
+    </section>
+
     <div class="coda">
       <h3>What comes after</h3>
       <p>
@@ -2066,12 +2292,26 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         urgent than they looked on day one. The shortlist:
       </p>
       <ul>
-        <li><strong>Structured errors.</strong> Today
-          <code>eval_str</code> returns <code>Result&lt;Val, String&gt;</code>
-          and the web REPL surfaces those strings raw. Track
-          (line, column) in the tokenizer; propagate through compile +
-          eval. Visible win in the Spell Lab and Gene Lab when a user
-          mistypes.</li>
+        <li><strong>A depth cap the whole pipeline honors.</strong>
+          The reader accepts 1024 levels of nesting;
+          <code>compile</code> is still recursive and overflows between
+          500 and 750 (see Act XII). Either an iterative
+          <code>compile</code> — the reader, <code>Val</code>'s
+          destructor and the list printer have all gone that way
+          already — or a second, lower cap at compile time. Matters at
+          the untrusted boundary, which is the web REPL.</li>
+        <li><strong>Serializable state.</strong> The other half of
+          ADR-001's claim, and the half pausing didn't need. A state
+          can't be written out while <code>Val::Prim</code> holds an
+          <code>Rc&lt;dyn Fn&gt;</code>, so this wants a story for host
+          closures first. Adjacent to the persistent
+          <code>Store</code> below; both are what "time-travel
+          debuggable" would actually cost.</li>
+        <li><strong>Steps as a cost signal.</strong> The machine now
+          reports what a form cost to evaluate. Mana prices casts from
+          a hand-written table with no relationship to work done.
+          Metering it by transitions instead is a one-line change to
+          the gate and a different game — noted, not proposed.</li>
         <li><strong>A real spell library.</strong>
           <code>defspell</code> as a macro shipped with ADR-025
           (see Act VIII), but the host-side modelling is still
@@ -2143,7 +2383,13 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         the world time and state — <code>set!</code>, tile decay, a
         mana budget, aftershocks, and element alchemy — and ADR-031
         added strings as the ninth <code>Val</code>, all without
-        touching the five rules (see Act IX).
+        touching the five rules (see Act IX). Then, on 2026-07-29,
+        the two oldest unspent claims came due together (Act XII):
+        ADR-039 gave errors source spans and a caret, and ADR-040
+        handed the run loop to the caller — so evaluation can be
+        sliced, resumed, single-stepped and cancelled, the web REPL
+        no longer freezes the tab to protect it, and the REPL grew a
+        stepping debugger for the cost of a print statement.
         None of the remaining items are large; all of them are
         interesting; most of them are independent. The hard parts
         are done — the language is itself, three DSLs proved it,
