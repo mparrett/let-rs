@@ -26,6 +26,9 @@ Slices that have landed:
 - rune translation extracted to `crates/runes/` (zero-dep micro-crate)
 - WASM bridge (`crates/wasm/` + `web/`) — REPL + Spell Lab in the browser via
   `wasm-bindgen`, no COI / SAB required (see ADR-009)
+- structured errors with source spans (ADR-039) and a pausable machine
+  (ADR-040) — errors carry `line:col` and render a caret; evaluation can
+  be sliced, resumed, single-stepped, and cancelled
 - genes demo: codon-tape → diploid genome → phenotype creature card,
   parallel to spells but with genetics vocabulary (see ADR-011)
 - curves demo: stroke-tape → L-system rewrite → 8-direction turtle →
@@ -41,6 +44,16 @@ file before anything else; the rest of the engine is decoration.
 - `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec | SetBang`.
   `Lam` and `App` hold `Rc<[…]>`, not `Vec`, so the `K` that walks an
   application shares the slice instead of copying it (ADR-035).
+  `Var` and `App` carry an `Option<Span>` — and only those two, because
+  they're the only variants that can fail at run time (ADR-039). Don't
+  add spans to the rest; a literal never errors.
+- `error.rs` — `LispErr { msg, span }` + `Span { line, col, len }` +
+  `render_span` (source line with a caret run under it). **`with_span`
+  fills a span only if one isn't already set** — that's what lets
+  `compile` annotate at a single point without walking every error's
+  position out to the top-level form. `From<String>` keeps prims and host
+  callbacks on their existing signatures. `None` is a real answer, not a
+  gap: macro output and host-built forms report unpositioned (ADR-039).
 - `val.rs` — runtime values: `Num | Ratio | Bool | Sym | Str | Nil | Cons | Clo | Prim`,
   plus `Arity` and `Display`. `Val::Prim` holds an
   `Rc<dyn Fn(&[Val]) -> Result<Val, String>>` so host prims can
@@ -76,9 +89,16 @@ file before anything else; the rest of the engine is decoration.
   first-class continuations, so every `K` is uniquely owned (ADR-035).
   Don't change it back to matching on `&*k`: that reintroduces an
   O(n²) clone per application.
-- `step.rs` — `step(State) -> Step` and the driver `run` loop. The
-  engine no longer threads a `&World` through CEK state; that
-  responsibility moved to host-owned prim closures (ADR-017).
+- `step.rs` — `step(State) -> Step`, the driver `run` loop, and
+  `Machine` (ADR-040). The engine no longer threads a `&World` through
+  CEK state; that responsibility moved to host-owned prim closures
+  (ADR-017). `Machine::run(budget)` returns `Progress::{Done, Paused}` —
+  **pausing is not an error**; `run_bounded` is the wrapper that turns
+  `Paused` back into the old budget error. `depth` / `position` /
+  `value` / `backtrace` work while *paused* only. Post-mortem inspection
+  of a failed machine looks cheap and isn't: retaining the `K` per step
+  makes every `K` shared and silently defeats ADR-035's `try_unwrap`
+  fast path.
 - `prim.rs` — pure built-ins (arithmetic, list ops, predicates, eq?).
   Each fn-ptr is wrapped in an `Rc::new` at `initial_env` time so the
   one prim variant carries them uniformly with state-capturing host
@@ -90,7 +110,16 @@ host types.)
 - `parse.rs` — tokenize, `read` (→ Datum), `read_many` (→ Vec<Datum>),
   `compile` (→ Expr), special forms, quasiquote compilation. Parser-
   level quasiquote (` `` `, `,`, `,@`) lives here as list-construction
-  syntax — works without macros installed.
+  syntax — works without macros installed. `Datum` is
+  `{ kind: DatumKind, span: Option<Span> }`; match on `.kind` or use the
+  `as_list` / `as_sym` helpers. `read_datum` is **iterative** (an
+  explicit `Open` stack for lists *and* reader prefixes) — keep it that
+  way: when it recursed, `MAX_DEPTH` doubled as the native-stack guard,
+  and ADR-039's wider frame made 1024 levels overflow a 2 MiB test
+  thread. **Residual:** `compile` is still recursive and gives out
+  between 500 and 750 levels, so the reader's 1024 cap is not one the
+  rest of the pipeline can honor. Don't "fix" that by lowering
+  `MAX_DEPTH`; see `core-followups.md`.
 - `lib.rs` — `Vm`, top-level `define` registration. `eval_str` accepts
   a sequence of top-level forms; returns the last expression's value
   (ADR-014). `eval_datums(&[Datum])` is the same thing for callers
@@ -101,7 +130,14 @@ host types.)
   that want macros wrap a `Vm` in `macros::MacroVm`. `globals` and
   `store` are private (ADR-036) — reach them via `store_weak` /
   `global_cell_weak`, and add a purpose-built accessor rather than
-  re-exposing either field.
+  re-exposing either field. `Vm::start` / `Vm::resume` drive a `Session`
+  (a resumable batch holding no borrow of the `Vm`, so a host can park
+  one between event-loop turns); `eval_datums` is implemented as
+  `start_datums` plus one unbounded `resume`, so **don't reintroduce a
+  second batch loop** — pre-pass, per-form budget, and rollback live in
+  one place. `resume`'s `slice` and `set_step_budget` are different
+  things: the slice is host pacing, the budget is the per-form runaway
+  guard (ADR-040).
 
 The spell, gene, and curve DSL packs live in sibling crates
 (`crates/spells/`, `crates/genes/`, `crates/curves/`) as of ADR-016
@@ -195,7 +231,13 @@ Sibling crates:
   `inner.vm`, exposes `new(width, height)`, `eval(src)`,
   `cast(tape, x, y)`, `cast_genome(tape, seed)`, `cast_breed(a, b, seed)`,
   `cast_curve(axiom, rules_sexpr, iters)`, plus `grid()` / `log()` /
-  `reset_world()`. Pinned to `wasm-bindgen =0.2.114` to match the
+  `reset_world()`. Also `eval_start` / `eval_resume` / `eval_cancel` /
+  `eval_steps` (ADR-040) — the sliced, cancellable eval the web REPL
+  drives from `requestAnimationFrame`. Two error paths, and a new entry
+  point has to pick one: `LispErr::render` for source the *user* wrote
+  (`eval`), `generated_err` for source the bridge assembled (every
+  `cast*`), which strips the span because it names a line in generated
+  text. Pinned to `wasm-bindgen =0.2.114` to match the
   installed CLI (ADR-009). The curve bridge expects `rules_sexpr` as a
   pre-built lisp form (the page module owns the `lhs = rhs` parser) so
   the Rust side stays domain-neutral.
@@ -218,6 +260,9 @@ Web shell at `web/` — four pages, one bundle:
   (`.sigil.gene`, `.lab-card.spells`, `.canvas`, etc).
 - `web/common.js` — plain ESM. `await init()`, `Vm` construction, COI
   chip, REPL wiring. Imported by spells.js, genes.js, and curves.js.
+  The REPL evaluates in 50k-step slices from `requestAnimationFrame`
+  (ADR-040) so the page keeps painting and `cancel` works; the `cast*`
+  paths stay synchronous, being bounded by construction.
 - `web/spells.js` — Spell Lab page module: rune palette, `vm.cast`,
   world refresh, seed cast.
 - `web/genes.js` — Gene Lab page module: codon palette,
