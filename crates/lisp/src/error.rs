@@ -121,31 +121,49 @@ impl LispErr {
     /// came from, and an engine that retained source per error would keep
     /// every REPL line alive for the life of the `Vm`.
     pub fn render(&self, src: &str) -> String {
-        let Some(span) = self.span else {
-            return self.to_string();
-        };
-        let Some(line_text) = src.lines().nth(span.line as usize - 1) else {
-            return self.to_string();
-        };
-
-        // Gutter width from the line number, so the bars line up.
-        let num = span.line.to_string();
-        let pad = " ".repeat(num.len());
-
-        // `col` and `len` are in characters; the caret run has to be
-        // measured the same way to sit under multi-byte source.
-        let lead: String = line_text
-            .chars()
-            .take(span.col as usize - 1)
-            .map(|c| if c == '\t' { '\t' } else { ' ' })
-            .collect();
-        let carets = "^".repeat(span.len.max(1) as usize);
-
-        format!(
-            "{span}: {msg}\n{pad} |\n{num} | {line_text}\n{pad} | {lead}{carets}",
-            msg = self.msg,
-        )
+        render_span(src, self.span, &self.msg)
     }
+}
+
+/// Point at a place in `src` with a message above it and a caret run
+/// under it:
+///
+/// ```text
+/// 3:8: unbound variable: mama
+///   |
+/// 3 |   (+ 1 mama)
+///   |        ^^^^
+/// ```
+///
+/// Shared by [`LispErr::render`] and by hosts pointing at something that
+/// *isn't* an error — a stepping debugger showing where a paused machine
+/// sits uses the same view. Falls back to `msg` alone when there's no
+/// span, or when `src` doesn't have the line the span names (a host
+/// rendering against different text than it evaluated).
+pub fn render_span(src: &str, span: Option<Span>, msg: &str) -> String {
+    let Some(span) = span else {
+        return msg.to_string();
+    };
+    let Some(line_text) = src.lines().nth(span.line as usize - 1) else {
+        return format!("{span}: {msg}");
+    };
+
+    // Gutter width from the line number, so the bars line up.
+    let num = span.line.to_string();
+    let pad = " ".repeat(num.len());
+
+    // `col` and `len` are in characters; the caret run has to be measured
+    // the same way to sit under multi-byte source. Tabs are copied
+    // through rather than counted as one column, so the caret tracks
+    // however wide the reader's terminal renders them.
+    let lead: String = line_text
+        .chars()
+        .take(span.col as usize - 1)
+        .map(|c| if c == '\t' { '\t' } else { ' ' })
+        .collect();
+    let carets = "^".repeat(span.len.max(1) as usize);
+
+    format!("{span}: {msg}\n{pad} |\n{num} | {line_text}\n{pad} | {lead}{carets}")
 }
 
 impl fmt::Display for LispErr {

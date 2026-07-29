@@ -317,6 +317,191 @@ fn apply(mut evaled: Vec<Val>, span: Option<Span>, k: Rc<K>) -> Result<Step, Lis
     }
 }
 
+/// What a bounded run did with the steps it was given.
+#[derive(Debug)]
+pub enum Progress {
+    /// Evaluation finished and produced this value.
+    Done(Val),
+    /// The step allowance ran out with work still to do. The machine is
+    /// unchanged and can be resumed.
+    Paused,
+}
+
+/// A CEK machine you can stop and restart.
+///
+/// The engine has always been a state machine whose entire state is one
+/// `State` value — that's what a CEK machine *is* — but the only way to
+/// drive it was a loop that ran to completion or returned an error, so
+/// running out of budget meant `Err("execution exceeded step budget")`
+/// and the work was gone. A `Machine` hands the loop to the caller
+/// instead, which is what makes the substrate useful rather than merely
+/// tidy: a host can evaluate in slices without blocking (the browser
+/// isn't allowed to block), single-step for a debugger, or abandon a
+/// runaway computation and keep the `Vm`.
+///
+/// ```
+/// # use lisp::{Vm, step::{Machine, Progress}, parse};
+/// let vm = Vm::new();
+/// let expr = parse::parse("(+ 1 2)").unwrap();
+/// let mut m = Machine::new(expr, vm.env().clone());
+/// loop {
+///     match m.run(4).unwrap() {
+///         Progress::Done(v) => { assert_eq!(format!("{v}"), "3"); break }
+///         Progress::Paused => continue,
+///     }
+/// }
+/// ```
+///
+/// **No post-mortem inspection.** The introspection below works while a
+/// machine is *paused*, not after it errors: `step` consumes its `State`
+/// by value, and retaining a copy per step would make every `K` shared
+/// and silently defeat ADR-035's `Rc::try_unwrap` fast path — turning
+/// n-argument application back into O(n²). Errors carry a span (ADR-039);
+/// that's the position information, and it costs nothing.
+pub struct Machine {
+    /// `None` once evaluation has finished.
+    state: Option<State>,
+    steps: u64,
+}
+
+impl Machine {
+    pub fn new(expr: Expr, env: Env) -> Machine {
+        Machine {
+            state: Some(State {
+                mode: Mode::Eval(Rc::new(expr), env),
+                k: Rc::new(K::Halt),
+            }),
+            steps: 0,
+        }
+    }
+
+    /// Take at most `budget` steps. `u64::MAX` runs to completion.
+    ///
+    /// Returns `Paused` if the allowance runs out first — not an error:
+    /// the caller decides whether to resume, and how soon.
+    pub fn run(&mut self, budget: u64) -> Result<Progress, LispErr> {
+        let mut left = budget;
+        while left > 0 {
+            left -= 1;
+            if let Progress::Done(v) = self.step_once()? {
+                return Ok(Progress::Done(v));
+            }
+        }
+        Ok(Progress::Paused)
+    }
+
+    /// Take exactly one CEK transition. The unit a stepping debugger
+    /// advances by.
+    pub fn step_once(&mut self) -> Result<Progress, LispErr> {
+        let s = self
+            .state
+            .take()
+            .ok_or_else(|| LispErr::new("machine has already finished"))?;
+        self.steps += 1;
+        match step(s)? {
+            Step::Continue(next) => {
+                self.state = Some(next);
+                Ok(Progress::Paused)
+            }
+            Step::Done(v) => Ok(Progress::Done(v)),
+        }
+    }
+
+    /// Transitions taken so far, across every slice.
+    pub fn steps(&self) -> u64 {
+        self.steps
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.state.is_none()
+    }
+
+    /// Depth of the continuation chain — how much work is stacked up
+    /// waiting on the current expression. `0` means the next value
+    /// produced is the answer.
+    ///
+    /// Note this counts *all* pending frames, not just calls: `if` and
+    /// `letrec` push frames too. It's the machine's own notion of depth,
+    /// which is why tail calls visibly don't grow it.
+    pub fn depth(&self) -> usize {
+        let Some(s) = &self.state else { return 0 };
+        let mut n = 0;
+        let mut k = &s.k;
+        loop {
+            match &**k {
+                K::Halt => return n,
+                K::App { k: outer, .. }
+                | K::If { k: outer, .. }
+                | K::Letrec { k: outer, .. }
+                | K::SetBang { k: outer, .. } => {
+                    n += 1;
+                    k = outer;
+                }
+            }
+        }
+    }
+
+    /// Where in the source the machine is, when that's known. `Var` and
+    /// `App` are the only expressions carrying a position (ADR-039), so
+    /// this is `None` while the machine sits on a literal or is handing a
+    /// value back to a continuation.
+    pub fn position(&self) -> Option<Span> {
+        match &self.state.as_ref()?.mode {
+            Mode::Eval(e, _) => match &**e {
+                Expr::Var(_, span) | Expr::App(_, span) => *span,
+                _ => None,
+            },
+            Mode::Apply(_) => None,
+        }
+    }
+
+    /// The value the machine is about to hand to its continuation, or
+    /// `None` while it's still evaluating.
+    pub fn value(&self) -> Option<&Val> {
+        match &self.state.as_ref()?.mode {
+            Mode::Apply(v) => Some(v),
+            Mode::Eval(_, _) => None,
+        }
+    }
+
+    /// Enclosing call sites, innermost first — a backtrace, read straight
+    /// off the continuation chain. Only `K::App` frames have positions,
+    /// so `if`/`letrec` frames are skipped rather than reported blank.
+    pub fn backtrace(&self) -> Vec<Span> {
+        let Some(s) = &self.state else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let mut k = &s.k;
+        loop {
+            match &**k {
+                K::Halt => return out,
+                K::App { span, k: outer, .. } => {
+                    out.extend(*span);
+                    k = outer;
+                }
+                K::If { k: outer, .. }
+                | K::Letrec { k: outer, .. }
+                | K::SetBang { k: outer, .. } => k = outer,
+            }
+        }
+    }
+}
+
+/// Progress, not contents: `State` holds an `Env`, which has no `Debug`
+/// (it's a chain of frames pointing into the store), and dumping the
+/// continuation chain would be noise in a test failure anyway.
+impl std::fmt::Debug for Machine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Machine")
+            .field("steps", &self.steps)
+            .field("depth", &self.depth())
+            .field("done", &self.is_done())
+            .field("position", &self.position())
+            .finish()
+    }
+}
+
 pub fn run(expr: Expr, env: Env) -> Result<Val, LispErr> {
     run_bounded(expr, env, u64::MAX)
 }
@@ -325,20 +510,16 @@ pub fn run(expr: Expr, env: Env) -> Result<Val, LispErr> {
 /// effectively unbounded. The budget guards against nonterminating
 /// expressions in hosted environments (REPL, WASM bridge) where the
 /// caller can't otherwise interrupt evaluation.
+///
+/// This is [`Machine`] with the pause turned back into an error, for
+/// callers that want a value or nothing. Hosts that would rather resume
+/// — anything on a main thread it can't block — should drive a `Machine`
+/// directly, or go through `Vm::start` / `Vm::resume` to get the same
+/// treatment for a whole batch of top-level forms.
 pub fn run_bounded(expr: Expr, env: Env, budget: u64) -> Result<Val, LispErr> {
-    let mut s = State {
-        mode: Mode::Eval(Rc::new(expr), env),
-        k: Rc::new(K::Halt),
-    };
-    let mut steps_left = budget;
-    loop {
-        if steps_left == 0 {
-            return Err(LispErr::new("execution exceeded step budget"));
-        }
-        steps_left -= 1;
-        match step(s)? {
-            Step::Continue(next) => s = next,
-            Step::Done(v) => return Ok(v),
-        }
+    let mut m = Machine::new(expr, env);
+    match m.run(budget)? {
+        Progress::Done(v) => Ok(v),
+        Progress::Paused => Err(LispErr::new("execution exceeded step budget")),
     }
 }

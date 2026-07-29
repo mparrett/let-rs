@@ -4,6 +4,10 @@
 //!
 //! - **`eval(src)`** — arbitrary lisp evaluation. Returns the formatted Val
 //!   on success; throws (rejected `Result` → JS exception) on error.
+//! - **`eval_start(src)` / `eval_resume(slice)` / `eval_cancel()`** — the
+//!   same evaluation in slices, so the page stays responsive and the user
+//!   can cancel. `eval_resume` returns `null` while there's more to do.
+//!   See ADR-040; this is why the pausable machine exists.
 //! - **`cast(tape, x, y)`** — rune-tape translation + spell prelude + the
 //!   `world-apply!` resolver in one call. Reuses `runes::tape_to_sexpr`
 //!   and `spells::install` so the CLI and the bridge stay
@@ -32,7 +36,7 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
 use curves::Turtle;
-use lisp::LispErr;
+use lisp::{LispErr, Session};
 use macros::MacroVm;
 use world::World;
 
@@ -62,6 +66,17 @@ pub struct WasmVm {
     /// clone in the `draw!`/`render!`/`reset!` prims. See ADR-019.
     #[allow(dead_code)] // held to keep the prim closures alive
     turtle: Rc<RefCell<Turtle>>,
+    /// An in-flight resumable evaluation, if any (ADR-040), plus the
+    /// source it came from so errors can still be rendered with a caret
+    /// after `eval_start` has returned.
+    ///
+    /// This exists because a browser host cannot block. Before it, the
+    /// only defense against a nonterminating expression was the step
+    /// budget: the page froze for however long 10M steps took and then
+    /// reported an error, and there was no way to show progress or let the
+    /// user cancel. A `Session` holds no borrow of the `Vm`, so it parks
+    /// here between animation frames.
+    pending: Option<(Session, String)>,
     width: u32,
     height: u32,
 }
@@ -88,6 +103,7 @@ impl WasmVm {
             inner,
             world,
             turtle,
+            pending: None,
             width,
             height,
         })
@@ -109,6 +125,73 @@ impl WasmVm {
             // we evaluated, so it's the one place a rendered span with a
             // caret under the offending token is meaningful (ADR-039).
             .map_err(|e| JsValue::from_str(&e.render(src)))
+    }
+
+    /// Begin evaluating `src` without running any of it, for hosts that
+    /// want to evaluate in slices rather than block (ADR-040). Reading and
+    /// macro expansion happen here, so a syntax error throws from this
+    /// call; drive the rest with [`WasmVm::eval_resume`].
+    ///
+    /// Replaces any evaluation already in flight — starting a new one is
+    /// an implicit cancel, which is what a REPL wants when the user
+    /// submits a second line.
+    pub fn eval_start(&mut self, src: &str) -> Result<(), JsValue> {
+        self.pending = None;
+        let session = self
+            .inner
+            .start(src)
+            .map_err(|e| JsValue::from_str(&e.render(src)))?;
+        self.pending = Some((session, src.to_string()));
+        Ok(())
+    }
+
+    /// Advance the in-flight evaluation by at most `slice` CEK steps.
+    ///
+    /// Returns the formatted value once finished, or `null` while there's
+    /// more to do — so the JS side is `while (r === null) await frame()`.
+    /// Throws if evaluation fails, or if nothing is in flight.
+    ///
+    /// Pick `slice` from the frame budget you want to hold: a few tens of
+    /// thousands of steps is well under a frame on any machine that can
+    /// run this page, and the step budget still catches a runaway
+    /// independently (see `Vm::resume`).
+    pub fn eval_resume(&mut self, slice: u32) -> Result<Option<String>, JsValue> {
+        let Some((mut session, src)) = self.pending.take() else {
+            return Err(JsValue::from_str("no evaluation in flight"));
+        };
+        match self.inner.vm.resume(&mut session, u64::from(slice)) {
+            Ok(lisp::Progress::Done(v)) => Ok(Some(format!("{v}"))),
+            Ok(lisp::Progress::Paused) => {
+                self.pending = Some((session, src));
+                Ok(None)
+            }
+            Err(e) => Err(JsValue::from_str(&e.render(&src))),
+        }
+    }
+
+    /// Steps spent on the form currently in flight, for a progress
+    /// readout. `0` when nothing is running.
+    pub fn eval_steps(&self) -> f64 {
+        // f64 rather than u64: this crosses into JS, where a u64 becomes a
+        // BigInt and can't be compared or formatted alongside plain
+        // numbers without ceremony. Step counts stay exact well past any
+        // budget a browser host would set.
+        self.pending
+            .as_ref()
+            .and_then(|(s, _)| s.machine())
+            .map_or(0.0, |m| m.steps() as f64)
+    }
+
+    /// Abandon the in-flight evaluation. Whatever already ran stands —
+    /// completed `define`s keep their values and host effects are not
+    /// undone (see `Vm::resume`). The Vm stays usable.
+    pub fn eval_cancel(&mut self) {
+        self.pending = None;
+    }
+
+    /// Whether an evaluation is in flight.
+    pub fn eval_pending(&self) -> bool {
+        self.pending.is_some()
     }
 
     /// Translate a rune tape and cast at `(x, y)`. Routes through
