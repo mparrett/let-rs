@@ -152,6 +152,29 @@ fn cast_decrements_mana_by_cost() {
 }
 
 #[test]
+fn a_cast_with_no_element_fails_softly_and_refunds() {
+    // Reachable from the Spell Lab: pick a modifier glyph, pick no
+    // element, cast. `world-apply!` rejects a ctx with no 'element, and
+    // before ADR-041 that aborted the whole evaluation *and* kept the
+    // mana, because `cast!` charges before it applies. The guard refunds
+    // and logs instead.
+    let mut vm = vm_with_world(5, 5);
+    let r = vm
+        .eval_str("(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list power)))))")
+        .expect("a failed cast is a value, not an aborted evaluation");
+    assert_eq!(format!("{r}"), "0", "nothing painted");
+    assert_eq!(
+        format!("{}", vm.eval_str("mana").unwrap()),
+        "10",
+        "mana refunded"
+    );
+    // And the Vm is unharmed: a normal cast still works and charges.
+    vm.eval_str("(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list fire)))))")
+        .unwrap();
+    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "9");
+}
+
+#[test]
 fn cast_with_area_and_power_costs_more() {
     // cost = 1 + power(2) + area(1) = 4. mana 10 → 6.
     let mut vm = vm_with_world(5, 5);

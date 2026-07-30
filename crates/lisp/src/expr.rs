@@ -48,4 +48,26 @@ pub enum Expr {
     /// CESK store (ADR-023) makes this cheap: frame slots are
     /// already mutable cells, we just need a write path.
     SetBang(Sym, Rc<Expr>),
+    /// `(raise expr)` — evaluate `expr`, then unwind to the nearest
+    /// enclosing `Guard` carrying it as the condition.
+    ///
+    /// `(error msg irritant …)` compiles to this too, wrapping its
+    /// arguments in a `(list 'error msg irritant …)` application, so the
+    /// engine has one raising form rather than two (ADR-041). The span
+    /// is the raise site, used only if the condition escapes to the top
+    /// and has to become a `LispErr`.
+    Raise(Rc<Expr>, Option<Span>),
+    /// `(guard (var handler) body)` — evaluate `body`; if it raises,
+    /// bind `var` to the condition and evaluate `handler` instead.
+    ///
+    /// The handler runs *after* unwinding, in the guard's own
+    /// environment extended with `var`. Nothing between here and the
+    /// raise survives — see ADR-041 on why resumable handlers were left
+    /// for later even though the reified continuation makes them
+    /// unusually cheap.
+    Guard {
+        var: Sym,
+        handler: Rc<Expr>,
+        body: Rc<Expr>,
+    },
 }

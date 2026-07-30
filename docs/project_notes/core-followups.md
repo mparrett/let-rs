@@ -352,6 +352,34 @@ shouldn't accidentally break them.
 
 ## High-impact (engine-level) — open
 
+### In-language error handling — **DONE (ADR-041, 2026-07-30)**
+
+> `raise` / `error` / `guard` as special forms, `Mode::Raise` plus
+> `K::Raise` / `K::Guard` in the machine, conditions as ordinary lists,
+> and `error?` / `error-message` / `error-irritants` as prims. Every
+> runtime failure is catchable except ADR-040's step budget, which stays
+> uncatchable on purpose. 15 tests.
+>
+> Fixed a live bug on the way: a rune tape with modifiers and no element
+> made `world-apply!` reject the ctx, which threw out of the WASM bridge
+> *and* kept the mana `cast!` had already charged. `cast!` now guards,
+> refunds, and logs `cast-failed`.
+>
+> What it leaves open, both worth doing:
+>
+> - **No cleanup hook.** There is no `dynamic-wind` / `unwind-protect`,
+>   so a raise crossing a frame that acquired something releases
+>   nothing. Nothing in-tree is exposed — host prims are single-call and
+>   effectively atomic — but the first multi-step host effect needing a
+>   release path will want this, and `K::Guard` is the thing to build it
+>   on.
+> - **Restarts.** ADR-041's alternative 1, deferred rather than
+>   rejected. The handler would run *before* unwinding and could resume
+>   with a substitute value. Expensive in most languages because the
+>   stack must be kept alive; nearly free here, since the continuation
+>   is already a reified value. `guard` is the unwinding special case,
+>   so this is a superset and not a wrong turn.
+
 ### Pausable machine — **DONE (ADR-040, 2026-07-29)**
 
 > `step::Machine` (`run(budget)` / `step_once`, returning

@@ -4108,3 +4108,145 @@ cast" means "throw away the interpreter."
    Out of scope: `Val::Prim` holds `Rc<dyn Fn>`, so a `State` is not
    serializable without a story for host closures. Pausing needed none of
    that, which is why it landed and this didn't.
+
+## ADR-041: In-language error handling — `raise`, `error`, `guard` (2026-07-30)
+
+**Context**: A primitive that failed took the whole evaluation with it.
+`(car '())` returned `Err` from `step`, unwound to the driver, and
+aborted the top-level form. Lisp code had no way to catch it, and no way
+to signal a recoverable failure of its own.
+
+The DSLs had already felt this and worked around it with sentinels. The
+mana model's `cast!` handles a shortfall by logging `mana-short` and
+returning `0` (ADR-028) — a sentinel standing in for "this failed,
+recoverably," because there was nothing else to use.
+
+The sharper motivation was a live bug. `world-apply!` rejects a ctx with
+no `'element`, which a rune tape of modifiers and no element rune
+produces — reachable from the Spell Lab by picking a power glyph and no
+element. `cast!` charges mana *before* applying, so that cast threw a JS
+exception out of the WASM bridge **and kept the mana**. Two failures, one
+missing feature.
+
+**Decision**: unwinding conditions, in the Scheme tradition, native to
+the machine.
+
+- `(raise expr)` — raise any value as the condition.
+- `(error msg irritant …)` — sugar for raising `(error msg irritant …)`.
+- `(guard (var handler) body)` — evaluate `body`; on a raise, bind `var`
+  to the condition and evaluate `handler` instead.
+- `error?` / `error-message` / `error-irritants` read a condition.
+
+Machine-side: a third `Mode::Raise(Val, Option<Span>)`, plus `K::Raise`
+(the condition expression is in flight) and `K::Guard` (a guarded body is
+in flight). `Mode::Raise` discards continuation frames until it meets a
+`K::Guard` or reaches `K::Halt`, where it becomes a `LispErr`.
+
+**Conditions are ordinary lists.** No new `Val` variant: a condition is
+`(error "msg" irritant …)`, which keeps `Val` at nine variants and keeps
+ADR-035's "cheap to clone" property intact. The cost, documented rather
+than prevented, is that a hand-built list is indistinguishable from a
+raised one — `(error? '(error "hand-built"))` is `#t`. That is the usual
+Lisp bargain and the accessors are the supported reading path, not the
+only one.
+
+**Everything the machine can fail at is catchable — except the budget.**
+Prim complaints, unbound variables, arity mismatches, non-callable heads,
+and `set!` on an unbound name all enter `Mode::Raise`, so there is one
+answer to "what can a guard catch" rather than a list of exceptions. The
+deliberate hole is ADR-040's step budget, which lives in `Machine::run`
+and never becomes a condition. A guard that could swallow it would make a
+runaway loop unkillable — the exact hazard the budget exists to prevent.
+`the_step_budget_is_not_catchable` pins it.
+
+**Prims stay on `Result<Val, String>`.** `PrimFn` is the interface every
+host crate implements against, unchanged since ADR-017 and deliberately
+left alone by ADR-039. `apply` converts a prim's string into a condition,
+so `(guard (e …) (car '()))` catches a host prim's complaint with no
+cooperation from the host and no host edits.
+
+**Unwinding is one frame per step**, not a loop to the handler. That
+keeps it interruptible and budget-counted like everything else (ADR-040),
+and a paused machine mid-unwind reports a shrinking `depth`. Each
+discarded frame drops the `Env` it held, so the store slots those
+bindings owned return through `Frame::drop` (ADR-033) — unwinding
+reclaims as it goes, with no special handling in the unwinder.
+`unwinding_reclaims_the_frames_it_discards` pins that.
+
+**`error` is a special form, not a prim.** A prim reports failure as a
+`String`, which would flatten irritants into the message and lose their
+identity as values; `(error "m" (+ 2 3))` has to arrive as the number
+`5`, not the text. Compiling to `(raise (list 'error …))` keeps them
+intact and keeps the engine to one raising form. The cost is that `error`
+can't be passed to `map` or shadowed; `raise` is the first-class route.
+
+**`guard`'s shape differs from R7RS.** R7RS is
+`(guard (var clause …) body …)` with `cond`-shaped clauses and an
+implicit re-raise when none match. This takes the single-handler form:
+bodies are one expression everywhere else in this language (`begin` is a
+macro, ADR-024), dispatching on the condition is what a `cond` inside the
+handler is for, and re-raising is explicit — `(raise e)`. Fewer concepts,
+and it composes with what's already here.
+
+**The identity cost, stated plainly.** This project's pitch is five CEK
+transition rules. It now has a third mode and two more continuation
+variants, and the honest description is "five rules plus a raise mode."
+That is a real increase in the thing being advertised as small. It buys
+the one capability a spell DSL can't fake with sentinels: a cast that
+fails recoverably without taking the interpreter with it.
+
+**Consequences**:
+
+- **+** The Spell Lab bug is fixed at its root. `cast!` guards
+  `world-apply!`, refunds the mana it charged, and logs `cast-failed`.
+  Pinned by `a_cast_with_no_element_fails_softly_and_refunds`.
+- **+** Uncaught conditions read exactly as errors did before.
+  `(error "msg")` reaching the top renders as `msg`, with ADR-039's span
+  intact, so no existing error message changed wording.
+- **+** A guard costs two transitions total — one to push the frame, one
+  for the value to pop it — and nothing while the body runs.
+  `a_guard_frame_costs_nothing_on_the_way_out` pins the constant.
+- **−** **No cleanup hook.** There is no `dynamic-wind` or
+  `unwind-protect`, so a raise crossing a frame that acquired something
+  releases nothing. Host prims are single-call and effectively atomic
+  today (`world-apply!`, `draw!`), so nothing in-tree is exposed — but
+  the first multi-step host effect that needs a release path will need
+  this, and building it on `K::Guard` is the natural next move.
+- **−** Catching *everything* means a guard can mask a genuine bug: an
+  unbound variable inside a guarded body reads as a runtime condition
+  rather than surfacing. The alternative — a separate uncatchable class
+  for programmer errors — needs a taxonomy the language doesn't have.
+- **−** WASM bundle 224K → 234K.
+- **~** An escaped condition raised inside an installed prelude reports a
+  span into *that* prelude's source, whose line numbers mean nothing to a
+  page user. Already handled: ADR-039's WASM bridge strips spans from
+  every generated-source path.
+
+**Alternatives considered**:
+
+1. **Conditions with restarts (Common Lisp style)** — the handler runs
+   *before* unwinding, with the continuation intact, and can resume the
+   failed computation with a substitute value. Offered explicitly and
+   declined for now. Worth recording *why it was tempting*: restarts are
+   expensive in most languages because the stack has to be kept alive,
+   and here the continuation is already a reified value, so the machinery
+   is nearly free. It is also the better fit for the actual domain — a
+   cast that hits an unknown element substituting `'inert` and continuing
+   beats both dying and being pre-checked into blandness. Deferred rather
+   than rejected: `guard` is the unwinding special case of it, so this
+   design is a subset and not a wrong turn.
+2. **Result values, no unwinding** — prims return `(ok v)` / `(err msg)`,
+   threaded by callers, matching how the DSLs already thread a ctx. Zero
+   engine change, and rejected: it rewrites ~30 prim sites and all three
+   preludes, makes every call site pay whether or not it cares, and gives
+   no way to skip past uninteresting frames.
+3. **A `Val::Condition` variant.** Type-distinguishes a real condition
+   from a lookalike list. Rejected: a tenth `Val` variant for a
+   distinction Lisp doesn't usually draw, against ADR-035's pressure to
+   keep `Val` cheap.
+4. **Catch prim errors only**, leaving unbound-variable and arity
+   uncatchable as "programmer errors." Two paths through the machine and
+   a taxonomy to defend at every new error site; the single path is
+   simpler to describe and to implement.
+5. **`guard` as a macro over a prim.** Impossible: it needs a
+   continuation frame, and the macro system expands to ordinary forms.

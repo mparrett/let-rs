@@ -71,4 +71,26 @@ pub enum K {
     /// like a `Var` reference — the same forward-reference rules
     /// apply.
     SetBang { name: Sym, env: Env, k: Rc<K> },
+
+    /// The condition expression of a `(raise e)` is in flight. When it
+    /// produces a value, that value becomes the condition. `span` is the
+    /// raise site, carried so an escaping condition can report where it
+    /// came from.
+    Raise { span: Option<Span>, k: Rc<K> },
+
+    /// A `guard` whose body is in flight. Inert on the way *up* — a
+    /// value passing through pops it unchanged — and load-bearing only
+    /// when a raise unwinds into it, at which point `var` is bound to
+    /// the condition and `handler` runs in `env`.
+    ///
+    /// This is the only frame `Mode::Raise` stops at; every other
+    /// variant is discarded as the raise walks outward, which is what
+    /// makes unwinding free the store slots those frames' environments
+    /// were holding (ADR-041).
+    Guard {
+        var: Sym,
+        handler: Rc<Expr>,
+        env: Env,
+        k: Rc<K>,
+    },
 }

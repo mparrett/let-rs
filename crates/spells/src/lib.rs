@@ -126,7 +126,18 @@ pub const PRELUDE_DEFINES: &str = r#"
       (if (< mana cost)
           (let ((_ (world-log! 'mana-short cost mana))) 0)
           (let ((_ (set! mana (- mana cost))))
-            (world-apply! ctx))))))
+            ;; The shortfall above is a *predictable* failure — the cost
+            ;; is knowable before trying — so it stays an `if`. This
+            ;; guard is for the unpredictable one: `world-apply!` rejects
+            ;; a ctx with no 'element, which a tape of modifiers and no
+            ;; element rune produces. That used to abort the whole
+            ;; evaluation *and* keep the mana, since the charge happens
+            ;; above. Refund, log, and report nothing painted. See
+            ;; ADR-041.
+            (guard (e (let ((_ (set! mana (+ mana cost))))
+                        (let ((_ (world-log! 'cast-failed (error-message e))))
+                          0)))
+              (world-apply! ctx)))))))
 
 (define tick!
   (lambda ()
