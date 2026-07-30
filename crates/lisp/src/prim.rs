@@ -278,6 +278,43 @@ fn pair_q(args: &[Val]) -> R {
     Ok(Val::Bool(matches!(args[0], Val::Cons(_, _))))
 }
 
+/// The `(error msg irritant …)` parts of a condition, or `None` if `v`
+/// isn't that shape. Conditions are ordinary lists (ADR-041), so this is
+/// a structural check and nothing stops a user from `raise`-ing a list
+/// that looks like one — which is the usual Lisp bargain, and why these
+/// three accessors are the supported way to read a condition rather than
+/// the only way.
+fn as_condition(v: &Val) -> Option<(&Val, &Val)> {
+    let Val::Cons(head, tail) = v else {
+        return None;
+    };
+    if !matches!(&**head, Val::Sym(s) if &**s == "error") {
+        return None;
+    }
+    let Val::Cons(msg, irritants) = &**tail else {
+        return None;
+    };
+    Some((msg, irritants))
+}
+
+fn error_q(args: &[Val]) -> R {
+    Ok(Val::Bool(as_condition(&args[0]).is_some()))
+}
+
+fn error_message(args: &[Val]) -> R {
+    match as_condition(&args[0]) {
+        Some((msg, _)) => Ok(msg.clone()),
+        None => Err(format!("error-message: not a condition: {}", args[0])),
+    }
+}
+
+fn error_irritants(args: &[Val]) -> R {
+    match as_condition(&args[0]) {
+        Some((_, rest)) => Ok(rest.clone()),
+        None => Err(format!("error-irritants: not a condition: {}", args[0])),
+    }
+}
+
 fn number_q(args: &[Val]) -> R {
     Ok(Val::Bool(matches!(args[0], Val::Num(_) | Val::Ratio(_, _))))
 }
@@ -433,6 +470,9 @@ const BUILTINS: &[(&str, Arity, BuiltinFn)] = &[
     ("denominator", Arity::Exact(1), denominator),
     ("floor", Arity::Exact(1), floor),
     ("ceiling", Arity::Exact(1), ceiling),
+    ("error?", Arity::Exact(1), error_q),
+    ("error-message", Arity::Exact(1), error_message),
+    ("error-irritants", Arity::Exact(1), error_irritants),
 ];
 
 /// Seed the Vm's globals table with the built-in prims. Called once

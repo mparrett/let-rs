@@ -513,6 +513,9 @@ fn compile_inner(d: &Datum) -> Result<Expr, LispErr> {
                     "letrec" => return compile_letrec(&items[1..]),
                     "cond" => return compile_cond(&items[1..]),
                     "set!" => return compile_set_bang(&items[1..]),
+                    "raise" => return compile_raise(&items[1..], d.span),
+                    "error" => return compile_error(&items[1..], d.span),
+                    "guard" => return compile_guard(&items[1..]),
                     "unquote" | "unquote-splicing" => {
                         return Err(LispErr::new(format!("{head} outside of quasiquote")));
                     }
@@ -656,6 +659,67 @@ fn compile_set_bang(rest: &[Datum]) -> Result<Expr, LispErr> {
         .ok_or_else(|| LispErr::maybe_at("set!: name must be a symbol", rest[0].span))?;
     let val = compile(&rest[1])?;
     Ok(Expr::SetBang(name, Rc::new(val)))
+}
+
+/// `(raise expr)` — raise an arbitrary value as the condition.
+fn compile_raise(rest: &[Datum], span: Option<Span>) -> Result<Expr, LispErr> {
+    if rest.len() != 1 {
+        return Err(LispErr::new("raise: expected (raise expr)"));
+    }
+    Ok(Expr::Raise(Rc::new(compile(&rest[0])?), span))
+}
+
+/// `(error msg irritant …)` — sugar for raising the conventional
+/// condition shape, `(error msg irritant …)` as a list.
+///
+/// Compiled rather than made a prim because a prim reports failure as a
+/// `String`, which would flatten the irritants into the message and lose
+/// their identity as values. Compiling to `(raise (list 'error …))`
+/// keeps them intact and keeps the engine down to one raising form.
+///
+/// The cost is that `error` is a special form: it can't be passed to
+/// `map` or shadowed by a `define`. `raise` is the first-class route for
+/// anyone who needs one.
+fn compile_error(rest: &[Datum], span: Option<Span>) -> Result<Expr, LispErr> {
+    if rest.is_empty() {
+        return Err(LispErr::new("error: expected (error msg irritant ...)"));
+    }
+    let mut app: Vec<Rc<Expr>> = vec![
+        Rc::new(Expr::Var("list".into(), span)),
+        Rc::new(Expr::Quote(Rc::new(Val::Sym("error".into())))),
+    ];
+    for d in rest {
+        app.push(Rc::new(compile(d)?));
+    }
+    Ok(Expr::Raise(Rc::new(Expr::App(app.into(), span)), span))
+}
+
+/// `(guard (var handler) body)` — evaluate `body`, and on a raise bind
+/// `var` to the condition and evaluate `handler` instead.
+///
+/// R7RS spells this `(guard (var clause …) body …)`, with `cond`-shaped
+/// clauses and an implicit re-raise when none match. This takes the
+/// single-handler form to match the rest of the language: bodies here
+/// are one expression everywhere else (`begin` is a macro, ADR-024), and
+/// dispatching on the condition is what `cond` inside the handler is
+/// for. Re-raising is explicit — `(raise e)`.
+fn compile_guard(rest: &[Datum]) -> Result<Expr, LispErr> {
+    if rest.len() != 2 {
+        return Err(LispErr::new("guard: expected (guard (var handler) body)"));
+    }
+    let clause = rest[0]
+        .as_list()
+        .filter(|c| c.len() == 2)
+        .ok_or_else(|| LispErr::maybe_at("guard: expected (var handler)", rest[0].span))?;
+    let var = clause[0]
+        .as_sym()
+        .cloned()
+        .ok_or_else(|| LispErr::maybe_at("guard: var must be a symbol", clause[0].span))?;
+    Ok(Expr::Guard {
+        var,
+        handler: Rc::new(compile(&clause[1])?),
+        body: Rc::new(compile(&rest[1])?),
+    })
 }
 
 fn compile_cond(rest: &[Datum]) -> Result<Expr, LispErr> {

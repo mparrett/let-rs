@@ -29,6 +29,8 @@ Slices that have landed:
 - structured errors with source spans (ADR-039) and a pausable machine
   (ADR-040) — errors carry `line:col` and render a caret; evaluation can
   be sliced, resumed, single-stepped, and cancelled
+- in-language error handling (ADR-041) — `raise` / `error` / `guard`,
+  with conditions as ordinary lists and prim failures catchable
 - genes demo: codon-tape → diploid genome → phenotype creature card,
   parallel to spells but with genetics vocabulary (see ADR-011)
 - curves demo: stroke-tape → L-system rewrite → 8-direction turtle →
@@ -90,7 +92,14 @@ file before anything else; the rest of the engine is decoration.
   Don't change it back to matching on `&*k`: that reintroduces an
   O(n²) clone per application.
 - `step.rs` — `step(State) -> Step`, the driver `run` loop, and
-  `Machine` (ADR-040). The engine no longer threads a `&World` through
+  `Machine` (ADR-040). Three modes: `Eval`, `Apply`, and `Raise`
+  (ADR-041). Every runtime failure enters `Raise` rather than returning
+  `Err`, which is what makes prim complaints, unbound variables, arity
+  and non-callable heads uniformly catchable — **except the step
+  budget**, which lives in `Machine::run` and must stay uncatchable or a
+  guarded runaway loop becomes unkillable. Unwinding discards one frame
+  per step, so it stays interruptible and reclaims store slots as it
+  goes. The engine no longer threads a `&World` through
   CEK state; that responsibility moved to host-owned prim closures
   (ADR-017). `Machine::run(budget)` returns `Progress::{Done, Paused}` —
   **pausing is not an error**; `run_bounded` is the wrapper that turns
@@ -99,7 +108,8 @@ file before anything else; the rest of the engine is decoration.
   of a failed machine looks cheap and isn't: retaining the `K` per step
   makes every `K` shared and silently defeats ADR-035's `try_unwrap`
   fast path.
-- `prim.rs` — pure built-ins (arithmetic, list ops, predicates, eq?).
+- `prim.rs` — pure built-ins (arithmetic, list ops, predicates, eq?,
+  condition accessors).
   Each fn-ptr is wrapped in an `Rc::new` at `initial_env` time so the
   one prim variant carries them uniformly with state-capturing host
   closures.
@@ -317,9 +327,13 @@ ships a larger bundle.
 ## Conventions
 
 - Special forms (`lambda`, `if`, `quote`, `letrec`, `let`, `let*`, `cond`,
-  `quasiquote`, `set!`) live in `parse.rs`. Everything else can be a macro.
-  `set!` (ADR-026) is the only effecting form — everything else is
-  expression-pure.
+  `quasiquote`, `set!`, `raise`, `error`, `guard`) live in `parse.rs`.
+  Everything else can be a macro. `set!` (ADR-026) is the only effecting
+  form — everything else is expression-pure. `error` is a special form
+  rather than a prim because a prim reports failure as a `String`, which
+  would flatten its irritants into the message; it compiles to
+  `(raise (list 'error …))` (ADR-041). `guard` can't be a macro at all —
+  it needs a continuation frame.
 - **Where state lives (ADR-037): state the host must read or render
   lives in the host; state only lisp reads lives in lisp.** `World`
   and `Turtle` follow it. The mana model doesn't — it's a lisp global

@@ -9,6 +9,20 @@ use crate::val::Val;
 pub enum Mode {
     Eval(Rc<Expr>, Env),
     Apply(Val),
+    /// A condition travelling *outward*, discarding continuation frames
+    /// until it reaches a `K::Guard` or the top (ADR-041).
+    ///
+    /// Every runtime failure enters this mode — a prim's complaint, an
+    /// unbound variable, a bad arity — which is what makes them all
+    /// catchable through one path rather than two. The exception is the
+    /// step budget, which lives in `Machine::run` and never becomes a
+    /// condition: a guard that could swallow it would make a runaway
+    /// loop unkillable.
+    ///
+    /// The `Span` rides along unused unless the condition escapes to the
+    /// top, where it becomes the position on the resulting `LispErr`
+    /// (ADR-039).
+    Raise(Val, Option<Span>),
 }
 
 pub struct State {
@@ -25,7 +39,90 @@ pub fn step(s: State) -> Result<Step, LispErr> {
     match s.mode {
         Mode::Eval(c, env) => eval_expr(c, env, s.k),
         Mode::Apply(v) => apply_k(v, s.k),
+        Mode::Raise(v, span) => unwind(v, span, s.k),
     }
+}
+
+/// Enter the raise mode with `cond` as the condition. Every runtime
+/// error site funnels through here rather than returning `Err`, so
+/// there's one definition of what a guard can catch.
+fn raise(cond: Val, span: Option<Span>, k: Rc<K>) -> Result<Step, LispErr> {
+    Ok(Step::Continue(State {
+        mode: Mode::Raise(cond, span),
+        k,
+    }))
+}
+
+/// A condition from a message, in the shape `error` builds:
+/// `(error "…")`. Engine failures and prim failures both arrive as
+/// strings, so both become this — which is why `(guard (e …) (car '()))`
+/// catches a prim error with no cooperation from the prim.
+pub(crate) fn condition_from_msg(msg: impl Into<Rc<str>>) -> Val {
+    Val::list_from(&[Val::Sym("error".into()), Val::Str(msg.into())])
+}
+
+/// Discard one continuation frame, or hand the condition to a guard.
+///
+/// One frame per step, rather than looping to the handler: unwinding is
+/// then interruptible and budget-counted like everything else, and a
+/// paused machine mid-unwind reports a shrinking `depth` (ADR-040).
+/// Dropping each frame also drops the `Env` it held, so the store slots
+/// those bindings owned come back through `Frame::drop` (ADR-033) —
+/// unwinding reclaims as it goes, with no special handling.
+fn unwind(cond: Val, span: Option<Span>, k: Rc<K>) -> Result<Step, LispErr> {
+    let k = match Rc::try_unwrap(k) {
+        Ok(owned) => owned,
+        Err(shared) => (*shared).clone(),
+    };
+    match k {
+        // Nothing caught it. Now it becomes a Rust-side error, carrying
+        // the raise site's position.
+        K::Halt => Err(LispErr::maybe_at(describe_condition(&cond), span)),
+
+        K::Guard {
+            var,
+            handler,
+            env,
+            k: outer,
+        } => {
+            let env = env.extend_many(std::iter::once((var, cond)));
+            Ok(Step::Continue(State {
+                mode: Mode::Eval(handler, env),
+                k: outer,
+            }))
+        }
+
+        // Everything else is pending work that will never happen.
+        K::App { k: outer, .. }
+        | K::If { k: outer, .. }
+        | K::Letrec { k: outer, .. }
+        | K::SetBang { k: outer, .. }
+        | K::Raise { k: outer, .. } => Ok(Step::Continue(State {
+            mode: Mode::Raise(cond, span),
+            k: outer,
+        })),
+    }
+}
+
+/// Render an escaped condition as an error message. `(error "msg")` —
+/// the shape the engine and `error` produce — reads back as just `msg`,
+/// so an uncaught prim failure looks exactly as it did before conditions
+/// existed. Anything else a user chose to `raise` is printed whole.
+fn describe_condition(cond: &Val) -> String {
+    if let Val::Cons(head, tail) = cond
+        && matches!(&**head, Val::Sym(s) if &**s == "error")
+        && let Val::Cons(msg, rest) = &**tail
+    {
+        let irritants = match &**rest {
+            Val::Nil => String::new(),
+            other => format!(" {other}"),
+        };
+        if let Val::Str(m) = &**msg {
+            return format!("{m}{irritants}");
+        }
+        return format!("{msg}{irritants}");
+    }
+    format!("raised: {cond}")
 }
 
 fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, LispErr> {
@@ -42,15 +139,17 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, LispErr> {
             mode: Mode::Apply((**v).clone()),
             k,
         })),
-        Expr::Var(name, span) => {
-            let v = env
-                .lookup(name)
-                .ok_or_else(|| LispErr::maybe_at(format!("unbound variable: {name}"), *span))?;
-            Ok(Step::Continue(State {
+        Expr::Var(name, span) => match env.lookup(name) {
+            Some(v) => Ok(Step::Continue(State {
                 mode: Mode::Apply(v),
                 k,
-            }))
-        }
+            })),
+            None => raise(
+                condition_from_msg(format!("unbound variable: {name}")),
+                *span,
+                k,
+            ),
+        },
         Expr::Lam(params, body) => {
             let clo = Val::Clo {
                 params: Rc::clone(params),
@@ -76,7 +175,7 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, LispErr> {
         }
         Expr::App(exprs, span) => {
             if exprs.is_empty() {
-                return Err(LispErr::maybe_at("empty application", *span));
+                return raise(condition_from_msg("empty application"), *span, k);
             }
             // Share the subexpression slice with the K rather than
             // copying it out; only `evaled` needs to be owned.
@@ -91,6 +190,25 @@ fn eval_expr(c: Rc<Expr>, env: Env, k: Rc<K>) -> Result<Step, LispErr> {
             });
             Ok(Step::Continue(State {
                 mode: Mode::Eval(first, env),
+                k: new_k,
+            }))
+        }
+        Expr::Raise(inner, span) => {
+            let new_k = Rc::new(K::Raise { span: *span, k });
+            Ok(Step::Continue(State {
+                mode: Mode::Eval(Rc::clone(inner), env),
+                k: new_k,
+            }))
+        }
+        Expr::Guard { var, handler, body } => {
+            let new_k = Rc::new(K::Guard {
+                var: var.clone(),
+                handler: Rc::clone(handler),
+                env: env.clone(),
+                k,
+            });
+            Ok(Step::Continue(State {
+                mode: Mode::Eval(Rc::clone(body), env),
                 k: new_k,
             }))
         }
@@ -213,13 +331,23 @@ fn apply_k(v: Val, k: Rc<K>) -> Result<Step, LispErr> {
             name,
             env,
             k: outer,
-        } => {
-            env.set(&name, v.clone())?;
-            Ok(Step::Continue(State {
+        } => match env.set(&name, v.clone()) {
+            Ok(()) => Ok(Step::Continue(State {
                 mode: Mode::Apply(v),
                 k: outer,
-            }))
-        }
+            })),
+            Err(msg) => raise(condition_from_msg(msg), None, outer),
+        },
+
+        // The condition expression finished evaluating; now it raises.
+        K::Raise { span, k: outer } => raise(v, span, outer),
+
+        // The body finished without raising, so the guard has no work:
+        // drop the frame and keep the value moving outward.
+        K::Guard { k: outer, .. } => Ok(Step::Continue(State {
+            mode: Mode::Apply(v),
+            k: outer,
+        })),
 
         K::Letrec {
             addrs,
@@ -279,14 +407,15 @@ fn apply(mut evaled: Vec<Val>, span: Option<Span>, k: Rc<K>) -> Result<Step, Lis
     match &f {
         Val::Clo { params, body, env } => {
             if params.len() != args.len() {
-                return Err(LispErr::maybe_at(
-                    format!(
+                return raise(
+                    condition_from_msg(format!(
                         "arity: closure expected {}, got {}",
                         params.len(),
                         args.len()
-                    ),
+                    )),
                     span,
-                ));
+                    k,
+                );
             }
             let env = env.extend_many(params.iter().cloned().zip(args));
             // Tail-call note: we pass `k` through unchanged. No frame pushed for
@@ -302,18 +431,34 @@ fn apply(mut evaled: Vec<Val>, span: Option<Span>, k: Rc<K>) -> Result<Step, Lis
             f: prim,
         } => {
             if !arity.accepts(args.len()) {
-                return Err(LispErr::maybe_at(
-                    format!("{name}: arity {}, got {}", arity.describe(), args.len()),
+                return raise(
+                    condition_from_msg(format!(
+                        "{name}: arity {}, got {}",
+                        arity.describe(),
+                        args.len()
+                    )),
                     span,
-                ));
+                    k,
+                );
             }
-            let v = prim(&args).map_err(|m| LispErr::new(m).with_span(span))?;
-            Ok(Step::Continue(State {
-                mode: Mode::Apply(v),
-                k,
-            }))
+            // A prim reports failure as a `String` — `PrimFn`'s signature
+            // is the interface every host crate implements against, and
+            // ADR-039 kept it that way. Turning that string into a
+            // condition here is what makes host prims catchable without
+            // any host knowing conditions exist.
+            match prim(&args) {
+                Ok(v) => Ok(Step::Continue(State {
+                    mode: Mode::Apply(v),
+                    k,
+                })),
+                Err(msg) => raise(condition_from_msg(msg), span, k),
+            }
         }
-        other => Err(LispErr::maybe_at(format!("not callable: {other}"), span)),
+        other => raise(
+            condition_from_msg(format!("not callable: {other}")),
+            span,
+            k,
+        ),
     }
 }
 
@@ -433,7 +578,9 @@ impl Machine {
                 K::App { k: outer, .. }
                 | K::If { k: outer, .. }
                 | K::Letrec { k: outer, .. }
-                | K::SetBang { k: outer, .. } => {
+                | K::SetBang { k: outer, .. }
+                | K::Raise { k: outer, .. }
+                | K::Guard { k: outer, .. } => {
                     n += 1;
                     k = outer;
                 }
@@ -448,9 +595,12 @@ impl Machine {
     pub fn position(&self) -> Option<Span> {
         match &self.state.as_ref()?.mode {
             Mode::Eval(e, _) => match &**e {
-                Expr::Var(_, span) | Expr::App(_, span) => *span,
+                Expr::Var(_, span) | Expr::App(_, span) | Expr::Raise(_, span) => *span,
                 _ => None,
             },
+            // A condition in flight reports where it was raised, which is
+            // the position a debugger wants while watching an unwind.
+            Mode::Raise(_, span) => *span,
             Mode::Apply(_) => None,
         }
     }
@@ -459,7 +609,7 @@ impl Machine {
     /// `None` while it's still evaluating.
     pub fn value(&self) -> Option<&Val> {
         match &self.state.as_ref()?.mode {
-            Mode::Apply(v) => Some(v),
+            Mode::Apply(v) | Mode::Raise(v, _) => Some(v),
             Mode::Eval(_, _) => None,
         }
     }
@@ -482,7 +632,9 @@ impl Machine {
                 }
                 K::If { k: outer, .. }
                 | K::Letrec { k: outer, .. }
-                | K::SetBang { k: outer, .. } => k = outer,
+                | K::SetBang { k: outer, .. }
+                | K::Raise { k: outer, .. }
+                | K::Guard { k: outer, .. } => k = outer,
             }
         }
     }
