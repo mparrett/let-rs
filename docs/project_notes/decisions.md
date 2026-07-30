@@ -4250,3 +4250,30 @@ fails recoverably without taking the interpreter with it.
    simpler to describe and to implement.
 5. **`guard` as a macro over a prim.** Impossible: it needs a
    continuation frame, and the macro system expands to ordinary forms.
+
+**Amendment (2026-07-30, from review of PR #14).** Three defects, two of
+them mine and one older than this ADR.
+
+- **Generated forms resolved their operators through `Expr::Var`.**
+  `error` built its condition with `list`, so
+  `(let ((list …)) (error "boom"))` returned the user's `list` result
+  instead of raising. Quasiquote had the same bug against `list` and
+  `append`, and had had it since it was written — the review flagged
+  `error`, and the shared root cause made both a one-line fix each.
+  Compiler-generated forms now quote the prim *value* via
+  `prim::builtin`, which no binding can intercept and which is cheaper
+  than the lookup it replaces. The general rule, worth applying to any
+  future generated form: a compiler that emits `Expr::Var` is emitting a
+  name the user is allowed to rebind.
+- **The expander had no `guard` branch.** `guard` introduces a binder,
+  and without a branch the expander treated `(var handler)` as an
+  application and expanded `var` when it named a macro:
+  `(guard (when when) …)` failed inside expansion. Added alongside the
+  existing `lambda` / `set!` / let-family branches. The lesson generalizes
+  — every new binding form needs a matching expander branch, and nothing
+  enforces that but a test.
+- **The span invariant went stale in four places.** ADR-039's "only `Var`
+  and `App` carry spans" survived in `expr.rs`, `Machine::position`,
+  `CLAUDE.md`, and the REPL example after `Raise` joined them. Corrected
+  to name the actual rule: spans go on the variants that can *originate*
+  a runtime failure.

@@ -161,8 +161,8 @@ fn show(st: &Stepping) {
     };
     println!("  step {} · depth {} · {what}", m.steps(), m.depth());
 
-    // `position` is only set on `Var` and `App` — the two expressions
-    // that carry spans — so literals and value-passing steps show nothing
+    // `position` is set on the three span-bearing expressions (`Var`,
+    // `App`, `Raise`), so literals and value-passing steps show nothing
     // rather than a made-up location.
     if let Some(span) = m.position() {
         println!("{}", indent(&render_span(&st.src, Some(span), "here")));

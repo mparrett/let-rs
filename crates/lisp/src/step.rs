@@ -588,10 +588,11 @@ impl Machine {
         }
     }
 
-    /// Where in the source the machine is, when that's known. `Var` and
-    /// `App` are the only expressions carrying a position (ADR-039), so
-    /// this is `None` while the machine sits on a literal or is handing a
-    /// value back to a continuation.
+    /// Where in the source the machine is, when that's known. `Var`,
+    /// `App`, and `Raise` are the expressions carrying a position
+    /// (ADR-039, extended by ADR-041), so this is `None` while the
+    /// machine sits on a literal or is handing a value back to a
+    /// continuation. A condition in flight reports its raise site.
     pub fn position(&self) -> Option<Span> {
         match &self.state.as_ref()?.mode {
             Mode::Eval(e, _) => match &**e {

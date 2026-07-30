@@ -475,6 +475,32 @@ const BUILTINS: &[(&str, Arity, BuiltinFn)] = &[
     ("error-irritants", Arity::Exact(1), error_irritants),
 ];
 
+/// A built-in as a *value*, for forms the compiler generates itself.
+///
+/// Compiler-generated code must not reach its operators through
+/// `Expr::Var`: that is an ordinary lookup, so a user binding named
+/// `list` silently changes what the generated form means. `(error …)`
+/// built its condition that way, and `(let ((list …)) (error "boom"))`
+/// returned the user's `list` result instead of raising; quasiquote had
+/// the same bug against `list` and `append` since it was written.
+/// Quoting the prim value makes those forms unshadowable — and costs
+/// less at run time than the lookup did, since `Expr::Quote` is one `Rc`
+/// clone.
+///
+/// Panics on an unknown name: callers pass literals, so a miss is a
+/// compiler bug rather than anything a program can cause.
+pub(crate) fn builtin(name: &str) -> Val {
+    BUILTINS
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|&(name, arity, f)| Val::Prim {
+            name,
+            arity,
+            f: Rc::new(f),
+        })
+        .unwrap_or_else(|| panic!("compiler asked for a builtin that isn't registered: {name}"))
+}
+
 /// Seed the Vm's globals table with the built-in prims. Called once
 /// at `Vm::new` time. Each prim lives in the same table as user-level
 /// `(define …)` bindings, so a `(define + 5)` overwrites the slot and

@@ -155,6 +155,35 @@ impl Expander {
                     d.span,
                 ));
             }
+            // guard: `(guard (var handler) body)` binds `var`, so the
+            // binder position is a name and not an expression. Without
+            // this branch the expander treats `(var handler)` as an
+            // ordinary application and expands `var` when it happens to
+            // match a macro — `(guard (when when) …)` failed inside
+            // expansion rather than binding a variable called `when`.
+            // Same shape as the let-family and `set!` branches below.
+            if name_str == "guard" && items.len() == 3 {
+                let clause = match items[1].as_list() {
+                    Some(pair) if pair.len() == 2 => Datum::list(
+                        vec![
+                            pair[0].clone(),
+                            self.expand_all_at(vm, pair[1].clone(), depth + 1)?,
+                        ],
+                        items[1].span,
+                    ),
+                    // Malformed: leave it for `compile` to reject with a
+                    // position, rather than guessing here.
+                    _ => items[1].clone(),
+                };
+                return Ok(Datum::list(
+                    vec![
+                        items[0].clone(),
+                        clause,
+                        self.expand_all_at(vm, items[2].clone(), depth + 1)?,
+                    ],
+                    d.span,
+                ));
+            }
             // Let-family: don't macro-expand binding-name positions.
             if matches!(name_str, "let" | "let*" | "letrec") && items.len() >= 3 {
                 let bindings_out = match items[1].as_list() {

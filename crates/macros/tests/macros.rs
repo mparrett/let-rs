@@ -492,3 +492,34 @@ fn derived_symbol_names_survive_expansion() {
         .expect("derived names must survive expansion");
     assert_eq!(format!("{v}"), "(x y x y)");
 }
+
+#[test]
+fn guard_binder_is_not_macro_expanded() {
+    // `(guard (var handler) body)` binds `var`, so the expander has to
+    // leave that position alone — as it already did for `lambda`, `set!`
+    // and the let-family. Without the branch it treated `(var handler)`
+    // as an application and expanded `var` whenever it named a macro,
+    // so a variable called `when` failed inside expansion.
+    let mut vm = MacroVm::with_stdlib();
+    assert_eq!(
+        format!("{}", vm.eval_str("(guard (when when) (car '()))").unwrap()),
+        "(error \"car: expected pair, got ()\")"
+    );
+    // The binder really is bound, not just tolerated.
+    assert_eq!(
+        format!(
+            "{}",
+            vm.eval_str("(guard (unless 'bound) (car '()))").unwrap()
+        ),
+        "bound"
+    );
+    // And the handler and body still get expanded.
+    assert_eq!(
+        format!(
+            "{}",
+            vm.eval_str("(guard (e (when #t 'handled)) (begin (car '())))")
+                .unwrap()
+        ),
+        "handled"
+    );
+}

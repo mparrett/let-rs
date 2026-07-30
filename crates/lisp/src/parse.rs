@@ -685,7 +685,7 @@ fn compile_error(rest: &[Datum], span: Option<Span>) -> Result<Expr, LispErr> {
         return Err(LispErr::new("error: expected (error msg irritant ...)"));
     }
     let mut app: Vec<Rc<Expr>> = vec![
-        Rc::new(Expr::Var("list".into(), span)),
+        Rc::new(Expr::Quote(Rc::new(crate::prim::builtin("list")))),
         Rc::new(Expr::Quote(Rc::new(Val::Sym("error".into())))),
     ];
     for d in rest {
@@ -778,7 +778,7 @@ fn compile_quasiquote_form(rest: &[Datum]) -> Result<Expr, LispErr> {
 fn qq_wrap_form(tag: &'static str, inner: Expr, span: Option<Span>) -> Expr {
     Expr::App(
         [
-            Rc::new(Expr::Var("list".into(), span)),
+            Rc::new(Expr::Quote(Rc::new(crate::prim::builtin("list")))),
             Rc::new(Expr::Quote(Rc::new(Val::Sym(tag.into())))),
             Rc::new(inner),
         ]
@@ -851,7 +851,7 @@ fn compile_qq(d: &Datum, depth: usize) -> Result<Expr, LispErr> {
             // is just a literal cons.
             let any_splice = depth == 1 && items.iter().any(is_splice);
             if !any_splice {
-                let mut app = vec![Rc::new(Expr::Var("list".into(), span))];
+                let mut app = vec![Rc::new(Expr::Quote(Rc::new(crate::prim::builtin("list"))))];
                 for item in items {
                     app.push(Rc::new(compile_qq(item, depth)?));
                 }
@@ -862,7 +862,8 @@ fn compile_qq(d: &Datum, depth: usize) -> Result<Expr, LispErr> {
             let mut bucket: Vec<Rc<Expr>> = Vec::new();
             let flush = |bucket: &mut Vec<Rc<Expr>>, parts: &mut Vec<Rc<Expr>>| {
                 if !bucket.is_empty() {
-                    let mut list_expr = vec![Rc::new(Expr::Var("list".into(), span))];
+                    let mut list_expr =
+                        vec![Rc::new(Expr::Quote(Rc::new(crate::prim::builtin("list"))))];
                     list_expr.append(bucket);
                     parts.push(Rc::new(Expr::App(list_expr.into(), span)));
                 }
@@ -877,7 +878,9 @@ fn compile_qq(d: &Datum, depth: usize) -> Result<Expr, LispErr> {
             }
             flush(&mut bucket, &mut parts);
 
-            let mut app = vec![Rc::new(Expr::Var("append".into(), span))];
+            let mut app = vec![Rc::new(Expr::Quote(Rc::new(crate::prim::builtin(
+                "append",
+            ))))];
             app.extend(parts);
             Ok(Expr::App(app.into(), span))
         }
