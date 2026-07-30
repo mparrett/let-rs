@@ -11,13 +11,13 @@ pub enum Expr {
     Bool(bool),
     /// A variable reference, with the position it was read from.
     ///
-    /// `Var` and `App` are the only variants that carry a span, because
-    /// they are the only ones that can fail at run time: every runtime
-    /// error the engine raises is either `unbound variable` (here) or
-    /// something reached through a call — `not callable`, an arity
-    /// mismatch, or a prim's own complaint. See ADR-039 on why that's
+    /// Spans go on the variants that can *originate* a runtime failure,
+    /// which is why three of the eleven carry one: `Var` (unbound
+    /// variable), `App` (arity, non-callable head, and every prim's own
+    /// complaint, since a prim has no position of its own), and `Raise`
+    /// (a condition that escapes to the top). See ADR-039 for why that's
     /// the useful subset of ADR-022's deferred Phase 2 rather than a
-    /// span on all nine variants.
+    /// span on every variant, and ADR-041 for `Raise` joining the set.
     ///
     /// `None` for forms with no source text: macro output and
     /// host-constructed applications.

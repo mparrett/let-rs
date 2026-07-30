@@ -43,12 +43,13 @@ The `lisp` core stays zero-deps.
 The five CEK transition rules live in `crates/lisp/src/step.rs` — read that
 file before anything else; the rest of the engine is decoration.
 
-- `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If | Letrec | SetBang`.
-  `Lam` and `App` hold `Rc<[…]>`, not `Vec`, so the `K` that walks an
-  application shares the slice instead of copying it (ADR-035).
-  `Var` and `App` carry an `Option<Span>` — and only those two, because
-  they're the only variants that can fail at run time (ADR-039). Don't
-  add spans to the rest; a literal never errors.
+- `expr.rs` — AST: `Num | Bool | Var | Quote(Rc<Val>) | Lam | App | If |
+  Letrec | SetBang | Raise | Guard`. `Lam` and `App` hold `Rc<[…]>`, not
+  `Vec`, so the `K` that walks an application shares the slice instead of
+  copying it (ADR-035). `Var`, `App`, and `Raise` carry an
+  `Option<Span>` — those three, because they're the ones that can
+  *originate* a runtime failure (ADR-039, extended by ADR-041). Don't add
+  spans to the rest; a literal never errors.
 - `error.rs` — `LispErr { msg, span }` + `Span { line, col, len }` +
   `render_span` (source line with a caret run under it). **`with_span`
   fills a span only if one isn't already set** — that's what lets

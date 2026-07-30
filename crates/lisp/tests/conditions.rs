@@ -239,6 +239,36 @@ fn conditions_are_ordinary_values() {
 }
 
 #[test]
+fn generated_forms_do_not_go_through_shadowable_bindings() {
+    // `error` builds its condition with `list`, and quasiquote builds
+    // its spine with `list` and `append`. Resolving those through
+    // `Expr::Var` made them ordinary lookups, so a user binding of the
+    // same name silently changed what the form meant. They compile to a
+    // quoted prim value now, which no binding can intercept.
+    assert_eq!(
+        eval("(let ((list (lambda (a b) 'wrong))) (guard (e e) (error \"boom\")))"),
+        "(error \"boom\")"
+    );
+    // Same bug, predating conditions: quasiquote against `list` …
+    assert_eq!(
+        eval("(let ((list (lambda (a b) 'wrong))) `(1 ,(+ 1 1)))"),
+        "(1 2)"
+    );
+    // … and against `append`, on the splice path.
+    assert_eq!(
+        eval("(let ((append (lambda (a b) 'wrong))) `(1 ,@(list 2 3)))"),
+        "(1 2 3)"
+    );
+    // A global shadow is the same hazard by another route.
+    let mut vm = Vm::new();
+    vm.eval_str("(define list (lambda (a b) 'wrong))").unwrap();
+    assert_eq!(
+        format!("{}", vm.eval_str("(guard (e e) (error \"boom\"))").unwrap()),
+        "(error \"boom\")"
+    );
+}
+
+#[test]
 fn guard_rejects_malformed_forms_at_compile_time() {
     let mut vm = Vm::new();
     for (src, want) in [
