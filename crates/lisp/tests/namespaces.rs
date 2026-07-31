@@ -343,3 +343,58 @@ fn a_pack_cannot_export_over_a_builtin_or_a_user_define() {
         .expect_err("the user bound it first");
     assert!(err.msg.contains("already bound"), "{err}");
 }
+
+#[test]
+fn a_parked_session_cannot_keep_the_globals_alive() {
+    // ADR-044's amendment, from review of PR #19. A `Session` holds no
+    // borrow of its `Vm` on purpose (ADR-040), so a host can park one
+    // between event-loop turns — which means it can also outlive the Vm
+    // entirely. It used to hold the target namespace as an
+    // `Rc<Namespace>` *and* a snapshot of that namespace's whole table
+    // for rollback, so parking one kept every binding and closure alive
+    // after the Vm dropped.
+    //
+    // The lint that ADR-044 leans on could never have caught this: it
+    // checks types that appear in public signatures, and these were
+    // private fields of a public type. Both moved to the `Vm`.
+    let mut vm = Vm::new();
+    vm.eval_str("(define f (lambda (x) (f x)))").unwrap();
+    let cell = vm.global_cell_weak("f").expect("f is defined");
+    let store = vm.store_probe();
+
+    let session = vm.start("(+ 1 2)").unwrap();
+    drop(vm);
+
+    assert!(
+        cell.upgrade().is_none(),
+        "a binding outlived its Vm while a session was parked — the \
+         session is rooting the globals table again"
+    );
+    assert!(!store.is_alive(), "the store outlived its Vm");
+    // Held across the drop deliberately: inert is the property, not
+    // dropped-early.
+    drop(session);
+}
+
+#[test]
+fn abandoning_sessions_does_not_accumulate_rollbacks() {
+    // Moving the rollback snapshot into the `Vm` trades one problem for
+    // a smaller one: a session the host abandons rather than resuming to
+    // completion leaves its snapshot behind. They are pruned when the
+    // next session starts, so the garbage is bounded rather than
+    // unbounded — and, more to the point, all of it dies with the Vm.
+    let mut vm = Vm::new();
+    vm.eval_str("(define g 1)").unwrap();
+    let cell = vm.global_cell_weak("g").expect("g is defined");
+    for _ in 0..50 {
+        let s = vm.start("(+ 1 2)").unwrap();
+        drop(s); // abandoned mid-batch, never resumed
+    }
+    // Still usable, and the earlier binding is untouched.
+    assert_eq!(format!("{}", vm.eval_str("g").unwrap()), "1");
+    drop(vm);
+    assert!(
+        cell.upgrade().is_none(),
+        "abandoned sessions retained cells"
+    );
+}

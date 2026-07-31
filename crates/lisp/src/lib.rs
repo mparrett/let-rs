@@ -28,11 +28,21 @@
 //! enforced at the *field* while the invariant is a claim about every
 //! line that returns.
 //!
-//! It is now enforced by the compiler instead (ADR-044). `Namespace` and
-//! `Store` are crate-private, so no public signature can mention them; a
-//! new accessor that would hand one out does not compile. The `deny`
-//! below is the other half: without it, a public item that leaks a
-//! private type is a *warning*, and a warning is not an invariant.
+//! Two things enforce it now (ADR-044), because one wasn't enough:
+//!
+//! 1. **Accessors.** `Namespace` and `Store` are crate-private, so no
+//!    public signature can mention them and a new accessor handing one
+//!    out does not compile. The `deny` below is what makes that bite:
+//!    leaking a private type through a public signature is only a
+//!    *warning* by default, and a warning is not an invariant.
+//! 2. **Everything else.** The lint checks *signatures*. It cannot see a
+//!    public type that stores a container in a private field, which is
+//!    what [`Session`] did — parking one kept a whole globals table
+//!    alive past its `Vm`, and no lint was ever going to notice. So
+//!    `Vm`'s `Drop` checks the property itself, at the one moment it is
+//!    decidable: if a strong reference to the store or any namespace
+//!    outlives the `Vm`, the counts are wrong and a `debug_assert`
+//!    fires. `mod ownership_guard` pins both directions.
 #![deny(private_interfaces, private_bounds)]
 
 use std::cell::RefCell;
@@ -116,6 +126,80 @@ pub struct Vm {
     /// `set_step_budget` so a nonterminating expression surfaces as an
     /// error instead of a hung page.
     step_budget: u64,
+    /// Rollback snapshots for in-flight [`Session`]s, keyed by session id.
+    ///
+    /// These live here rather than in the `Session` because the snapshot
+    /// is a clone of a whole namespace table — every binding cell in it —
+    /// and a `Session` deliberately holds no borrow of the `Vm`
+    /// (ADR-040), so a host can park one indefinitely. Owning them in the
+    /// `Session` meant a parked session kept every binding and closure
+    /// alive after its `Vm` dropped: the ADR-036 invariant, escaping
+    /// through a private field of a public type where no lint could see
+    /// it (ADR-044 amendment).
+    rollbacks: HashMap<u64, Rollback>,
+    next_session: u64,
+}
+
+impl Drop for Vm {
+    /// The catch-all half of ADR-044's enforcement, and the half that
+    /// would have caught the `Session` escape.
+    ///
+    /// Making `Namespace` and `Store` crate-private stops any *signature*
+    /// from handing one out, which is the failure mode that happened
+    /// twice. It cannot see a public type that stores one in a private
+    /// field — `Session` did exactly that, and no lint was ever going to
+    /// notice. This checks the property itself, at the one moment it is
+    /// decidable: if anything still holds a strong reference when the
+    /// `Vm` goes, the counts are wrong.
+    ///
+    /// `debug_assert` on purpose. It runs in every test and every debug
+    /// build and costs nothing shipped; a retained container is a
+    /// development mistake, not a condition to handle at runtime.
+    fn drop(&mut self) {
+        // Never turn someone else's failure into an abort: a panicking
+        // test drops its `Vm` mid-unwind, and a second panic from here
+        // would replace the real diagnostic with `panic in a destructor`.
+        if std::thread::panicking() {
+            return;
+        }
+        debug_assert_eq!(
+            Rc::strong_count(&self.store),
+            1,
+            "the store outlived its Vm: something holds a strong reference. \
+             Env and Frame reach it through a Weak, so this is a new escape \
+             — see ADR-044."
+        );
+        // Each pack namespace holds a strong reference to its parent, so
+        // the root's expected count is one for this `Vm` plus one per pack.
+        debug_assert_eq!(
+            Rc::strong_count(&self.globals),
+            1 + self.packs.len(),
+            "the root namespace outlived its Vm: something holds a strong \
+             reference beyond this Vm and its {} pack(s) — see ADR-044.",
+            self.packs.len()
+        );
+        for (name, ns) in &self.packs {
+            debug_assert_eq!(
+                Rc::strong_count(ns),
+                1,
+                "pack namespace `{name}` outlived its Vm: something holds a \
+                 strong reference — see ADR-044."
+            );
+        }
+    }
+}
+
+/// A namespace table as it stood before a batch began, owed back if the
+/// batch fails. Held by the `Vm`, not the `Session` — see [`Vm::rollbacks`].
+struct Rollback {
+    ns: NsHandle,
+    table: HashMap<Sym, Rc<RefCell<Val>>>,
+    /// Liveness signal for the owning `Session`. A host that abandons a
+    /// session rather than resuming it to completion leaves its entry
+    /// behind; dead tokens are pruned when the next session starts, so
+    /// the garbage is bounded by "sessions abandoned since the last
+    /// `start`" rather than growing forever.
+    token: Weak<()>,
 }
 
 impl Vm {
@@ -136,6 +220,8 @@ impl Vm {
             packs: HashMap::new(),
             store,
             step_budget: u64::MAX,
+            rollbacks: HashMap::new(),
+            next_session: 0,
         }
     }
 
@@ -452,8 +538,12 @@ impl Vm {
 
     /// [`Vm::start_datums`] targeting `ns`: `define`s land there, and
     /// top-level expressions resolve names from there outward.
-    pub fn start_datums_in(&mut self, ns: &NsHandle, forms: &[Datum]) -> Result<Session, LispErr> {
-        let ns = &self.resolve_or_err(ns)?;
+    pub fn start_datums_in(
+        &mut self,
+        ns_handle: &NsHandle,
+        forms: &[Datum],
+    ) -> Result<Session, LispErr> {
+        let ns = &self.resolve_or_err(ns_handle)?;
         // Binding-level rollback: if any form in the batch fails,
         // restore the globals *table* to its pre-call state. Pre-fix, a
         // failed define left a placeholder cell visible in env (e.g.
@@ -498,6 +588,23 @@ impl Vm {
             return Err(e);
         }
 
+        // Prune snapshots whose sessions were abandoned before handing
+        // out a new one. Bounded garbage, collected at the only moment
+        // we're guaranteed to be here with `&mut self`.
+        self.rollbacks.retain(|_, r| r.token.strong_count() > 0);
+
+        let id = self.next_session;
+        self.next_session += 1;
+        let token = Rc::new(());
+        self.rollbacks.insert(
+            id,
+            Rollback {
+                ns: ns_handle.clone(),
+                table: saved_globals,
+                token: Rc::downgrade(&token),
+            },
+        );
+
         Ok(Session {
             forms: forms.to_vec(),
             next: 0,
@@ -511,8 +618,8 @@ impl Vm {
             // closures it creates capture this env and keep doing so
             // forever after (ADR-042).
             env: self.env.with_namespace(ns),
-            ns: Rc::clone(ns),
-            saved_globals: Some(saved_globals),
+            id,
+            _token: token,
         })
     }
 
@@ -535,9 +642,10 @@ impl Vm {
     pub fn resume(&mut self, session: &mut Session, slice: u64) -> Result<Progress, LispErr> {
         let result = self.resume_inner(session, slice);
         if result.is_err()
-            && let Some(saved) = session.saved_globals.take()
+            && let Some(rollback) = self.rollbacks.remove(&session.id)
+            && let Some(ns) = self.resolve(&rollback.ns)
         {
-            session.ns.restore(saved);
+            ns.restore(rollback.table);
         }
         result
     }
@@ -550,7 +658,7 @@ impl Vm {
                 let Some(datum) = session.forms.get(session.next) else {
                     // Every form done: the batch's value is the last
                     // expression's, or `#t` if it was all defines.
-                    session.saved_globals = None;
+                    self.rollbacks.remove(&session.id);
                     return Ok(Progress::Done(session.last.clone()));
                 };
                 session.next += 1;
@@ -712,13 +820,17 @@ pub struct Session {
     /// The environment this batch evaluates against — the Vm's root env
     /// rebased onto the target namespace (ADR-042).
     env: Env,
-    /// The namespace `define`s land in, and the one rolled back on
-    /// failure. Held strong: a session outlives no Vm, and the `Vm` keeps
-    /// the authoritative reference either way.
-    ns: Rc<Namespace>,
-    /// Pre-call table of `ns`, dropped once the batch completes. `Some`
-    /// means a rollback is still owed if something fails.
-    saved_globals: Option<HashMap<Sym, Rc<RefCell<Val>>>>,
+    // The target namespace used to live here as an `Rc<Namespace>`,
+    // which is what let a parked session keep an entire globals table
+    // alive past its `Vm` (ADR-044 amendment). It moved to the `Vm`'s
+    // rollback record — which needs it anyway — rather than being
+    // downgraded to a handle nothing read.
+    /// Identifies this session's rollback snapshot in [`Vm::rollbacks`].
+    /// Presence there means a rollback is still owed.
+    id: u64,
+    /// Dropped with the session; the `Vm` watches it through a `Weak` to
+    /// prune the snapshots of sessions that were abandoned.
+    _token: Rc<()>,
 }
 
 impl std::fmt::Debug for Session {
@@ -783,5 +895,64 @@ fn extract_define_name(d: &Datum) -> Result<Option<Sym>, LispErr> {
             "define: name must be a symbol",
             items[1].span,
         )),
+    }
+}
+
+/// Tests for ADR-044's *enforcement*, rather than for any behavior.
+///
+/// The compile-time half — `Namespace` and `Store` being crate-private,
+/// plus `deny(private_interfaces)` — can't be pinned from here; a test
+/// that a signature fails to compile needs `trybuild`, which `lisp` won't
+/// take a dependency on (ADR-002). These pin the runtime half, which is
+/// the part that catches what the lint structurally cannot see: a public
+/// type storing a container in a private field, which is exactly how
+/// `Session` escaped.
+///
+/// They live in the crate because reproducing the escape requires
+/// touching the private fields. That is the point: from outside, these
+/// leaks are unwritable.
+#[cfg(test)]
+mod ownership_guard {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "root namespace outlived its Vm")]
+    fn a_retained_root_trips_the_guard() {
+        let vm = Vm::new();
+        let _leaked = Rc::clone(&vm.globals);
+        drop(vm);
+    }
+
+    #[test]
+    #[should_panic(expected = "store outlived its Vm")]
+    fn a_retained_store_trips_the_guard() {
+        let vm = Vm::new();
+        let _leaked = Rc::clone(&vm.store);
+        drop(vm);
+    }
+
+    #[test]
+    #[should_panic(expected = "pack namespace `p` outlived its Vm")]
+    fn a_retained_pack_trips_the_guard() {
+        let mut vm = Vm::new();
+        let h = vm.namespace("p");
+        let _leaked = vm.resolve(&h).unwrap();
+        drop(vm);
+    }
+
+    #[test]
+    fn a_clean_vm_with_packs_and_sessions_does_not() {
+        // The guard has to be quiet on the ordinary case, or it is just
+        // a flaky test. Packs raise the root's expected count by one
+        // each, and a completed session must leave nothing behind.
+        let mut vm = Vm::new();
+        let a = vm.namespace("a");
+        let b = vm.namespace("b");
+        vm.eval_str_in(&a, "(define x 1)").unwrap();
+        vm.eval_str_in(&b, "(define x 2)").unwrap();
+        let mut s = vm.start("(+ 1 2)").unwrap();
+        vm.resume(&mut s, u64::MAX).unwrap();
+        drop(s);
+        drop(vm);
     }
 }

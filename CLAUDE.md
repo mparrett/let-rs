@@ -167,7 +167,14 @@ host types.)
   to compile (ADR-044). That is deliberate — the invariant was reopened
   by ADR-042 and ADR-043 in consecutive slices, both times by a
   convenience accessor. If you need a new diagnostic, add a probe type
-  that answers questions rather than handing back the container. `Vm::start` / `Vm::resume` drive a `Session`
+  that answers questions rather than handing back the container.
+  **The lint only sees signatures**, though, so `Vm::drop` also
+  `debug_assert`s the strong counts — that's what catches a public type
+  storing a container in a *private field*, which is how `Session` kept
+  a whole globals table alive past its Vm. A public struct needing
+  per-batch state belongs in the `Vm` keyed by id (see `Vm::rollbacks`),
+  not in the struct itself. `mod ownership_guard` pins both directions.
+  `Vm::start` / `Vm::resume` drive a `Session`
   (a resumable batch holding no borrow of the `Vm`, so a host can park
   one between event-loop turns); `eval_datums` is implemented as
   `start_datums` plus one unbounded `resume`, so **don't reintroduce a
