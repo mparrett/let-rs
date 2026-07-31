@@ -15,7 +15,7 @@ use crate::val::Val;
 /// ADR-023 CESK migration. Frame slots moved to the `Store`; globals
 /// kept their `Rc<RefCell<Val>>` cells so the ADR-015 Weak back-edge
 /// pattern still holds end-to-end without re-derivation.
-pub type Globals = Rc<Namespace>;
+pub(crate) type Globals = Rc<Namespace>;
 
 /// Immutable, structurally-shared linked frames for lexical bindings
 /// (`let`, `letrec`, closure params). Each slot is an `Addr` into the
@@ -188,7 +188,7 @@ impl Env {
     /// Crate-private, and the same escape as [`Env::namespace`] one
     /// register over: this upgrades to a strong `Rc<Store>`, so a public
     /// version lets a caller keep the whole arena — every frame slot in
-    /// it — alive past its `Vm`. `Vm::store_weak` is the read-only
+    /// it — alive past its `Vm`. `Vm::store_probe` is the read-only
     /// diagnostic handle ADR-036 intends for outside use. Found while
     /// fixing the namespace case; it was public from the ADR-023 CESK
     /// migration onward and no test had ever tried it.

@@ -239,7 +239,7 @@ fn an_env_handed_out_cannot_keep_the_globals_alive() {
     vm.export(&a, &["f"]).unwrap();
 
     let cell = vm.global_cell_weak("f").expect("f is exported to root");
-    let store = vm.store_weak();
+    let store = vm.store_probe();
     let env = vm.env_in(&a).expect("pack env");
 
     drop(vm);
@@ -248,7 +248,7 @@ fn an_env_handed_out_cannot_keep_the_globals_alive() {
         "a pack binding outlived its Vm — an Env is rooting the globals"
     );
     assert!(
-        store.upgrade().is_none(),
+        !store.is_alive(),
         "the store outlived its Vm — an Env is rooting the arena"
     );
     // Held across the drop on purpose: the point is that this is inert,

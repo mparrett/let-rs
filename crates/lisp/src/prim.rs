@@ -504,7 +504,7 @@ pub(crate) fn builtin(name: &str) -> Val {
 /// at `Vm::new` time. Each prim lives in the same table as user-level
 /// `(define …)` bindings, so a `(define + 5)` overwrites the slot and
 /// the next `(+ 1 2)` errors with "not callable: 5" — see ADR-020.
-pub fn install_builtins(globals: &crate::env::Globals) {
+pub(crate) fn install_builtins(globals: &crate::env::Globals) {
     for &(name, arity, f) in BUILTINS {
         globals.define(
             name.into(),

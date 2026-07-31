@@ -18,6 +18,22 @@
 //! macros wrap a [`Vm`] in `macros::MacroVm`. Parser-level quasiquote
 //! (`\``, `,`, `,@`) stays here because it's list-construction syntax;
 //! it works without macros installed.
+//!
+//! ## The ownership invariant, and what enforces it
+//!
+//! A `Vm` is the sole strong owner of its globals table and its store, so
+//! dropping it releases every binding, closure and frame slot. That has
+//! been the rule since ADR-036 — and it was reopened twice in a row, by
+//! ADR-042's `root()` and ADR-043's `env_in()`, because privacy was
+//! enforced at the *field* while the invariant is a claim about every
+//! line that returns.
+//!
+//! It is now enforced by the compiler instead (ADR-044). `Namespace` and
+//! `Store` are crate-private, so no public signature can mention them; a
+//! new accessor that would hand one out does not compile. The `deny`
+//! below is the other half: without it, a public item that leaks a
+//! private type is a *warning*, and a warning is not an invariant.
+#![deny(private_interfaces, private_bounds)]
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -34,15 +50,24 @@ pub mod step;
 pub mod store;
 pub mod val;
 
-pub use env::{Env, Globals};
+pub use env::Env;
 pub use error::{LispErr, Span, render_span};
 pub use expr::{Expr, Sym};
 pub use ns::NsHandle;
 
+// Crate-internal, and deliberately *not* re-exported (ADR-044).
+// `Namespace` and `Store` are the two containers the `Vm` must be sole
+// strong owner of. Keeping them unnameable from outside means the
+// compiler rejects any public signature that mentions them — so an
+// accessor that would hand one out cannot be written, rather than being
+// caught after the fact. `Globals` is `Rc<Namespace>` and goes with it.
+use env::Globals;
 use ns::Namespace;
+use store::Store;
+
 pub use parse::{Datum, DatumKind};
 pub use step::{Machine, Progress, Step, run, run_bounded};
-pub use store::{Addr, Store};
+pub use store::Addr;
 pub use val::Val;
 
 // Re-export so hosts wiring up state-capturing prims can write
@@ -73,7 +98,7 @@ pub struct Vm {
     /// because the engine never lets an `Addr` escape the `Env` that
     /// keeps its frame alive (ADR-033). A `pub` handle here would have
     /// been the way to break exactly that. Diagnostics go through
-    /// [`Vm::store_weak`].
+    /// [`Vm::store_probe`].
     store: Rc<Store>,
     /// Namespaces created by [`Vm::namespace`], keyed by name (ADR-042).
     /// The `Vm` holds the sole strong references, matching how it holds
@@ -190,11 +215,17 @@ impl Vm {
         Ok(())
     }
 
-    /// `Weak` handle to the Vm's store. Exposed for ADR-023's
-    /// `letrec_does_not_leak` diagnostic, which asserts the store
-    /// drops with the Vm — proof that no closure rooted it.
-    pub fn store_weak(&self) -> Weak<Store> {
-        Rc::downgrade(&self.store)
+    /// A non-owning probe of the Vm's store, for ADR-023's
+    /// `letrec_does_not_leak` diagnostic and the ADR-033 reclamation
+    /// tests: it answers whether the arena is still alive and how full
+    /// it is, and it cannot be turned into a reference that keeps it so.
+    ///
+    /// This used to hand out the `Weak<Store>` itself, which a caller
+    /// could upgrade and hold — rooting the whole arena past its `Vm`.
+    /// The name said `weak` and the type was honest about it; that
+    /// still left the escape one `.upgrade()` away (ADR-044).
+    pub fn store_probe(&self) -> StoreProbe {
+        StoreProbe(Rc::downgrade(&self.store))
     }
 
     /// Read the current value of top-level binding `name`, or `None` if
@@ -221,7 +252,7 @@ impl Vm {
 
     /// `Weak` handle to the cell backing top-level binding `name`, or
     /// `None` if it isn't bound. Diagnostic sibling of
-    /// [`Vm::store_weak`]: it lets a caller observe whether a binding's
+    /// [`Vm::store_probe`]: it lets a caller observe whether a binding's
     /// cell outlives this Vm — the ADR-015 property — without holding
     /// the cell (or the table) alive and thereby changing the answer.
     pub fn global_cell_weak(&self, name: &str) -> Option<Weak<RefCell<Val>>> {
@@ -610,6 +641,46 @@ impl Vm {
 impl Default for Vm {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A non-owning window onto a `Vm`'s store, handed out by
+/// [`Vm::store_probe`].
+///
+/// Every method answers from a momentary upgrade and drops it again, so
+/// holding a probe forever still cannot keep the arena alive. `None`
+/// means the owning `Vm` is gone — which is itself the thing most of
+/// these diagnostics are asserting.
+///
+/// The type exists because the invariant it protects is otherwise
+/// unenforceable: `Store` is crate-private, so this is the only shape in
+/// which anything store-related can cross the crate boundary at all
+/// (ADR-044).
+pub struct StoreProbe(Weak<Store>);
+
+impl StoreProbe {
+    /// Whether the store — and therefore the `Vm` that owns it — is
+    /// still alive.
+    pub fn is_alive(&self) -> bool {
+        self.0.upgrade().is_some()
+    }
+
+    /// Live slots, or `None` once the `Vm` has dropped. Slots are
+    /// recycled (ADR-033), so this is occupancy rather than a total.
+    pub fn len(&self) -> Option<usize> {
+        self.0.upgrade().map(|s| s.len())
+    }
+
+    /// Whether the store holds no live slots. `None` once the `Vm` has
+    /// dropped — which is *not* the same as empty, and the reason this
+    /// returns an `Option` rather than defaulting to `true`.
+    pub fn is_empty(&self) -> Option<bool> {
+        self.0.upgrade().map(|s| s.is_empty())
+    }
+
+    /// High-water mark: slots ever allocated, including recycled ones.
+    pub fn slots(&self) -> Option<usize> {
+        self.0.upgrade().map(|s| s.slots())
     }
 }
 

@@ -143,8 +143,8 @@ fn unwinding_reclaims_the_frames_it_discards() {
     // slots those bindings owned come back through `Frame::drop`
     // (ADR-033) with no special handling in the unwinder.
     let mut vm = Vm::new();
-    let store = vm.store_weak();
-    let live = || store.upgrade().expect("store outlives this").len();
+    let store = vm.store_probe();
+    let live = || store.len().expect("store outlives this");
 
     // Non-tail recursion on purpose: each pending `(+ 1 …)` holds a
     // frame whose env owns a store slot, which is what this measures.
