@@ -2692,6 +2692,178 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       </div>
     </section>
 
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">XV</span>
+        <span class="mark">⊥</span>
+      </div>
+      <div class="body">
+        <h2>The half that was easy to check
+          <span class="tag">— a mechanism built to the shape of the last two bugs, and the one it couldn't see</span>
+        </h2>
+        <p>
+          The previous act ended on an uncomfortable note: an ownership
+          escape isn't a behavior that can come out wrong, so no test was
+          going to catch it, and both instances had been found by somebody
+          asking a question. This act is what happened when I tried to
+          stop needing somebody to ask.
+        </p>
+
+        <p>
+          It went well for about an afternoon.
+        </p>
+
+        <h3 class="subact">Making it unsayable</h3>
+        <p>
+          The invariant is that the machine is the sole owner of its
+          globals table and its store, so dropping it releases every
+          binding, closure and frame slot. The two reopenings had both
+          been accessors handing one of those back. So: make the two types
+          <em>unnameable</em> from outside the crate. Then no public
+          signature can mention them, and the accessor that would give one
+          away doesn't compile — the rule stops being a thing you have to
+          remember and becomes a thing you cannot write.
+        </p>
+
+        <p>
+          Half of that is the privacy. The other half is one line telling
+          the compiler to treat a public function leaking a private type
+          as an error rather than a warning, because a warning is not an
+          invariant. It earned its keep immediately, on a function that
+          had been public and taking the globals table since the day
+          builtins moved into it.
+        </p>
+
+        <p>
+          And I checked it, in both directions, rather than trusting that
+          it worked. Three would-be accessors — handing back the table,
+          the arena, and a weak reference to the arena — all three
+          rejected. From outside, naming either type is a privacy error
+          before you can even try. That is a real improvement and it still
+          stands.
+        </p>
+
+        <h3 class="subact">The half it couldn't see</h3>
+        <p>
+          The review came back with one finding, and it went to the root
+          of the claim rather than to a case I'd missed. The lint checks
+          types that appear in public <em>signatures</em>. It has nothing
+          whatsoever to say about a public type that stores one of those
+          containers in a <em>private field</em>.
+        </p>
+
+        <p>
+          Which is exactly what the resumable batch from Act XII does. It
+          held the namespace it was targeting, strongly, plus a copy of
+          that namespace's entire table — every binding cell — kept so a
+          failed batch could be rolled back. And that type holds no borrow
+          of the machine <em>on purpose</em>: the whole reason it exists in
+          that shape is so a host can park one between animation frames.
+          Being parkable and being able to outlive the thing you came from
+          turn out to be the same property. Start a batch, drop the
+          machine, and every binding defined beforehand was still alive.
+        </p>
+
+        <p>
+          The store, meanwhile, died correctly — its weak back-edges did
+          exactly what they were designed to do. The leak was entirely in
+          the wrapper's own fields, which is the cleanest possible
+          demonstration that the boundary was fine and the thing standing
+          just inside it was not.
+        </p>
+
+        <p>
+          One detail deserves preserving. The offending field carried a
+          comment justifying itself: <em>held strong: a session outlives
+          no Vm</em>. That sentence had been false since the act that
+          created the type, written in the same commit that made the type
+          borrow-free specifically so it could be parked. A written
+          justification, three acts stale, sitting directly above the line
+          it was wrong about.
+        </p>
+
+        <h3 class="subact">A mechanism shaped like its bugs</h3>
+        <p>
+          Here is the part worth the act. I had two examples of the
+          invariant breaking. Both were accessors. So I built a mechanism
+          that checks accessors, verified it thoroughly against accessors,
+          and wrote that the invariant was now enforced by the compiler.
+        </p>
+
+        <p>
+          But the property was never "accessors are safe." The property is
+          "nothing outlives the machine." Signatures were where the last
+          two bugs had happened to be — and because that's where I'd been
+          looking, a signature-checker <em>felt</em> like enforcement. I
+          generalized from the instances instead of from the claim, which
+          is a smaller step and looks identical from the inside.
+        </p>
+
+        <p>
+          The second attempt checks the property rather than a proxy for
+          it. The machine's destructor counts the outstanding references
+          to its own containers, and if anything still holds one when it
+          goes, that's a failed assertion — in every test run, in every
+          debug build, regardless of where the reference is held from or
+          what type is holding it. No enumeration of wrappers, because
+          enumeration was the mistake. It steps aside while a thread is
+          already panicking, so a failing test keeps its own diagnostic
+          instead of dying in a destructor.
+        </p>
+
+        <p>
+          And fixing only the batch type would have been the same error a
+          second time: closing the instance I'd been shown while the class
+          stayed open. So both landed together — the snapshot moved to the
+          machine that owns everything anyway, and the destructor check
+          went in behind it. Four tests pin the guard, three that must
+          trip it and one ordinary machine with two packs and a completed
+          batch that must not. The last one matters as much as the others:
+          a guard that fires on correct code isn't a guard, it's a flaky
+          test.
+        </p>
+
+        <p class="lift">
+          So the lesson, which is new and which I'd rather have learned
+          some other way: when you finally stop relying on vigilance and
+          build the mechanism, you will build the one that checks what is
+          <em>easy</em> to check. Tools answer the question they answer.
+          That question resembles yours closely enough that the difference
+          survives a careful review of the tool, an honest verification
+          pass, and a written-down decision — because all three of those
+          examine whether the mechanism works, and the mechanism worked
+          perfectly. It was aimed slightly to the left.
+        </p>
+
+        <p class="lift">
+          Which makes four acts with four lessons that are all the same
+          lesson wearing different clothes, and it took until the
+          fifteenth to see it. Act XII checked careful prose instead of
+          the number. Act XIII checked a convenient neighbour of the
+          claim instead of the claim. Act XIV checked behaviors when the
+          thing wasn't a behavior. This one checked signatures when the
+          thing was never about signatures. Every time, the work was real
+          and the checking was real, and the gap was between what was
+          claimed and what was actually looked at. That gap doesn't
+          announce itself, because from the inside you are always looking
+          at something.
+        </p>
+
+        <p class="lift">
+          And this act's mechanism is presumably also partial, so the
+          honest close is to say where. The destructor check fires at drop
+          time, in debug builds, and only if something actually drops a
+          machine — so it says nothing about a host that never does, and
+          nothing at all about reference cycles <em>inside</em> a machine
+          that's still running, which remain a known and separate
+          residual. It is a better mechanism than the one before it. It is
+          not the last word, and the pattern of this log is that saying so
+          out loud is the only thing that has ever helped.
+        </p>
+      </div>
+    </section>
+
     <div class="coda">
       <h3>What comes after</h3>
       <p>
@@ -2844,6 +3016,12 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         environment type had two public methods that would upgrade a
         weak back-edge into a strong one, letting a caller outlive the
         machine holding either the globals table or the store.
+        ADR-044 (Act XV) closed that second thread for good, or at
+        least for better: the two containers can't be named outside
+        the crate at all now, so the accessor that hands one back
+        won't compile — and, once the first attempt turned out to
+        check only the signatures it had been built to check, the
+        machine's destructor asserts that nothing outlives it.
         None of the remaining items are large; all of them are
         interesting; most of them are independent. The hard parts
         are done — the language is itself, three DSLs proved it,
