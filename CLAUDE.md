@@ -76,7 +76,13 @@ file before anything else; the rest of the engine is decoration.
   calls them. `export` shares the *cell*, so `set!` through either name
   writes the same slot — that's what keeps the mana counter readable from
   root. Exporting a name another pack exported is an error that names
-  both; don't weaken that, the silence was the original bug.
+  both; don't weaken that, the silence was the original bug. Collisions
+  are decided by **provenance** (which pack published the name), not cell
+  identity — re-running a prelude makes fresh cells, so an identity check
+  turns every reinstall into a false collision. Handles are opaque
+  `NsHandle` values, never `Rc<Namespace>`: handing out the `Rc` lets a
+  caller keep the whole globals table alive past its `Vm`, which is the
+  ADR-036 invariant.
 - `env.rs` — Rc-linked immutable frames. Post-ADR-023 (CESK) each
   frame carries a `Copy` `Addr` into the Vm's `Store` rather than an
   `Rc<RefCell<Val>>` per slot; the top-level `globals` table kept its

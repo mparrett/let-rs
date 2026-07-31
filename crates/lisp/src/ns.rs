@@ -25,10 +25,50 @@ use std::rc::Rc;
 use crate::expr::Sym;
 use crate::val::Val;
 
+/// Reserved name of the root namespace. A pack cannot claim it.
+pub(crate) const ROOT: &str = "root";
+
 /// A binding cell. Shared rather than copied when a name is exported, so
 /// `set!` through either name writes the same slot — which is what lets
 /// the mana counter live in the spells pack and still be read from root.
 pub type Cell = Rc<RefCell<Val>>;
+
+/// A reference to a namespace, safe to hand outside the engine.
+///
+/// Deliberately *not* an `Rc<Namespace>`. Handing out the `Rc` let a
+/// caller keep the entire globals table — and every closure and binding
+/// cell in it — alive after its `Vm` was dropped, which is exactly the
+/// sole-strong-owner invariant ADR-036 made `Vm::globals` private to
+/// protect. A handle is just a name; the `Vm` owns every `Rc` and
+/// resolves handles internally.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NsHandle(Rc<str>);
+
+impl NsHandle {
+    pub(crate) fn new(name: &str) -> NsHandle {
+        NsHandle(name.into())
+    }
+
+    /// The root namespace: builtins, user top-level `define`s, and
+    /// whatever the packs have exported.
+    pub fn root() -> NsHandle {
+        NsHandle(ROOT.into())
+    }
+
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+
+    pub(crate) fn is_root(&self) -> bool {
+        &*self.0 == ROOT
+    }
+}
+
+impl std::fmt::Display for NsHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 pub struct Namespace {
     name: Rc<str>,
@@ -36,23 +76,35 @@ pub struct Namespace {
     /// `None` for the root. A pack's namespace parents to the root, so
     /// builtins resolve without every pack re-registering them.
     parent: Option<Rc<Namespace>>,
+    /// For a target of `export`: which pack published each name here.
+    ///
+    /// Provenance rather than cell identity is what distinguishes the two
+    /// cases that look alike. Re-running a pack's prelude allocates fresh
+    /// cells for all of its defines, so a *reinstall* presents a
+    /// different cell for a name this same pack already exported — which
+    /// a cell-identity check reports as a collision, making every
+    /// installer panic on its second call. A genuine collision is a
+    /// different *pack* claiming the name, and that is what this records.
+    exported_by: RefCell<HashMap<Sym, Rc<str>>>,
 }
 
 impl Namespace {
-    pub fn root() -> Rc<Namespace> {
+    pub(crate) fn root() -> Rc<Namespace> {
         Rc::new(Namespace {
-            name: "root".into(),
+            name: ROOT.into(),
             table: RefCell::new(HashMap::new()),
             parent: None,
+            exported_by: RefCell::new(HashMap::new()),
         })
     }
 
     /// A child of `parent`, for one DSL pack.
-    pub fn child(name: &str, parent: &Rc<Namespace>) -> Rc<Namespace> {
+    pub(crate) fn child(name: &str, parent: &Rc<Namespace>) -> Rc<Namespace> {
         Rc::new(Namespace {
             name: name.into(),
             table: RefCell::new(HashMap::new()),
             parent: Some(Rc::clone(parent)),
+            exported_by: RefCell::new(HashMap::new()),
         })
     }
 
@@ -61,7 +113,7 @@ impl Namespace {
     }
 
     /// The cell bound to `name`, searching this table then outward.
-    pub fn cell(&self, name: &str) -> Option<Cell> {
+    pub(crate) fn cell(&self, name: &str) -> Option<Cell> {
         if let Some(c) = self.table.borrow().get(name) {
             return Some(Rc::clone(c));
         }
@@ -75,14 +127,14 @@ impl Namespace {
     /// Bind `name` in *this* table, replacing any binding it already
     /// held. Definition never walks outward: a pack defining a name the
     /// root also has gets its own, which is the whole point.
-    pub fn define(&self, name: Sym, val: Val) {
+    pub(crate) fn define(&self, name: Sym, val: Val) {
         self.table
             .borrow_mut()
             .insert(name, Rc::new(RefCell::new(val)));
     }
 
     /// Bind `name` to an existing cell — the aliasing that `export` uses.
-    pub fn bind_cell(&self, name: Sym, cell: Cell) {
+    pub(crate) fn bind_cell(&self, name: Sym, cell: Cell) {
         self.table.borrow_mut().insert(name, cell);
     }
 
@@ -94,7 +146,7 @@ impl Namespace {
     /// Write through the cell bound to `name`, wherever in the chain it
     /// lives. `set!` mutates an existing binding rather than creating
     /// one, so it walks outward exactly like lookup does.
-    pub fn set(&self, name: &str, val: Val) -> Result<(), String> {
+    pub(crate) fn set(&self, name: &str, val: Val) -> Result<(), String> {
         match self.cell(name) {
             Some(c) => {
                 *c.borrow_mut() = val;
@@ -104,31 +156,54 @@ impl Namespace {
         }
     }
 
-    /// Publish `name` from this namespace into `target`, sharing the
-    /// cell rather than copying the value.
-    ///
-    /// Fails if `target` already binds `name` to a *different* cell —
-    /// that's two packs claiming one public name, and the whole reason
-    /// this module exists is that the old behavior was to let the second
-    /// one win in silence. Re-exporting the same cell is a no-op, so
-    /// installing a pack twice is harmless.
-    pub fn export(&self, target: &Namespace, name: &str) -> Result<(), String> {
-        let Some(cell) = self.table.borrow().get(name).map(Rc::clone) else {
+    /// Would exporting `name` into `target` succeed? Separated from the
+    /// doing so a multi-name export can check the whole list before
+    /// mutating anything — otherwise a collision on the last name leaves
+    /// the earlier ones published even though the call reports failure.
+    pub(crate) fn can_export(&self, target: &Namespace, name: &str) -> Result<(), String> {
+        if !self.table.borrow().contains_key(name) {
             return Err(format!(
                 "{}: cannot export `{name}`, which it does not define",
                 self.name
             ));
-        };
-        if let Some(existing) = target.table.borrow().get(name)
-            && !Rc::ptr_eq(existing, &cell)
-        {
-            return Err(format!(
-                "`{name}` is already bound in `{}` by another pack; \
+        }
+        match target.exported_by.borrow().get(name) {
+            // Same pack re-exporting: a reinstall. Rebinding is the
+            // point, not an error.
+            Some(owner) if **owner == *self.name => Ok(()),
+            Some(owner) => Err(format!(
+                "`{name}` is already exported into `{}` by `{owner}`; \
                  `{}` cannot export it too",
                 target.name, self.name
-            ));
+            )),
+            // Bound in the target but not by an export — a builtin, or a
+            // user `define`. Refuse rather than silently replace it.
+            None if target.table.borrow().contains_key(name) => Err(format!(
+                "`{name}` is already bound in `{}`; `{}` cannot export over it",
+                target.name, self.name
+            )),
+            None => Ok(()),
         }
+    }
+
+    /// Publish `name` into `target`, sharing the cell rather than copying
+    /// the value, and recording this namespace as its owner.
+    ///
+    /// Call [`Namespace::can_export`] for every name first; this assumes
+    /// the check passed.
+    pub(crate) fn export(&self, target: &Namespace, name: &str) -> Result<(), String> {
+        self.can_export(target, name)?;
+        let cell = self
+            .table
+            .borrow()
+            .get(name)
+            .map(Rc::clone)
+            .expect("can_export confirmed the binding exists");
         target.bind_cell(name.into(), cell);
+        target
+            .exported_by
+            .borrow_mut()
+            .insert(name.into(), Rc::clone(&self.name));
         Ok(())
     }
 

@@ -37,7 +37,9 @@ pub mod val;
 pub use env::{Env, Globals};
 pub use error::{LispErr, Span, render_span};
 pub use expr::{Expr, Sym};
-pub use ns::Namespace;
+pub use ns::NsHandle;
+
+use ns::Namespace;
 pub use parse::{Datum, DatumKind};
 pub use step::{Machine, Progress, Step, run, run_bounded};
 pub use store::{Addr, Store};
@@ -112,10 +114,28 @@ impl Vm {
         }
     }
 
-    /// The root namespace: builtins, user top-level `define`s, and
-    /// whatever the installed packs have exported (ADR-042).
-    pub fn root(&self) -> &Rc<Namespace> {
-        &self.globals
+    /// Handle to the root namespace: builtins, user top-level `define`s,
+    /// and whatever the installed packs have exported (ADR-042).
+    ///
+    /// A handle, not the `Rc`. Returning the `Rc` would let a caller keep
+    /// the whole globals table alive past this `Vm` — the invariant
+    /// ADR-036 made the field private to protect.
+    pub fn root(&self) -> NsHandle {
+        NsHandle::root()
+    }
+
+    /// Resolve a handle to the table it names. `None` if the handle came
+    /// from a different `Vm`, or names a pack this one never created.
+    fn resolve(&self, h: &NsHandle) -> Option<Rc<Namespace>> {
+        if h.is_root() {
+            return Some(Rc::clone(&self.globals));
+        }
+        self.packs.get(h.name()).map(Rc::clone)
+    }
+
+    fn resolve_or_err(&self, h: &NsHandle) -> Result<Rc<Namespace>, LispErr> {
+        self.resolve(h)
+            .ok_or_else(|| LispErr::new(format!("unknown namespace: `{h}`")))
     }
 
     /// Get or create the namespace named `name`, a child of the root.
@@ -124,18 +144,23 @@ impl Vm {
     /// prelude there. Its internal helpers stay private to it, so two
     /// packs can both define `thread` without either noticing — which
     /// they already both did, identically, until this existed.
-    pub fn namespace(&mut self, name: &str) -> Rc<Namespace> {
-        if let Some(ns) = self.packs.get(name) {
-            return Rc::clone(ns);
+    pub fn namespace(&mut self, name: &str) -> NsHandle {
+        if name == ns::ROOT {
+            return NsHandle::root();
         }
-        let ns = Namespace::child(name, &self.globals);
-        self.packs.insert(name.to_string(), Rc::clone(&ns));
-        ns
+        if !self.packs.contains_key(name) {
+            let ns = Namespace::child(name, &self.globals);
+            self.packs.insert(name.to_string(), ns);
+        }
+        NsHandle::new(name)
     }
 
-    /// The namespace named `name`, if it has been created.
-    pub fn find_namespace(&self, name: &str) -> Option<Rc<Namespace>> {
-        self.packs.get(name).map(Rc::clone)
+    /// Handle to the namespace named `name`, if it has been created.
+    pub fn find_namespace(&self, name: &str) -> Option<NsHandle> {
+        if name == ns::ROOT {
+            return Some(NsHandle::root());
+        }
+        self.packs.contains_key(name).then(|| NsHandle::new(name))
     }
 
     /// Publish `names` from `ns` into the root, so unqualified code —
@@ -148,9 +173,19 @@ impl Vm {
     /// Fails, naming both packs, if another pack already exported the
     /// same name — the diagnostic whose absence made the old flat table
     /// dangerous.
-    pub fn export(&mut self, ns: &Rc<Namespace>, names: &[&str]) -> Result<(), LispErr> {
+    pub fn export(&mut self, ns: &NsHandle, names: &[&str]) -> Result<(), LispErr> {
+        let source = self.resolve_or_err(ns)?;
+        // Check the whole list before publishing any of it. Exporting
+        // name-by-name meant a collision on the last name still left the
+        // earlier ones visible in the root, with the call reporting
+        // failure — a half-installed pack.
         for name in names {
-            ns.export(&self.globals, name).map_err(LispErr::new)?;
+            source
+                .can_export(&self.globals, name)
+                .map_err(LispErr::new)?;
+        }
+        for name in names {
+            source.export(&self.globals, name).map_err(LispErr::new)?;
         }
         Ok(())
     }
@@ -180,8 +215,8 @@ impl Vm {
 
     /// [`Vm::global`] against a specific namespace, for reading a value a
     /// pack keeps private.
-    pub fn global_in(&self, ns: &Rc<Namespace>, name: &str) -> Option<Val> {
-        ns.get(name)
+    pub fn global_in(&self, ns: &NsHandle, name: &str) -> Option<Val> {
+        self.resolve(ns)?.get(name)
     }
 
     /// `Weak` handle to the cell backing top-level binding `name`, or
@@ -220,21 +255,26 @@ impl Vm {
     where
         F: Fn(&[Val]) -> Result<Val, String> + 'static,
     {
-        let root = Rc::clone(&self.globals);
-        self.register_prim_in(&root, name, arity, f);
+        self.register_prim_in(&NsHandle::root(), name, arity, f);
     }
 
     /// [`Vm::register_prim`] into a specific namespace, so a pack's prims
     /// are private to it unless exported.
     pub fn register_prim_in<F>(
         &mut self,
-        ns: &Rc<Namespace>,
+        ns: &NsHandle,
         name: &'static str,
         arity: val::Arity,
         f: F,
     ) where
         F: Fn(&[Val]) -> Result<Val, String> + 'static,
     {
+        let Some(target) = self.resolve(ns) else {
+            // A handle from another Vm. Registering into nothing would be
+            // a silent no-op, and this is host setup code, so say so.
+            panic!("register_prim_in: unknown namespace `{ns}`");
+        };
+        let ns = target;
         ns.define(
             name.into(),
             Val::Prim {
@@ -324,13 +364,13 @@ impl Vm {
     /// [`Vm::eval_str`] evaluated inside `ns` (ADR-042). `define`s land
     /// there and names resolve from there outward to the root, so a pack
     /// sees its own private vocabulary.
-    pub fn eval_str_in(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Val, LispErr> {
+    pub fn eval_str_in(&mut self, ns: &NsHandle, src: &str) -> Result<Val, LispErr> {
         let forms = parse::read_many(src)?;
         self.eval_datums_in(ns, &forms)
     }
 
     /// [`Vm::eval_datums`] evaluated inside `ns`.
-    pub fn eval_datums_in(&mut self, ns: &Rc<Namespace>, forms: &[Datum]) -> Result<Val, LispErr> {
+    pub fn eval_datums_in(&mut self, ns: &NsHandle, forms: &[Datum]) -> Result<Val, LispErr> {
         let mut session = self.start_datums_in(ns, forms)?;
         match self.resume(&mut session, u64::MAX)? {
             Progress::Done(v) => Ok(v),
@@ -345,17 +385,13 @@ impl Vm {
     /// evaluation, so a syntax error surfaces from `start` rather than
     /// from the first `resume`.
     pub fn start_datums(&mut self, forms: &[Datum]) -> Result<Session, LispErr> {
-        let root = Rc::clone(&self.globals);
-        self.start_datums_in(&root, forms)
+        self.start_datums_in(&NsHandle::root(), forms)
     }
 
     /// [`Vm::start_datums`] targeting `ns`: `define`s land there, and
     /// top-level expressions resolve names from there outward.
-    pub fn start_datums_in(
-        &mut self,
-        ns: &Rc<Namespace>,
-        forms: &[Datum],
-    ) -> Result<Session, LispErr> {
+    pub fn start_datums_in(&mut self, ns: &NsHandle, forms: &[Datum]) -> Result<Session, LispErr> {
+        let ns = &self.resolve_or_err(ns)?;
         // Binding-level rollback: if any form in the batch fails,
         // restore the globals *table* to its pre-call state. Pre-fix, a
         // failed define left a placeholder cell visible in env (e.g.

@@ -36,7 +36,7 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
 use curves::Turtle;
-use lisp::{LispErr, Namespace, Session};
+use lisp::{LispErr, NsHandle, Session};
 use macros::MacroVm;
 use world::World;
 
@@ -70,9 +70,9 @@ pub struct WasmVm {
     /// the packs keep private — `thread` above all, which spells and
     /// genes both define — so every generated cast evaluates *inside*
     /// the pack it belongs to rather than at the root.
-    spells_ns: Rc<Namespace>,
-    genes_ns: Rc<Namespace>,
-    curves_ns: Rc<Namespace>,
+    spells_ns: NsHandle,
+    genes_ns: NsHandle,
+    curves_ns: NsHandle,
     /// An in-flight resumable evaluation, if any (ADR-040), plus the
     /// source it came from so errors can still be rendered with a caret
     /// after `eval_start` has returned.
@@ -223,7 +223,7 @@ impl WasmVm {
                  (assoc-set 'ty {y} \
                    (thread (start) {list_expr}))))"
         );
-        let ns = Rc::clone(&self.spells_ns);
+        let ns = self.spells_ns.clone();
         self.inner.eval_str_in(&ns, &src).map_err(generated_err)?;
         // safety: see ADR-005 — no callback primitives, so a JS handler cannot
         // re-enter Vm during this borrow.
@@ -237,7 +237,7 @@ impl WasmVm {
     /// tiles that decayed this tick (0+ as a string for JS).
     pub fn tick(&mut self) -> Result<String, JsValue> {
         self.inner
-            .eval_str_in(&Rc::clone(&self.spells_ns), "(tick!)")
+            .eval_str_in(&self.spells_ns.clone(), "(tick!)")
             .map(|v| format!("{v}"))
             .map_err(generated_err)
     }
@@ -304,7 +304,7 @@ impl WasmVm {
             .map_err(|e| JsValue::from_str(&format!("codon (parent B): {e}")))?;
         let body = format!("(express! (breed! seed (thread '() {la}) (thread '() {lb})))");
         let src = genes::seeded(seed, &body);
-        let ns = Rc::clone(&self.genes_ns);
+        let ns = self.genes_ns.clone();
         let phenotype = self.inner.eval_str_in(&ns, &src).map_err(generated_err)?;
         Ok(genes::render_creature(&phenotype))
     }
@@ -321,7 +321,7 @@ impl WasmVm {
         // ADR-012.
         let body = format!("(express! (thread '() {list_expr}))");
         let src = genes::seeded(seed, &body);
-        let ns = Rc::clone(&self.genes_ns);
+        let ns = self.genes_ns.clone();
         let phenotype = self.inner.eval_str_in(&ns, &src).map_err(generated_err)?;
         Ok(genes::render_creature(&phenotype))
     }
@@ -358,7 +358,7 @@ impl WasmVm {
                     (render!))"
         );
         self.inner
-            .eval_str_in(&Rc::clone(&self.curves_ns), &src)
+            .eval_str_in(&self.curves_ns.clone(), &src)
             .map(|v| format!("{v}"))
             .map_err(generated_err)
     }

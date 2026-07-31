@@ -13,11 +13,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use curves::Turtle;
-use lisp::Namespace;
+use lisp::NsHandle;
 use lisp::Vm;
 use strokes::tape_to_sexpr;
 
-fn cast(vm: &mut Vm, ns: &Rc<Namespace>, label: &str, axiom: &str, rules: &str, iters: i64) {
+fn cast(vm: &mut Vm, ns: &NsHandle, label: &str, axiom: &str, rules: &str, iters: i64) {
     println!("── {label}  (iterations={iters}) ──");
     println!("axiom:  {axiom}");
     if !rules.is_empty() {

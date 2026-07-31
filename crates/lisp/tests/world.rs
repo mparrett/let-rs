@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lisp::Namespace;
+use lisp::NsHandle;
 use macros::MacroVm;
 use world::World;
 
@@ -14,12 +14,12 @@ use world::World;
 /// evaluate inside the pack.
 struct Lab {
     vm: MacroVm,
-    ns: Rc<Namespace>,
+    ns: NsHandle,
 }
 
 impl Lab {
     fn eval(&mut self, src: &str) -> Result<lisp::Val, lisp::LispErr> {
-        let ns = Rc::clone(&self.ns);
+        let ns = self.ns.clone();
         self.vm.eval_str_in(&ns, src)
     }
 }

@@ -23,7 +23,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lisp::Namespace;
+use lisp::NsHandle;
 use macros::MacroVm;
 use world::World;
 
@@ -192,7 +192,7 @@ pub const EXPORTS: &[&str] = &[
 /// [`EXPORTS`] to the root. Returns the namespace, which hosts pass to
 /// `eval_str_in` when running spell source — casts reference `thread`
 /// and the ctx helpers, which are private.
-pub fn install(mvm: &mut MacroVm) -> Rc<Namespace> {
+pub fn install(mvm: &mut MacroVm) -> NsHandle {
     macros::install_stdlib(mvm).expect("macros stdlib failed to install");
     let ns = mvm.vm.namespace("spells");
     mvm.eval_str_in(&ns, PRELUDE_DEFINES)
@@ -207,7 +207,7 @@ pub fn install(mvm: &mut MacroVm) -> Rc<Namespace> {
 /// resolve a finished ctx against `world` (`world-apply!` and friends).
 /// Both `examples/spells.rs` and the WASM bridge want exactly this
 /// wiring; one helper saves the two-line duplication.
-pub fn install_with_world(mvm: &mut MacroVm, world: Rc<RefCell<World>>) -> Rc<Namespace> {
+pub fn install_with_world(mvm: &mut MacroVm, world: Rc<RefCell<World>>) -> NsHandle {
     // World prims go to the *root*, not to this pack: they're a host
     // capability rather than spell vocabulary, `examples/world.rs` uses
     // them directly, and the spells namespace reaches them by chaining

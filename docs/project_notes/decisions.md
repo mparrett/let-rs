@@ -4387,3 +4387,38 @@ namespace reaches them by chaining outward anyway.
 4. **Search order across all pack tables from root.** Root chains to
    every pack instead of packs chaining to root. Restores the collision
    with extra steps — first pack to define a name wins, silently.
+
+**Amendment (2026-07-30, from review of PR #15).** Four defects, two of
+them serious enough that the feature did not work as documented.
+
+- **Reinstalling any pack panicked.** Re-running a prelude allocates
+  fresh cells for every define, so a second `install` presented a
+  *different* cell for a name that pack had already exported. The export
+  check compared cell identity, called that a collision, and the
+  installer's `.expect` turned it into a panic — despite `export` being
+  documented as idempotent. The unit test passed because it re-exported
+  without re-evaluating the prelude, which is not what a reinstall does.
+  Fixed by tracking **provenance**: the root records which pack published
+  each name, so a reinstall rebinds and only a *different* pack collides.
+  That also fixed the fourth defect, since the owner is now known.
+- **`Vm::root()` handed out an `Rc<Namespace>`**, letting a caller keep
+  the entire globals table — and every closure and binding cell in it —
+  alive past the `Vm`. That is precisely the sole-strong-owner invariant
+  ADR-036 made the field private to protect, reintroduced by the API this
+  ADR added. `Namespace`'s `cell` / `define` / `bind_cell` / `set` were
+  public too, exposing mutable cells directly. Fixed with an opaque
+  `NsHandle` — just a name — that the `Vm` resolves internally; the
+  mutating surface is now crate-internal. `a_handle_cannot_keep_the_globals_alive`
+  pins it by asserting a cell's `Weak` is dead after the Vm drops.
+- **Multi-name export was not atomic.** A collision on the last name left
+  the earlier names published while the call reported failure — a
+  half-installed pack. Split into `can_export` (checked for the whole
+  list first) and `export`.
+- **The collision message named only the new exporter**, contradicting
+  this ADR and the name of its own test. Provenance made the existing
+  owner nameable; the test now asserts both appear.
+
+The lesson worth keeping: the idempotence test and the "names both packs"
+test were each written against a *simplification* of the thing they
+claimed to cover — re-export without reinstall, and a message asserted
+only for the half that was present. Both passed. Neither was true.

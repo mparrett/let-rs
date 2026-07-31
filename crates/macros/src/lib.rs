@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use lisp::{Datum, DatumKind, LispErr, Namespace, Session, Span, Sym, Val, Vm, parse};
+use lisp::{Datum, DatumKind, LispErr, NsHandle, Session, Span, Sym, Val, Vm, parse};
 use std::rc::Rc;
 
 /// Recursion ceiling for macro expansion. Sits above the reader's own
@@ -417,8 +417,7 @@ impl MacroVm {
     /// Atomic semantics: if any form fails, the macro table is restored
     /// in addition to whatever `lisp::Vm::eval_str` restores on its end.
     pub fn eval_str(&mut self, src: &str) -> Result<Val, LispErr> {
-        let root = Rc::clone(self.vm.root());
-        self.eval_str_in(&root, src)
+        self.eval_str_in(&self.vm.root(), src)
     }
 
     /// Macro-aware [`lisp::Vm::eval_str_in`]: expand, then evaluate
@@ -429,7 +428,7 @@ impl MacroVm {
     /// not namespaced, so two packs defining the same macro name still
     /// collide. Nothing in-tree does; noted in ADR-042 as the remaining
     /// half.
-    pub fn eval_str_in(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Val, LispErr> {
+    pub fn eval_str_in(&mut self, ns: &NsHandle, src: &str) -> Result<Val, LispErr> {
         let saved = self.expander.snapshot();
         let result = self.eval_str_inner(ns, src);
         if result.is_err() {
@@ -438,7 +437,7 @@ impl MacroVm {
         result
     }
 
-    fn eval_str_inner(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Val, LispErr> {
+    fn eval_str_inner(&mut self, ns: &NsHandle, src: &str) -> Result<Val, LispErr> {
         let forms = parse::read_many(src)?;
 
         // Split out defmacro forms (register them) and collect the rest.
@@ -479,12 +478,12 @@ impl MacroVm {
     /// A batch with no evaluable forms (all `defmacro`) yields a session
     /// that finishes on its first `resume` with `#t`, matching `eval_str`.
     pub fn start(&mut self, src: &str) -> Result<Session, LispErr> {
-        let root = Rc::clone(self.vm.root());
+        let root = self.vm.root();
         self.start_in(&root, src)
     }
 
     /// [`MacroVm::start`] targeting `ns`.
-    pub fn start_in(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Session, LispErr> {
+    pub fn start_in(&mut self, ns: &NsHandle, src: &str) -> Result<Session, LispErr> {
         let saved = self.expander.snapshot();
         let result = self.start_inner(ns, src);
         if result.is_err() {
@@ -497,7 +496,7 @@ impl MacroVm {
         result
     }
 
-    fn start_inner(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Session, LispErr> {
+    fn start_inner(&mut self, ns: &NsHandle, src: &str) -> Result<Session, LispErr> {
         let forms = parse::read_many(src)?;
         let mut remaining: Vec<Datum> = Vec::with_capacity(forms.len());
         for datum in forms {

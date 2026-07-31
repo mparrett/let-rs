@@ -12,9 +12,7 @@
 
 use std::collections::HashSet;
 
-use std::rc::Rc;
-
-use lisp::Namespace;
+use lisp::NsHandle;
 use lisp::Vm;
 use lisp::val::{Arity, Val};
 
@@ -85,7 +83,7 @@ pub const EXPORTS: &[&str] = &[
 /// [`EXPORTS`] to the root. Returns the namespace; hosts pass it to
 /// `eval_str_in` when running genome source, which references the
 /// private `thread`.
-pub fn install(vm: &mut Vm) -> Rc<Namespace> {
+pub fn install(vm: &mut Vm) -> NsHandle {
     let ns = vm.namespace("genes");
     vm.register_prim_in(&ns, "express!", Arity::Exact(1), express_prim);
     vm.register_prim_in(&ns, "mutate!", Arity::Exact(3), mutate_prim);
