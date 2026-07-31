@@ -4422,3 +4422,107 @@ The lesson worth keeping: the idempotence test and the "names both packs"
 test were each written against a *simplification* of the thing they
 claimed to cover — re-export without reinstall, and a message asserted
 only for the half that was present. Both passed. Neither was true.
+
+## ADR-043: Namespaced macros (2026-07-30)
+
+**Context**: ADR-042 gave every binding a per-pack table and left the
+`Expander`'s macro table global, recording that as "the same bug one
+layer up, and now the only place it survives." This closes it.
+
+Nothing in-tree collided — spells is still the only pack that defines
+macros (`defspell`, `defparam`) — so, as with ADR-042, the hazard was the
+silence rather than a live breakage. Measured before writing the fix, by
+running the new tests against the old one-table semantics:
+
+| | result |
+|---|---|
+| two packs define `tag`, each expands its own | pack A got **pack B's** macro |
+| a pack's macro called from the root | resolved — pack vocabulary leaked out |
+| a pack redefines `when` | overwrote the stdlib's for *every* namespace |
+
+The first row is the one that matters: pack A's own source silently
+started expanding through pack B's macro, with no error at any point.
+
+**Decision**: one macro table per namespace, keyed by namespace name,
+mirroring `Namespace` exactly. `defmacro` registers into the namespace
+its form was evaluated in and never walks outward — the rule
+`Namespace::define` already follows. A macro call resolves along that
+namespace's chain, innermost first, so a pack's own macro shadows a root
+one of the same name just as its `define` shadows a builtin.
+
+**The stdlib stays at the root**, which is what makes the outward walk
+load-bearing rather than decorative: the spells prelude uses `and` / `or`
+from `install_stdlib`, and the WASM curve cast uses `begin`. Without the
+chain every pack would have to install its own stdlib.
+
+**Two additions to `lisp`, both read-only, neither macro-aware.** ADR-024
+put macros in a sibling crate and made the engine unaware of them; that
+holds. What the engine now exposes is topology it already had:
+
+- `Vm::ns_chain(&NsHandle)` — the chain a name resolves along. The
+  expander keeps its own table and has to agree with the engine about
+  resolution order; hardcoding "the pack, then the root" would be correct
+  only while every pack is a direct child of the root, and would go wrong
+  silently the day one isn't. Asking is cheap and can't drift.
+- `Vm::env_in(&NsHandle)` — the environment for a namespace.
+
+**The second one fixed a bug this work found rather than caused.** Macro
+closures captured `vm.env()`, the *root* env, so a macro body that called
+one of its own pack's helpers reported it unbound. Latent because the
+only two in-tree pack macros have bodies of pure quasiquote and call
+nothing. `a_macro_body_resolves_its_own_packs_bindings` pins it.
+
+**No macro `export`, deliberately.** ADR-042 needed export, collision
+refusal and provenance because packs publish bindings into a shared root.
+Macros publish nothing, and without publication there is no collision to
+refuse — so the entire apparatus has no counterpart here and building one
+would mean shipping untested machinery for a caller that doesn't exist.
+The cost is real and stated below.
+
+**Consequences**:
+
+- **+** Two packs can define the same macro name, which is the fix.
+- **+** A pack can shadow a stdlib macro privately.
+- **+** The bug found on the way: a pack macro's body now resolves its own
+  pack's vocabulary.
+- **−** **`defspell` and `defparam` are now spell-pack private.** A REPL
+  line calling `defspell` reports `unbound variable: defspell` where it
+  used to work. That is the same deliberate narrowing ADR-042 accepted for
+  `thread`, and neither name is advertised in the labs or the cheatsheets
+  — but it is a visible change, so
+  `the_packs_macros_are_not_visible_at_root` pins it rather than leaving
+  it to be rediscovered.
+- **−** **A pack cannot publish a macro.** Nothing needs to today. The
+  first pack that wants user-typeable syntax — `defcodon` for genes,
+  `defstroke` for curves — will want export, and it should be built then,
+  against a caller, rather than now against a guess.
+- **−** `Expander::expand_all` / `expand_top_level` /
+  `try_register_defmacro` take a namespace now. Not source-compatible, but
+  no code outside this crate called them; `MacroVm` is the supported
+  surface and its signatures are unchanged.
+- **~** Macros are still unhygienic. Namespacing is containment, not
+  hygiene: it decides *which* `when` a call means, not whether that
+  macro's expansion captures a name at its call site. Separate problem,
+  still open.
+
+**Alternatives considered**:
+
+1. **Mirror the topology inside the expander** — have it maintain its own
+   parent map, told about each namespace as it's created. Rejected: two
+   copies of the same structure that can disagree, and the disagreement
+   would show up as a macro resolving differently from a binding in the
+   same file. Asking the engine costs a two-element `Vec` per form.
+2. **Assume pack → root.** True today, one line, no engine change.
+   Rejected for the reason the assumption is invisible: nothing would fail
+   when it stopped being true.
+3. **Move the macro table into `lisp::Namespace`.** The tidiest data
+   layout, and it makes the engine macro-aware, which is precisely what
+   ADR-024 extracted. Rejected on that ground alone.
+4. **Namespace macros *and* add export in one slice**, symmetric with
+   ADR-042. Rejected as sequencing, not as design: an export path with no
+   caller is an untested claim, and this project's last two amendments
+   were both tests written against a simplification of the thing they
+   claimed to cover.
+5. **Qualified macro names (`spells:defspell`).** Same objection ADR-042
+   raised for bindings — it makes every DSL author type prefixes for a
+   problem lexical scoping solves invisibly.

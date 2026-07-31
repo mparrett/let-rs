@@ -362,11 +362,17 @@ shouldn't accidentally break them.
 >
 > Two things left open:
 >
-> - **Macros are still global.** The `Expander`'s table isn't
->   namespaced, so two packs defining the same macro name collide
->   silently — the same bug one layer up, and now the only place it
->   survives. Only spells defines macros today. The fix is the same
->   shape as this one.
+> - ~~**Macros are still global.**~~ **DONE (ADR-043, 2026-07-30).** The
+>   `Expander` holds one table per namespace now, keyed by name and
+>   resolving along the chain `Vm::ns_chain` reports. Two packs can hold
+>   different macros of one name; the stdlib stays at the root and is
+>   visible from every pack, which the spells prelude and the WASM curve
+>   cast both rely on. Fixed a latent bug on the way: macro closures
+>   captured the *root* env, so a macro body calling its own pack's
+>   helper reported it unbound (`Vm::env_in`). Costs — `defspell` /
+>   `defparam` are spells-private now, and there is deliberately no macro
+>   `export`; see ADR-043 for why that's sequencing rather than an
+>   oversight. 8 tests.
 > - **Export lists are hand-maintained** Rust consts. A pack that adds
 >   public vocabulary and forgets to list it fails at the call site
 >   rather than at install. A declarative `(export …)` form in the

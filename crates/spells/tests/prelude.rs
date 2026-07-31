@@ -394,3 +394,42 @@ fn install_with_world_wires_world_apply() {
     // area 1 = (2·1+1)² = 9-tile box centered at (3, 2), all in-bounds.
     assert_eq!(format!("{painted}"), "9");
 }
+
+#[test]
+fn reinstalling_the_pack_keeps_its_macros_working() {
+    // ADR-043's idempotence case, written the way ADR-042's amendment
+    // says to write one: by calling the *real* `install` twice, not by
+    // re-registering a macro directly. A reinstall re-evaluates the
+    // prelude, which re-runs `defspell` / `defparam` and re-registers
+    // both macros into the spells namespace — the shape that turned out
+    // to panic when export compared cell identity.
+    let mut vm = MacroVm::new();
+    let ns = spells::install(&mut vm);
+    let ns2 = spells::install(&mut vm);
+    assert_eq!(ns.name(), ns2.name());
+
+    // The macros still expand, and the vocabulary they defined still
+    // works — a reinstall that quietly lost the macro table would leave
+    // `bolt` unbound rather than erroring at install.
+    let r = vm.eval_str_in(&ns2, "(bolt '())").expect("eval bolt");
+    assert_eq!(format!("{r}"), "((shape . bolt))");
+}
+
+#[test]
+fn the_packs_macros_are_not_visible_at_root() {
+    // `defspell` and `defparam` are spell-pack vocabulary, not language
+    // vocabulary. Before ADR-043 they landed in one global table and any
+    // REPL line could call them; now they're private, exactly as the
+    // pack's `thread` is. This is a deliberate narrowing — the same one
+    // ADR-042 accepted — so it gets a test rather than a footnote.
+    let mut vm = MacroVm::new();
+    let _ns = spells::install(&mut vm);
+    let err = vm
+        .eval_str("(defspell frost element frost)")
+        .expect_err("defspell should not resolve at root");
+    assert!(
+        err.msg.contains("unbound variable: defspell"),
+        "unexpected error: {}",
+        err.msg
+    );
+}

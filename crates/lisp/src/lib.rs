@@ -234,6 +234,37 @@ impl Vm {
         &self.env
     }
 
+    /// The environment for `ns` — what a form evaluated there resolves
+    /// against, and what a closure created there captures.
+    ///
+    /// [`Vm::env`] is the *root* env, which is the wrong one for anything
+    /// belonging to a pack: a closure capturing it resolves names from
+    /// root outward and never sees the pack's private vocabulary. The
+    /// `macros` crate needs this for macro closures, which are created at
+    /// `defmacro` time rather than by the evaluator and so don't get the
+    /// batch env `start_datums_in` builds (ADR-043).
+    pub fn env_in(&self, ns: &NsHandle) -> Result<Env, LispErr> {
+        Ok(self.env.with_namespace(&self.resolve_or_err(ns)?))
+    }
+
+    /// The namespace chain for `ns`, innermost first and ending at the
+    /// root — the order a name resolves in.
+    ///
+    /// Exposed so a caller keeping its own per-namespace table can mirror
+    /// the engine's topology rather than assume it. The `macros` crate
+    /// keeps exactly such a table; hardcoding "the pack, then root" would
+    /// be correct only for as long as every pack is a direct child of the
+    /// root, and would fail silently the day one isn't (ADR-043).
+    pub fn ns_chain(&self, ns: &NsHandle) -> Result<Vec<NsHandle>, LispErr> {
+        let mut out = Vec::new();
+        let mut cur = Some(self.resolve_or_err(ns)?);
+        while let Some(n) = cur {
+            out.push(NsHandle::new(n.name()));
+            cur = n.parent();
+        }
+        Ok(out)
+    }
+
     /// Cap each top-level form at `n` CEK steps (see [`Vm::step_budget`]
     /// — the cap is per form, so a batch of N forms can spend up to
     /// N × `n`). Forms that exceed the budget return

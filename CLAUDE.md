@@ -246,14 +246,26 @@ Sibling crates:
   wires all of it in one call. Depends only on `lisp`. Cast pipeline is
   `(draw! (grow axiom rules n))` then `(render!)`. See ADR-019.
 - `crates/macros/` — `defmacro` + procedural expansion + quasiquote-
-  with-macros. `Expander` struct owns the macro table; `MacroVm`
-  bundles `lisp::Vm` + `Expander` with a macro-aware `eval_str`.
-  Hosts that want macros wrap their `Vm` in `MacroVm`; hosts that
-  don't (the CLI demos) stay on the raw engine. Depends only on
-  `lisp`. Expanded datums go to the engine via `Vm::eval_datums`;
-  they used to be re-serialized to source and re-read, which lost
-  any symbol the printer can't represent (ADR-034) — don't
-  reintroduce a printer on this path. See ADR-024, ADR-034.
+  with-macros. `Expander` owns **one macro table per namespace**
+  (ADR-043), keyed by namespace name and mirroring `lisp::Namespace`:
+  `defmacro` registers into the namespace its form was evaluated in and
+  never walks outward; a call resolves along that namespace's chain,
+  innermost first. So two packs can define `when` differently, and the
+  stdlib — installed at the *root* — stays visible inside every pack,
+  which the spells prelude (`and` / `or`) and the WASM curve cast
+  (`begin`) both rely on. `MacroVm` bundles `lisp::Vm` + `Expander`
+  with a macro-aware `eval_str` / `eval_str_in`. Hosts that want macros
+  wrap their `Vm` in `MacroVm`; hosts that don't (the CLI demos) stay
+  on the raw engine. Depends only on `lisp`. Expanded datums go to the
+  engine via `Vm::eval_datums`; they used to be re-serialized to source
+  and re-read, which lost any symbol the printer can't represent
+  (ADR-034) — don't reintroduce a printer on this path. **Macro
+  closures capture `Vm::env_in(ns)`, not `Vm::env()`** — the root env
+  can't see the defining pack's private vocabulary, and a macro body
+  calling a pack helper reported it unbound. There is deliberately no
+  macro `export`: macros publish nothing, so there's no collision to
+  refuse; build one when a pack actually wants user-typeable syntax.
+  See ADR-024, ADR-034, ADR-043.
 - `crates/wasm/` — JS-facing bridge (`wasm-bindgen` `cdylib`). Wraps
   `macros::MacroVm` (which wraps `lisp::Vm`) + `World` + `Turtle`,
   installs all three DSL packs at construction via
@@ -369,7 +381,9 @@ ships a larger bundle.
   Root-level code reaches only a pack's `EXPORTS`. Adding public
   vocabulary means adding it to that pack's `EXPORTS` const, and the two
   names deliberately *not* exported by either spells or genes are
-  `thread` and `assoc-set` (ADR-042).
+  `thread` and `assoc-set` (ADR-042). **A pack's macros are private to it
+  the same way** and there is no export path for them, so `defspell` /
+  `defparam` resolve inside the spells pack and nowhere else (ADR-043).
 - Host prims are registered via `vm.register_prim(name, arity, |args|
   …)`. The callback is wrapped in `Rc<dyn Fn>` so it can capture host
   state (`Rc<RefCell<World>>`, an `Rc<RefCell<Counter>>`, whatever).

@@ -523,3 +523,139 @@ fn guard_binder_is_not_macro_expanded() {
         "handled"
     );
 }
+
+// ---------------------------------------------------------------------
+// Namespaced macros (ADR-043). ADR-042 gave bindings per-pack tables and
+// left the macro table global — the same collision one layer up. These
+// pin the fix.
+// ---------------------------------------------------------------------
+
+#[test]
+fn two_packs_can_define_the_same_macro_name() {
+    // The bug, stated directly: before ADR-043 the second `defmacro`
+    // overwrote the first in the one shared table, and the first pack's
+    // own source silently started expanding through the second pack's
+    // macro. Nothing errored; the wrong code just ran.
+    let mut vm = mv();
+    let a = vm.vm.namespace("pack-a");
+    let b = vm.vm.namespace("pack-b");
+
+    vm.eval_str_in(&a, "(defmacro tag (x) `(list 'from-a ,x))")
+        .unwrap();
+    vm.eval_str_in(&b, "(defmacro tag (x) `(list 'from-b ,x))")
+        .unwrap();
+
+    // Each pack's source expands through its own, and — the part that
+    // actually regressed — pack A still does so *after* B has defined
+    // the same name.
+    assert_eq!(
+        format!("{}", vm.eval_str_in(&a, "(tag 1)").unwrap()),
+        "(from-a 1)"
+    );
+    assert_eq!(
+        format!("{}", vm.eval_str_in(&b, "(tag 2)").unwrap()),
+        "(from-b 2)"
+    );
+}
+
+#[test]
+fn a_packs_macro_is_not_visible_at_root() {
+    // The containment half. A pack's macro is private exactly as its
+    // `define`s are, so the REPL (which evaluates at root) can't reach
+    // it — the same deliberate narrowing ADR-042 accepted for `thread`.
+    let mut vm = mv();
+    let a = vm.vm.namespace("pack-a");
+    vm.eval_str_in(&a, "(defmacro shout (x) `(list 'loud ,x))")
+        .unwrap();
+
+    let root = vm.vm.root();
+    assert!(
+        !vm.expander
+            .names_visible_from(&vm.vm, &root)
+            .unwrap()
+            .contains(&"shout".to_string())
+    );
+    // Unexpanded, `(shout 1)` is an ordinary application of an unbound
+    // name, which is what the error has to say.
+    let err = vm.eval_str("(shout 1)").unwrap_err();
+    assert!(
+        err.msg.contains("unbound variable: shout"),
+        "unexpected error: {}",
+        err.msg
+    );
+}
+
+#[test]
+fn root_macros_are_visible_inside_a_pack() {
+    // Load-bearing, not a nicety: the spells prelude uses `and` / `or`
+    // from the stdlib, which installs at the root. If the chain didn't
+    // reach outward, every pack would have to install its own stdlib.
+    let mut vm = MacroVm::with_stdlib();
+    let a = vm.vm.namespace("pack-a");
+    assert_eq!(
+        format!("{}", vm.eval_str_in(&a, "(when #t (or #f 7))").unwrap()),
+        "7"
+    );
+    assert!(
+        vm.expander
+            .names_visible_from(&vm.vm, &a)
+            .unwrap()
+            .contains(&"when".to_string())
+    );
+}
+
+#[test]
+fn a_pack_macro_shadows_the_root_macro_of_the_same_name() {
+    // Resolution order has to agree with `Namespace::cell`: innermost
+    // first. A pack redefining `when` gets its own everywhere inside
+    // itself, and root keeps the stdlib's.
+    let mut vm = MacroVm::with_stdlib();
+    let a = vm.vm.namespace("pack-a");
+    vm.eval_str_in(&a, "(defmacro when args 99)").unwrap();
+
+    assert_eq!(
+        format!("{}", vm.eval_str_in(&a, "(when #t 42)").unwrap()),
+        "99"
+    );
+    assert_eq!(format!("{}", vm.eval_str("(when #t 42)").unwrap()), "42");
+}
+
+#[test]
+fn a_macro_body_resolves_its_own_packs_bindings() {
+    // Macro closures used to capture `vm.env()` — the *root* env — so a
+    // macro body calling one of its own pack's helpers reported it
+    // unbound. Latent until ADR-043 only because `defspell` and
+    // `defparam` have bodies of pure quasiquote and call nothing.
+    let mut vm = mv();
+    let a = vm.vm.namespace("pack-a");
+    vm.eval_str_in(
+        &a,
+        "(define secret (lambda (x) (* x 10)))
+         (defmacro tenfold (n) (secret n))",
+    )
+    .unwrap();
+
+    // Used in a later batch, so the define has been evaluated by the
+    // time the expander runs the macro body.
+    assert_eq!(
+        format!("{}", vm.eval_str_in(&a, "(tenfold 5)").unwrap()),
+        "50"
+    );
+}
+
+#[test]
+fn a_failed_batch_leaves_no_macro_behind_in_its_namespace() {
+    // Rollback survived the table becoming a table-of-tables.
+    let mut vm = mv();
+    let a = vm.vm.namespace("pack-a");
+    assert!(
+        vm.eval_str_in(&a, "(defmacro ghost (x) `,x) (car '())")
+            .is_err()
+    );
+    assert!(
+        vm.expander
+            .names_visible_from(&vm.vm, &a)
+            .unwrap()
+            .is_empty()
+    );
+}
