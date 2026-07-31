@@ -352,6 +352,26 @@ shouldn't accidentally break them.
 
 ## High-impact (engine-level) — open
 
+### Namespacing — **DONE (ADR-042, 2026-07-30)**
+
+> `Namespace` (table + optional parent), packs install into their own
+> child of a shared root, `Env` carries the namespace so resolution is
+> lexical, and `export` aliases cells with collisions refused loudly.
+> 12 tests. All three packs, both bridges, four examples, the benches
+> and the test suites migrated to `eval_str_in`.
+>
+> Two things left open:
+>
+> - **Macros are still global.** The `Expander`'s table isn't
+>   namespaced, so two packs defining the same macro name collide
+>   silently — the same bug one layer up, and now the only place it
+>   survives. Only spells defines macros today. The fix is the same
+>   shape as this one.
+> - **Export lists are hand-maintained** Rust consts. A pack that adds
+>   public vocabulary and forgets to list it fails at the call site
+>   rather than at install. A declarative `(export …)` form in the
+>   prelude would move the failure earlier.
+
 ### In-language error handling — **DONE (ADR-041, 2026-07-30)**
 
 > `raise` / `error` / `guard` as special forms, `Mode::Raise` plus

@@ -5,10 +5,13 @@
 //! ADR-016). This example just drives a handful of sequences against a
 //! fresh VM.
 
+use std::rc::Rc;
+
 use codons::tape_to_sexpr;
+use lisp::Namespace;
 use lisp::Vm;
 
-fn sequence(vm: &mut Vm, label: &str, seed: i64, tape: &str) {
+fn sequence(vm: &mut Vm, ns: &Rc<Namespace>, label: &str, seed: i64, tape: &str) {
     println!("── {label}  (seed={seed}) ──");
     println!("tape:   {tape}");
     let list = match tape_to_sexpr(tape) {
@@ -23,13 +26,13 @@ fn sequence(vm: &mut Vm, label: &str, seed: i64, tape: &str) {
     // ADR-012.
     let body = format!("(express! (thread '() {list}))");
     let src = genes::seeded(seed, &body);
-    match vm.eval_str(&src) {
+    match vm.eval_str_in(ns, &src) {
         Ok(phenotype) => println!("{}\n", genes::render_creature(&phenotype)),
         Err(e) => println!("err:    eval: {e}\n"),
     }
 }
 
-fn breeding(vm: &mut Vm, label: &str, seed: i64, tape_a: &str, tape_b: &str) {
+fn breeding(vm: &mut Vm, ns: &Rc<Namespace>, label: &str, seed: i64, tape_a: &str, tape_b: &str) {
     println!("── {label}  (seed={seed}) ──");
     println!("mama:   {tape_a}");
     println!("papa:   {tape_b}");
@@ -42,7 +45,7 @@ fn breeding(vm: &mut Vm, label: &str, seed: i64, tape_a: &str, tape_b: &str) {
     };
     let body = format!("(express! (breed! seed (thread '() {la}) (thread '() {lb})))");
     let src = genes::seeded(seed, &body);
-    match vm.eval_str(&src) {
+    match vm.eval_str_in(ns, &src) {
         Ok(phenotype) => println!("{}\n", genes::render_creature(&phenotype)),
         Err(e) => println!("err:    eval: {e}\n"),
     }
@@ -50,41 +53,45 @@ fn breeding(vm: &mut Vm, label: &str, seed: i64, tape_a: &str, tape_b: &str) {
 
 fn main() {
     let mut vm = Vm::new();
-    genes::install(&mut vm);
+    // Genome source uses `thread`, private to the pack (ADR-042).
+    let ns = genes::install(&mut vm);
 
     println!("let-rs genes demo\n================\n");
 
     // one allele per trait — every locus expresses solo
     sequence(
         &mut vm,
+        &ns,
         "balanced",
         0,
         "AUG CGA GCA ACA UCA GCG AUC GAU UAA",
     );
 
     // two size alleles (70 dom + 30 rec) — phenotype averages to 50
-    sequence(&mut vm, "size-averaged", 0, "AUG CGA CGU GCA UAA");
+    sequence(&mut vm, &ns, "size-averaged", 0, "AUG CGA CGU GCA UAA");
 
     // partial genome — only color stated, the rest sit out
-    sequence(&mut vm, "fragmentary", 0, "AUG GCG UAA");
+    sequence(&mut vm, &ns, "fragmentary", 0, "AUG GCG UAA");
 
     // both alleles dominant for color — hash tiebreak chooses one,
     // deterministically
-    sequence(&mut vm, "color-conflict-dom", 0, "AUG GCG GCG UAA");
+    sequence(&mut vm, &ns, "color-conflict-dom", 0, "AUG GCG GCG UAA");
 
     // both recessive — same tiebreak path
-    sequence(&mut vm, "color-conflict-rec", 0, "AUG GCC GCC UAA");
+    sequence(&mut vm, &ns, "color-conflict-rec", 0, "AUG GCC GCC UAA");
 
     // mutation: same parent genome, two different seeds → two different
     // offspring. Same seed twice → identical offspring.
     sequence(
         &mut vm,
+        &ns,
         "balanced + MUT",
         42,
         "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA",
     );
     sequence(
         &mut vm,
+        &ns,
         "balanced + MUT",
         99,
         "AUG CGA GCA ACA UCA GCG AUC GAU MUT UAA",
@@ -97,9 +104,9 @@ fn main() {
     // matters when there's a choice to make.
     let mama = "AUG CGA CGU GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
     let papa = "AUG CGC CGG GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
-    breeding(&mut vm, "mama × papa", 7, mama, papa);
-    breeding(&mut vm, "mama × papa", 9, mama, papa);
+    breeding(&mut vm, &ns, "mama × papa", 7, mama, papa);
+    breeding(&mut vm, &ns, "mama × papa", 9, mama, papa);
 
     // error surface — unknown codon
-    sequence(&mut vm, "bad-codon", 0, "AUG XYZ UAA");
+    sequence(&mut vm, &ns, "bad-codon", 0, "AUG XYZ UAA");
 }

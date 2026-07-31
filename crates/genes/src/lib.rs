@@ -12,6 +12,9 @@
 
 use std::collections::HashSet;
 
+use std::rc::Rc;
+
+use lisp::Namespace;
 use lisp::Vm;
 use lisp::val::{Arity, Val};
 
@@ -55,12 +58,43 @@ pub const PRELUDE_DEFINES: &str = r#"
 /// Seed-dependent mutate variants are *not* installed here — they're
 /// re-created per cast inside `seeded`'s let chain so the closure can
 /// capture the caller's seed via lexical scope (ADR-012).
-pub fn install(vm: &mut Vm) {
-    vm.register_prim("express!", Arity::Exact(1), express_prim);
-    vm.register_prim("mutate!", Arity::Exact(3), mutate_prim);
-    vm.register_prim("breed!", Arity::Exact(3), breed_prim);
-    vm.eval_str(PRELUDE_DEFINES)
+/// Names this pack publishes to the root namespace (ADR-042): the
+/// codon vocabulary a user types, plus the three resolver prims.
+///
+/// `thread` and `assoc-set` stay private — they're the two names spells
+/// also defines, identically, and exporting either would put that
+/// collision back in the root table. `add-allele` is an internal too.
+pub const EXPORTS: &[&str] = &[
+    "express!",
+    "breed!",
+    "mutate!",
+    "genome-start",
+    "genome-stop",
+    "color",
+    "size",
+    "speed",
+    "strength",
+    "armor",
+    "ability",
+    "biome",
+    "dom",
+    "rec",
+];
+
+/// Install the genome vocabulary into its own namespace and publish
+/// [`EXPORTS`] to the root. Returns the namespace; hosts pass it to
+/// `eval_str_in` when running genome source, which references the
+/// private `thread`.
+pub fn install(vm: &mut Vm) -> Rc<Namespace> {
+    let ns = vm.namespace("genes");
+    vm.register_prim_in(&ns, "express!", Arity::Exact(1), express_prim);
+    vm.register_prim_in(&ns, "mutate!", Arity::Exact(3), mutate_prim);
+    vm.register_prim_in(&ns, "breed!", Arity::Exact(3), breed_prim);
+    vm.eval_str_in(&ns, PRELUDE_DEFINES)
         .expect("genes prelude failed to install");
+    vm.export(&ns, EXPORTS)
+        .expect("genes exports collided with another pack");
+    ns
 }
 
 /// Wrap `body` in the per-cast let chain that exposes `seed` and the

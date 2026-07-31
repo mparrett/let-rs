@@ -6,13 +6,33 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use lisp::Namespace;
 use macros::MacroVm;
 use world::World;
 
-fn mvm() -> MacroVm {
+/// A MacroVm plus the spells namespace, and an `eval` that runs source
+/// *inside* it.
+///
+/// Spell source references `thread`, `assoc-set`, and the other ctx
+/// helpers, which the pack keeps private so they can't collide with the
+/// identically-named ones in genes (ADR-042). Tests exercise pack
+/// internals, so they belong inside the pack.
+struct Lab {
+    vm: MacroVm,
+    ns: Rc<Namespace>,
+}
+
+impl Lab {
+    fn eval(&mut self, src: &str) -> Result<lisp::Val, lisp::LispErr> {
+        let ns = Rc::clone(&self.ns);
+        self.vm.eval_str_in(&ns, src)
+    }
+}
+
+fn mvm() -> Lab {
     let mut vm = MacroVm::new();
-    spells::install(&mut vm);
-    vm
+    let ns = spells::install(&mut vm);
+    Lab { vm, ns }
 }
 
 #[test]
@@ -20,7 +40,7 @@ fn defspell_produces_constant_ctx_setter() {
     // Post-ADR-030, fire/ice/earth are hand-written (they mix) — bolt
     // is the canonical constant-setter rune covered by defspell.
     let mut vm = mvm();
-    let r = vm.eval_str("(bolt '())").expect("eval bolt");
+    let r = vm.eval("(bolt '())").expect("eval bolt");
     assert_eq!(format!("{r}"), "((shape . bolt))");
 }
 
@@ -28,7 +48,7 @@ fn defspell_produces_constant_ctx_setter() {
 fn defparam_closes_over_arg() {
     let mut vm = mvm();
     // ((area 5) '()) → ((area . 5))
-    let r = vm.eval_str("((area 5) '())").expect("eval (area 5)");
+    let r = vm.eval("((area 5) '())").expect("eval (area 5)");
     assert_eq!(format!("{r}"), "((area . 5))");
 }
 
@@ -41,7 +61,7 @@ fn canonical_cast_threads_three_runes() {
     // assoc-set never removes prior bindings, it just shadows them.
     let mut vm = mvm();
     let body = "(thread (start) (list fire (area 3) ice))";
-    let r = vm.eval_str(body).expect("eval cast");
+    let r = vm.eval(body).expect("eval cast");
     assert_eq!(
         format!("{r}"),
         "((element . water) (area . 3) (element . fire))"
@@ -53,7 +73,7 @@ fn canonical_cast_threads_three_runes() {
 #[test]
 fn fire_plus_ice_makes_water() {
     let mut vm = mvm();
-    let r = vm.eval_str("(ice (fire (start)))").expect("eval");
+    let r = vm.eval("(ice (fire (start)))").expect("eval");
     // Head is the mixed element; original (element . fire) lingers.
     assert_eq!(format!("{r}"), "((element . water) (element . fire))");
 }
@@ -62,14 +82,14 @@ fn fire_plus_ice_makes_water() {
 fn ice_plus_fire_also_makes_water() {
     // mix is symmetric — order doesn't matter for the named pairs.
     let mut vm = mvm();
-    let r = vm.eval_str("(fire (ice (start)))").expect("eval");
+    let r = vm.eval("(fire (ice (start)))").expect("eval");
     assert_eq!(format!("{r}"), "((element . water) (element . ice))");
 }
 
 #[test]
 fn fire_plus_earth_makes_lava() {
     let mut vm = mvm();
-    let r = vm.eval_str("(earth (fire (start)))").expect("eval");
+    let r = vm.eval("(earth (fire (start)))").expect("eval");
     assert_eq!(format!("{r}"), "((element . lava) (element . fire))");
 }
 
@@ -80,7 +100,7 @@ fn cascade_fire_ice_earth_makes_mud() {
     // cascade falls out of add-element calling assoc-or each time,
     // no special-case for tape length.
     let mut vm = mvm();
-    let r = vm.eval_str("(earth (ice (fire (start))))").expect("eval");
+    let r = vm.eval("(earth (ice (fire (start))))").expect("eval");
     assert_eq!(
         format!("{r}"),
         "((element . mud) (element . water) (element . fire))"
@@ -90,7 +110,7 @@ fn cascade_fire_ice_earth_makes_mud() {
 #[test]
 fn same_element_twice_is_idempotent() {
     let mut vm = mvm();
-    let r = vm.eval_str("(fire (fire (start)))").expect("eval");
+    let r = vm.eval("(fire (fire (start)))").expect("eval");
     assert_eq!(format!("{r}"), "((element . fire) (element . fire))");
 }
 
@@ -100,7 +120,7 @@ fn unmixed_pair_falls_back_to_last_write() {
     // This is the documented fallback so tapes with no defined
     // alchemy pair stay predictable (matches pre-ADR-030 behavior).
     let mut vm = mvm();
-    let r = vm.eval_str("(earth (ice (start)))").expect("eval");
+    let r = vm.eval("(earth (ice (start)))").expect("eval");
     assert_eq!(format!("{r}"), "((element . earth) (element . ice))");
 }
 
@@ -109,7 +129,7 @@ fn single_element_does_not_trigger_mixing() {
     // The first element call has prev=none → mix(none, X) = X.
     // Bare fire still produces (element . fire).
     let mut vm = mvm();
-    let r = vm.eval_str("(fire (start))").expect("eval");
+    let r = vm.eval("(fire (start))").expect("eval");
     assert_eq!(format!("{r}"), "((element . fire))");
 }
 
@@ -119,26 +139,26 @@ fn defspell_and_defparam_are_local_macros() {
     // ordinary defmacro forms, so they remain available for host code
     // to extend the vocabulary after the install.
     let mut vm = mvm();
-    vm.eval_str("(defspell water element water)")
+    vm.eval("(defspell water element water)")
         .expect("user defspell");
-    let r = vm.eval_str("(water '())").expect("eval water");
+    let r = vm.eval("(water '())").expect("eval water");
     assert_eq!(format!("{r}"), "((element . water))");
 }
 
 // ── mana model (ADR-028) ──────────────────────────────────────────
 
-fn vm_with_world(w: u32, h: u32) -> MacroVm {
+fn vm_with_world(w: u32, h: u32) -> Lab {
     let world = Rc::new(RefCell::new(World::new(w, h).expect("dims fit")));
     let mut vm = MacroVm::new();
-    spells::install_with_world(&mut vm, world);
-    vm
+    let ns = spells::install_with_world(&mut vm, world);
+    Lab { vm, ns }
 }
 
 #[test]
 fn mana_starts_at_max() {
     let mut vm = mvm();
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "10");
-    assert_eq!(format!("{}", vm.eval_str("max-mana").unwrap()), "10");
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "10");
+    assert_eq!(format!("{}", vm.eval("max-mana").unwrap()), "10");
 }
 
 #[test]
@@ -146,9 +166,9 @@ fn cast_decrements_mana_by_cost() {
     // cost = 1 + power + area. A bare (fire) ctx has neither, so
     // cost = 1; mana goes 10 → 9.
     let mut vm = vm_with_world(5, 5);
-    vm.eval_str("(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list fire)))))")
+    vm.eval("(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list fire)))))")
         .unwrap();
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "9");
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "9");
 }
 
 #[test]
@@ -160,30 +180,30 @@ fn a_cast_with_no_element_fails_softly_and_refunds() {
     // and logs instead.
     let mut vm = vm_with_world(5, 5);
     let r = vm
-        .eval_str("(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list power)))))")
+        .eval("(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list power)))))")
         .expect("a failed cast is a value, not an aborted evaluation");
     assert_eq!(format!("{r}"), "0", "nothing painted");
     assert_eq!(
-        format!("{}", vm.eval_str("mana").unwrap()),
+        format!("{}", vm.eval("mana").unwrap()),
         "10",
         "mana refunded"
     );
     // And the Vm is unharmed: a normal cast still works and charges.
-    vm.eval_str("(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list fire)))))")
+    vm.eval("(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 (thread (start) (list fire)))))")
         .unwrap();
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "9");
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "9");
 }
 
 #[test]
 fn cast_with_area_and_power_costs_more() {
     // cost = 1 + power(2) + area(1) = 4. mana 10 → 6.
     let mut vm = vm_with_world(5, 5);
-    vm.eval_str(
+    vm.eval(
         "(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 \
                   (thread (start) (list fire (area 1) (power 2))))))",
     )
     .unwrap();
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "6");
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "6");
 }
 
 #[test]
@@ -191,47 +211,47 @@ fn cast_refuses_when_mana_insufficient() {
     // Drain mana to 2, then attempt a cost-4 cast — refused.
     // Mana unchanged, returns 0 painted.
     let mut vm = vm_with_world(5, 5);
-    vm.eval_str("(set! mana 2)").unwrap();
+    vm.eval("(set! mana 2)").unwrap();
     let r = vm
-        .eval_str(
+        .eval(
             "(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 \
                       (thread (start) (list fire (power 3))))))",
         )
         .unwrap();
     assert_eq!(format!("{r}"), "0");
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "2");
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "2");
 }
 
 #[test]
 fn cast_succeeds_at_exact_mana() {
     // mana = cost = 3 (1 + power 2). Cast goes through, mana drops to 0.
     let mut vm = vm_with_world(5, 5);
-    vm.eval_str("(set! mana 3)").unwrap();
+    vm.eval("(set! mana 3)").unwrap();
     let r = vm
-        .eval_str(
+        .eval(
             "(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 \
                       (thread (start) (list fire (power 2))))))",
         )
         .unwrap();
     // 1 tile painted (area = 0, just the center).
     assert_eq!(format!("{r}"), "1");
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "0");
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "0");
 }
 
 #[test]
 fn tick_regens_one_mana() {
     let mut vm = vm_with_world(5, 5);
-    vm.eval_str("(set! mana 5)").unwrap();
-    vm.eval_str("(tick!)").unwrap();
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "6");
+    vm.eval("(set! mana 5)").unwrap();
+    vm.eval("(tick!)").unwrap();
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "6");
 }
 
 #[test]
 fn tick_caps_mana_at_max() {
     // Mana already at max → tick! leaves it alone (no overflow).
     let mut vm = vm_with_world(5, 5);
-    vm.eval_str("(tick!)").unwrap();
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "10");
+    vm.eval("(tick!)").unwrap();
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "10");
 }
 
 #[test]
@@ -239,41 +259,41 @@ fn tick_returns_decay_count_and_regens_mana() {
     // Cast (cost 2), tick: decay count = 0 because lifetime hasn't
     // expired yet, but mana should regen by 1.
     let mut vm = vm_with_world(5, 5);
-    vm.eval_str(
+    vm.eval(
         "(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 \
                   (thread (start) (list fire (power 3))))))",
     )
     .unwrap();
     // After cast: mana = 10 - (1+3) = 6.
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "6");
-    let r = vm.eval_str("(tick!)").unwrap();
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "6");
+    let r = vm.eval("(tick!)").unwrap();
     // Lifetime 3 → 2, no decay; tick returns 0.
     assert_eq!(format!("{r}"), "0");
     // Mana regen'd: 6 → 7.
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "7");
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "7");
 }
 
 #[test]
 fn reset_mana_restores_max() {
     let mut vm = mvm();
-    vm.eval_str("(set! mana 0)").unwrap();
-    vm.eval_str("(reset-mana!)").unwrap();
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "10");
+    vm.eval("(set! mana 0)").unwrap();
+    vm.eval("(reset-mana!)").unwrap();
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "10");
 }
 
 #[test]
 fn aftershock_adds_to_cost() {
     // aftershock 4 + bare fire → cost = 1 + 0 (power) + 0 (area) + 4
     let mut vm = vm_with_world(5, 5);
-    let before = vm.eval_str("mana").unwrap();
+    let before = vm.eval("mana").unwrap();
     assert_eq!(format!("{before}"), "10");
-    vm.eval_str(
+    vm.eval(
         "(cast! (assoc-set 'tx 2 (assoc-set 'ty 2 \
                   (thread (start) (list fire (aftershock 4))))))",
     )
     .unwrap();
     // mana 10 → 10 - 5 = 5
-    assert_eq!(format!("{}", vm.eval_str("mana").unwrap()), "5");
+    assert_eq!(format!("{}", vm.eval("mana").unwrap()), "5");
 }
 
 #[test]
@@ -284,13 +304,12 @@ fn spell_cost_formula() {
     // assoc-get expects (head-key, tail-val cons pair).
     //
     // Empty ctx → cost 1.
-    assert_eq!(format!("{}", vm.eval_str("(spell-cost '())").unwrap()), "1");
+    assert_eq!(format!("{}", vm.eval("(spell-cost '())").unwrap()), "1");
     // Just power 5 → cost 6.
     assert_eq!(
         format!(
             "{}",
-            vm.eval_str("(spell-cost (assoc-set 'power 5 '()))")
-                .unwrap()
+            vm.eval("(spell-cost (assoc-set 'power 5 '()))").unwrap()
         ),
         "6"
     );
@@ -298,7 +317,7 @@ fn spell_cost_formula() {
     assert_eq!(
         format!(
             "{}",
-            vm.eval_str("(spell-cost (assoc-set 'power 2 (assoc-set 'area 3 '())))")
+            vm.eval("(spell-cost (assoc-set 'power 2 (assoc-set 'area 3 '())))")
                 .unwrap()
         ),
         "6"
@@ -307,7 +326,7 @@ fn spell_cost_formula() {
     assert_eq!(
         format!(
             "{}",
-            vm.eval_str("(spell-cost (assoc-set 'aftershock 4 '()))")
+            vm.eval("(spell-cost (assoc-set 'aftershock 4 '()))")
                 .unwrap()
         ),
         "5"
@@ -322,12 +341,12 @@ fn alchemy_paints_mixed_tile_into_world() {
     use world::Tile;
     let world = Rc::new(RefCell::new(World::new(5, 5).expect("dims fit")));
     let mut vm = MacroVm::new();
-    spells::install_with_world(&mut vm, world.clone());
+    let ns = spells::install_with_world(&mut vm, world.clone());
     let src = "(world-apply! \
                  (assoc-set 'tx 2 \
                    (assoc-set 'ty 2 \
                      (thread (start) (list fire ice)))))";
-    let painted = vm.eval_str(src).expect("world-apply!");
+    let painted = vm.eval_str_in(&ns, src).expect("world-apply!");
     assert_eq!(format!("{painted}"), "1");
     assert_eq!(world.borrow().tile_at(2, 2), Some(Tile::Water));
 }
@@ -337,12 +356,12 @@ fn alchemy_cascade_paints_mud() {
     use world::Tile;
     let world = Rc::new(RefCell::new(World::new(5, 5).expect("dims fit")));
     let mut vm = MacroVm::new();
-    spells::install_with_world(&mut vm, world.clone());
+    let ns = spells::install_with_world(&mut vm, world.clone());
     let src = "(world-apply! \
                  (assoc-set 'tx 2 \
                    (assoc-set 'ty 2 \
                      (thread (start) (list fire ice earth)))))";
-    vm.eval_str(src).expect("world-apply!");
+    vm.eval_str_in(&ns, src).expect("world-apply!");
     assert_eq!(world.borrow().tile_at(2, 2), Some(Tile::Mud));
 }
 
@@ -351,12 +370,12 @@ fn fire_plus_earth_paints_lava() {
     use world::Tile;
     let world = Rc::new(RefCell::new(World::new(5, 5).expect("dims fit")));
     let mut vm = MacroVm::new();
-    spells::install_with_world(&mut vm, world.clone());
+    let ns = spells::install_with_world(&mut vm, world.clone());
     let src = "(world-apply! \
                  (assoc-set 'tx 2 \
                    (assoc-set 'ty 2 \
                      (thread (start) (list fire earth)))))";
-    vm.eval_str(src).expect("world-apply!");
+    vm.eval_str_in(&ns, src).expect("world-apply!");
     assert_eq!(world.borrow().tile_at(2, 2), Some(Tile::Lava));
 }
 
@@ -366,12 +385,12 @@ fn install_with_world_wires_world_apply() {
     // prims. A canonical cast onto a 7×5 world should paint tiles.
     let world = Rc::new(RefCell::new(World::new(7, 5).expect("dims fit")));
     let mut vm = MacroVm::new();
-    spells::install_with_world(&mut vm, world.clone());
+    let ns = spells::install_with_world(&mut vm, world.clone());
     let src = "(world-apply! \
                  (assoc-set 'tx 3 \
                    (assoc-set 'ty 2 \
                      (thread (start) (list fire (area 1))))))";
-    let painted = vm.eval_str(src).expect("world-apply!");
+    let painted = vm.eval_str_in(&ns, src).expect("world-apply!");
     // area 1 = (2·1+1)² = 9-tile box centered at (3, 2), all in-bounds.
     assert_eq!(format!("{painted}"), "9");
 }

@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use lisp::{Datum, DatumKind, LispErr, Session, Span, Sym, Val, Vm, parse};
+use lisp::{Datum, DatumKind, LispErr, Namespace, Session, Span, Sym, Val, Vm, parse};
 use std::rc::Rc;
 
 /// Recursion ceiling for macro expansion. Sits above the reader's own
@@ -417,15 +417,28 @@ impl MacroVm {
     /// Atomic semantics: if any form fails, the macro table is restored
     /// in addition to whatever `lisp::Vm::eval_str` restores on its end.
     pub fn eval_str(&mut self, src: &str) -> Result<Val, LispErr> {
+        let root = Rc::clone(self.vm.root());
+        self.eval_str_in(&root, src)
+    }
+
+    /// Macro-aware [`lisp::Vm::eval_str_in`]: expand, then evaluate
+    /// inside `ns` so a pack's prelude and casts resolve its own private
+    /// vocabulary (ADR-042).
+    ///
+    /// Macros themselves stay global to the expander — the macro table is
+    /// not namespaced, so two packs defining the same macro name still
+    /// collide. Nothing in-tree does; noted in ADR-042 as the remaining
+    /// half.
+    pub fn eval_str_in(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Val, LispErr> {
         let saved = self.expander.snapshot();
-        let result = self.eval_str_inner(src);
+        let result = self.eval_str_inner(ns, src);
         if result.is_err() {
             self.expander.restore(saved);
         }
         result
     }
 
-    fn eval_str_inner(&mut self, src: &str) -> Result<Val, LispErr> {
+    fn eval_str_inner(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Val, LispErr> {
         let forms = parse::read_many(src)?;
 
         // Split out defmacro forms (register them) and collect the rest.
@@ -450,7 +463,7 @@ impl MacroVm {
         if remaining.is_empty() {
             return Ok(Val::Bool(true));
         }
-        self.vm.eval_datums(&remaining)
+        self.vm.eval_datums_in(ns, &remaining)
     }
 
     /// Macro-aware [`lisp::Vm::start`]: register `defmacro`s, expand
@@ -466,8 +479,14 @@ impl MacroVm {
     /// A batch with no evaluable forms (all `defmacro`) yields a session
     /// that finishes on its first `resume` with `#t`, matching `eval_str`.
     pub fn start(&mut self, src: &str) -> Result<Session, LispErr> {
+        let root = Rc::clone(self.vm.root());
+        self.start_in(&root, src)
+    }
+
+    /// [`MacroVm::start`] targeting `ns`.
+    pub fn start_in(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Session, LispErr> {
         let saved = self.expander.snapshot();
-        let result = self.start_inner(src);
+        let result = self.start_inner(ns, src);
         if result.is_err() {
             // Same atomicity as `eval_str`: a batch that fails during
             // registration or expansion leaves no macros behind. Failures
@@ -478,7 +497,7 @@ impl MacroVm {
         result
     }
 
-    fn start_inner(&mut self, src: &str) -> Result<Session, LispErr> {
+    fn start_inner(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Session, LispErr> {
         let forms = parse::read_many(src)?;
         let mut remaining: Vec<Datum> = Vec::with_capacity(forms.len());
         for datum in forms {
@@ -487,7 +506,7 @@ impl MacroVm {
             }
             remaining.push(self.expander.expand_top_level(&mut self.vm, datum)?);
         }
-        self.vm.start_datums(&remaining)
+        self.vm.start_datums_in(ns, &remaining)
     }
 }
 

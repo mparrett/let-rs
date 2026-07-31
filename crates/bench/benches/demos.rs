@@ -26,10 +26,10 @@ fn bench_cast_spell(c: &mut Criterion) {
             || {
                 let world = Rc::new(RefCell::new(World::new(8, 5).expect("8×5 fits")));
                 let mut vm = MacroVm::new();
-                spells::install_with_world(&mut vm, world);
-                vm
+                let ns = spells::install_with_world(&mut vm, world);
+                (vm, ns)
             },
-            |mut vm: MacroVm| black_box(vm.eval_str(black_box(&body)).unwrap()),
+            |(mut vm, ns): (MacroVm, _)| black_box(vm.eval_str_in(&ns, black_box(&body)).unwrap()),
             BatchSize::SmallInput,
         )
     });
@@ -46,10 +46,10 @@ fn bench_cast_genome_balanced(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut vm = Vm::new();
-                genes::install(&mut vm);
-                vm
+                let ns = genes::install(&mut vm);
+                (vm, ns)
             },
-            |mut vm| black_box(vm.eval_str(black_box(&src)).unwrap()),
+            |(mut vm, ns)| black_box(vm.eval_str_in(&ns, black_box(&src)).unwrap()),
             BatchSize::SmallInput,
         )
     });
@@ -65,10 +65,10 @@ fn bench_cast_genome_with_mut(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut vm = Vm::new();
-                genes::install(&mut vm);
-                vm
+                let ns = genes::install(&mut vm);
+                (vm, ns)
             },
-            |mut vm| black_box(vm.eval_str(black_box(&src)).unwrap()),
+            |(mut vm, ns)| black_box(vm.eval_str_in(&ns, black_box(&src)).unwrap()),
             BatchSize::SmallInput,
         )
     });
@@ -89,10 +89,10 @@ fn bench_breed_diploid(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut vm = Vm::new();
-                genes::install(&mut vm);
-                vm
+                let ns = genes::install(&mut vm);
+                (vm, ns)
             },
-            |mut vm| black_box(vm.eval_str(black_box(&src)).unwrap()),
+            |(mut vm, ns)| black_box(vm.eval_str_in(&ns, black_box(&src)).unwrap()),
             BatchSize::SmallInput,
         )
     });

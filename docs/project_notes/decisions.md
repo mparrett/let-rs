@@ -4277,3 +4277,113 @@ them mine and one older than this ADR.
   `CLAUDE.md`, and the REPL example after `Raise` joined them. Corrected
   to name the actual rule: spans go on the variants that can *originate*
   a runtime failure.
+
+## ADR-042: Namespaces — per-pack binding tables (2026-07-30)
+
+**Context**: Every `(define …)` in a process landed in one table. Two DSL
+packs both defining a name meant whichever installed second won, in
+silence. Both spells and genes define `thread` *and* `assoc-set`, and the
+WASM bridge installs all three packs into one Vm.
+
+Measured before designing, because "identical definitions" is exactly the
+kind of claim that turns out to be false:
+
+| | result |
+|---|---|
+| cast with both packs installed | `1` — works; the definitions really are textually identical |
+| after genes redefines `thread` | `0` — silently wrong, no error |
+| a closure that captured the *old* `thread` | `hijacked` |
+
+The third row is the one that settles the design. A closure resolves
+globals at *call* time (ADR-015), so it re-resolves its own name on every
+recursive call. Saving a reference before something is shadowed does not
+protect you, which means shadowing was never containable by discipline at
+the call site.
+
+Worth stating plainly: the two live collisions are identical utility
+functions, so nothing is visibly broken today. The hazard is the silence,
+and the shape of the failure when it eventually fires.
+
+**Decision**: a `Namespace` is a table plus an optional parent. Each pack
+installs into its own, chained to a shared root holding the builtins.
+Lookup walks outward; `define` always writes to the table it started in,
+so a pack shadowing a builtin affects nobody else.
+
+**What makes it lexical rather than dynamic** is that `Env` holds the
+namespace and closures capture their `Env`. A spells closure calling
+`thread` gets spells' `thread` even when a genes closure invoked it,
+because resolution follows the closure's own environment rather than
+anything current at the moment of the call. `resolution_is_lexical_not_ambient`
+and `recursion_stays_inside_its_own_pack` pin the two halves.
+
+**`export` shares the cell, not the value.** A name published into the
+root aliases the same `Rc<RefCell<Val>>`, so `set!` through either path
+writes the same slot — which is what lets the mana counter stay in the
+spells pack while the bridge reads it from root with `Vm::global`. That
+keeps ADR-037's grandfathered exception working unchanged.
+
+**Exporting a name another pack already exported fails, and names both.**
+This is the actual fix. Silence was the hazard; shadowing as such is a
+feature when it's contained.
+
+**What each pack keeps private.** `thread` and `assoc-set` in both spells
+and genes, plus each pack's own helpers (`mix`, `add-element`,
+`spell-cost`, `assoc-or`, `add-allele`). Exporting either of the shared
+two would put the collision straight back into the root table, and
+neither is vocabulary a user types. Everything a user *does* type —
+the rune and codon names, `cast!`, `express!`, `grow` — exports, so the
+REPL and the lab cheatsheets work exactly as before.
+
+**Hosts evaluate cast source inside the pack.** Generated cast source
+references `thread`, so `eval_str_in(ns, src)` replaces `eval_str`. The
+`install` functions return their namespace for this. World prims stay in
+the *root* rather than in spells: they're a host capability rather than
+spell vocabulary, `examples/world.rs` uses them directly, and the spells
+namespace reaches them by chaining outward anyway.
+
+**Consequences**:
+
+- **+** Two packs can hold different definitions of one name, with no
+  renaming, no prefixes, and no edits to either prelude.
+- **+** A pack can shadow a builtin privately — useful, and previously
+  a process-wide act.
+- **+** ADR-015's `Weak` back-edge extends to packs unchanged:
+  `dropping_the_vm_releases_pack_namespaces` asserts a pack's table
+  cannot outlive its Vm.
+- **−** `install` signatures changed to return `Rc<Namespace>`, and any
+  host running pack source must use `eval_str_in`. That is the whole
+  migration, and it is mechanical, but it is not source-compatible.
+- **−** **Macros are not namespaced.** The `Expander`'s table is still
+  global, so two packs defining the same macro name still collide
+  silently. Nothing in-tree does — only spells defines macros — but this
+  is the same bug one layer up, and it is now the only place it survives.
+  Filed rather than fixed; the fix is the same shape.
+- **−** Export lists are hand-maintained. A pack that adds public
+  vocabulary and forgets to export it fails at the call site rather than
+  at install. A declarative `(export …)` form in the prelude would be
+  better and is deferred.
+- **−** The REPL evaluates at root, so it cannot reach a pack's private
+  helpers at all. That's correct, and it does mean `(thread …)` in the
+  web REPL now errors where it used to work by accident.
+
+**Alternatives considered**:
+
+1. **Qualified names (`spells:thread`).** Explicit at every call site,
+   and a simpler engine change — lookup splits on a separator. Rejected
+   because it edits all three preludes and makes every DSL author type
+   prefixes, for a problem the lexical scheme solves invisibly.
+2. **Detection only, plus factoring the shared utilities.** `install`
+   refuses to overwrite a differing binding, and `thread` / `assoc-set`
+   move to a common prelude. Genuinely tempting: it kills the silence,
+   which is the real hazard, at a fraction of the cost — and the two
+   in-tree collisions *are* duplication rather than evidence that packs
+   need private vocabularies. Rejected because it leaves two
+   independently-authored packs unable to hold one name, which is the
+   thing that breaks the moment a pack isn't written in this repo.
+3. **A module system with explicit import forms.** The full version:
+   `(module …)`, `(import …)`, first-class module values. Larger, and
+   most of its power is unused when packs are installed by Rust rather
+   than imported by lisp. The namespace is the piece that was load-bearing.
+4. **Search order across all pack tables from root.** Root chains to
+   every pack instead of packs chaining to root. Restores the collision
+   with extra steps — first pack to define a name wins, silently.

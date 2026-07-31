@@ -31,6 +31,9 @@ Slices that have landed:
   be sliced, resumed, single-stepped, and cancelled
 - in-language error handling (ADR-041) — `raise` / `error` / `guard`,
   with conditions as ordinary lists and prim failures catchable
+- namespaces (ADR-042) — each DSL pack gets its own binding table
+  chained to a shared root, so spells and genes can both define
+  `thread`; exports are explicit and collisions are refused
 - genes demo: codon-tape → diploid genome → phenotype creature card,
   parallel to spells but with genetics vocabulary (see ADR-011)
 - curves demo: stroke-tape → L-system rewrite → 8-direction turtle →
@@ -65,6 +68,15 @@ file before anything else; the rest of the engine is decoration.
   `Val` is `Clone` and `Env::lookup` clones out of the store, so a
   `Vec` here meant every mention of a function name allocated
   (ADR-035). Keep new `Val` fields cheap to clone for the same reason.
+- `ns.rs` — `Namespace`: a top-level binding table plus an optional
+  parent (ADR-042). Packs get a child of the root; lookup walks outward,
+  `define` always writes to the table it started in. **Resolution is
+  lexical**: `Env` holds the namespace and closures capture their `Env`,
+  so a pack's internals resolve to its own definitions no matter who
+  calls them. `export` shares the *cell*, so `set!` through either name
+  writes the same slot — that's what keeps the mana counter readable from
+  root. Exporting a name another pack exported is an error that names
+  both; don't weaken that, the silence was the original bug.
 - `env.rs` — Rc-linked immutable frames. Post-ADR-023 (CESK) each
   frame carries a `Copy` `Addr` into the Vm's `Store` rather than an
   `Rc<RefCell<Val>>` per slot; the top-level `globals` table kept its
@@ -344,6 +356,14 @@ ships a larger bundle.
   owning its policy, exactly as `world-apply!` consumes a ctx that
   lisp vocabulary built. Hosts read lisp-side values with
   `Vm::global(name)` — never `eval_str("some-name")`.
+- DSL packs install into their own namespace and return it:
+  `let ns = spells::install(&mut mvm);`. Host code that evaluates *pack*
+  source (a generated cast) must use `vm.eval_str_in(&ns, src)` — casts
+  reference `thread`, which spells and genes both define privately.
+  Root-level code reaches only a pack's `EXPORTS`. Adding public
+  vocabulary means adding it to that pack's `EXPORTS` const, and the two
+  names deliberately *not* exported by either spells or genes are
+  `thread` and `assoc-set` (ADR-042).
 - Host prims are registered via `vm.register_prim(name, arity, |args|
   …)`. The callback is wrapped in `Rc<dyn Fn>` so it can capture host
   state (`Rc<RefCell<World>>`, an `Rc<RefCell<Counter>>`, whatever).
