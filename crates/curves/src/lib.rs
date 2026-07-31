@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use lisp::Namespace;
+use lisp::NsHandle;
 use lisp::Vm;
 use lisp::val::{Arity, Val};
 
@@ -285,7 +285,7 @@ pub const EXPORTS: &[&str] = &["draw!", "render!", "reset!", "grow", "expand", "
 
 /// Install the L-system vocabulary into its own namespace and publish
 /// [`EXPORTS`] to the root. Returns the namespace.
-pub fn install(vm: &mut Vm, turtle: Rc<RefCell<Turtle>>) -> Rc<Namespace> {
+pub fn install(vm: &mut Vm, turtle: Rc<RefCell<Turtle>>) -> NsHandle {
     let ns = vm.namespace("curves");
     {
         let t = turtle.clone();

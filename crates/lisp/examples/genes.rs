@@ -5,13 +5,11 @@
 //! ADR-016). This example just drives a handful of sequences against a
 //! fresh VM.
 
-use std::rc::Rc;
-
 use codons::tape_to_sexpr;
-use lisp::Namespace;
+use lisp::NsHandle;
 use lisp::Vm;
 
-fn sequence(vm: &mut Vm, ns: &Rc<Namespace>, label: &str, seed: i64, tape: &str) {
+fn sequence(vm: &mut Vm, ns: &NsHandle, label: &str, seed: i64, tape: &str) {
     println!("── {label}  (seed={seed}) ──");
     println!("tape:   {tape}");
     let list = match tape_to_sexpr(tape) {
@@ -32,7 +30,7 @@ fn sequence(vm: &mut Vm, ns: &Rc<Namespace>, label: &str, seed: i64, tape: &str)
     }
 }
 
-fn breeding(vm: &mut Vm, ns: &Rc<Namespace>, label: &str, seed: i64, tape_a: &str, tape_b: &str) {
+fn breeding(vm: &mut Vm, ns: &NsHandle, label: &str, seed: i64, tape_a: &str, tape_b: &str) {
     println!("── {label}  (seed={seed}) ──");
     println!("mama:   {tape_a}");
     println!("papa:   {tape_b}");

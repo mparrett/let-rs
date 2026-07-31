@@ -126,7 +126,7 @@ fn exporting_the_same_name_twice_is_an_error_that_names_both_packs() {
     let err = vm
         .export(&b, &["entry"])
         .expect_err("second export must fail");
-    assert!(err.msg.contains("already bound"), "{err}");
+    assert!(err.msg.contains("already exported"), "{err}");
     assert!(err.msg.contains("packB"), "should name the offender: {err}");
     // And the first pack's export still stands.
     assert_eq!(format!("{}", vm.eval_str("entry").unwrap()), "1");
@@ -197,19 +197,111 @@ fn a_failed_batch_rolls_back_only_its_own_namespace() {
 }
 
 #[test]
-fn dropping_the_vm_releases_pack_namespaces() {
-    // ADR-015's property, extended to packs: a closure reaches its
-    // namespace through a `Weak`, so nothing a pack defines can root the
-    // Vm that owns it.
-    let weak = {
-        let mut vm = Vm::new();
-        let a = vm.namespace("packA");
-        vm.eval_str_in(&a, "(define f (lambda (x) (f x)))").unwrap();
-        vm.export(&a, &["f"]).unwrap();
-        std::rc::Rc::downgrade(&a)
-    };
+fn a_handle_cannot_keep_the_globals_alive() {
+    // ADR-036's sole-strong-owner invariant, extended to packs. The
+    // first cut of this handed out `Rc<Namespace>`, which let a caller
+    // retain the whole table — and every closure and cell in it — after
+    // the Vm was dropped. A handle is just a name; the Vm owns the Rcs.
+    let mut vm = Vm::new();
+    let a = vm.namespace("packA");
+    vm.eval_str_in(&a, "(define f (lambda (x) (f x)))").unwrap();
+    vm.export(&a, &["f"]).unwrap();
+
+    let cell = vm.global_cell_weak("f").expect("f is exported to root");
+    assert!(cell.upgrade().is_some(), "alive while the Vm is");
+    drop(vm);
     assert!(
-        weak.upgrade().is_none(),
-        "a pack namespace outlived its Vm — something rooted it"
+        cell.upgrade().is_none(),
+        "a binding cell outlived its Vm — something outside is rooting the globals"
     );
+    // The handle itself survives, and is inert: it names a Vm that's gone.
+    assert_eq!(a.name(), "packA");
+}
+
+#[test]
+fn a_handle_from_another_vm_is_an_error_not_a_panic() {
+    let mut other = Vm::new();
+    let stranger = other.namespace("elsewhere");
+    let mut vm = Vm::new();
+    let err = vm
+        .eval_str_in(&stranger, "1")
+        .expect_err("this Vm has no such namespace");
+    assert!(err.msg.contains("unknown namespace"), "{err}");
+}
+
+#[test]
+fn reinstalling_a_pack_is_idempotent() {
+    // Re-running a prelude allocates fresh cells for every define, so a
+    // reinstall presents a *different* cell for a name the same pack
+    // already exported. Checking cell identity called that a collision
+    // and made every real installer panic on its second call; provenance
+    // is what tells a reinstall apart from two packs claiming one name.
+    let mut vm = Vm::new();
+    let a = vm.namespace("packA");
+    for _ in 0..3 {
+        vm.eval_str_in(&a, "(define entry 'v)").unwrap();
+        vm.export(&a, &["entry"])
+            .expect("reinstall must not collide");
+    }
+    assert_eq!(format!("{}", vm.eval_str("entry").unwrap()), "v");
+
+    // And the root sees the *latest* cell, not the first one.
+    vm.eval_str_in(&a, "(define entry 'updated)").unwrap();
+    vm.export(&a, &["entry"]).unwrap();
+    assert_eq!(format!("{}", vm.eval_str("entry").unwrap()), "updated");
+}
+
+#[test]
+fn a_failed_export_publishes_nothing() {
+    // The list is checked before any of it is applied. Publishing
+    // name-by-name meant a collision on the last name still left the
+    // earlier ones in the root, with the call reporting failure.
+    let mut vm = Vm::new();
+    let a = vm.namespace("packA");
+    let b = vm.namespace("packB");
+    vm.eval_str_in(&a, "(define x 1) (define y 2)").unwrap();
+    vm.eval_str_in(&b, "(define y 9)").unwrap();
+    vm.export(&b, &["y"]).unwrap();
+
+    let err = vm.export(&a, &["x", "y"]).expect_err("y collides");
+    assert!(err.msg.contains("already exported"), "{err}");
+    assert!(
+        vm.global("x").is_none(),
+        "`x` leaked into the root from a failed export"
+    );
+}
+
+#[test]
+fn a_collision_names_both_packs() {
+    let mut vm = Vm::new();
+    let a = vm.namespace("packA");
+    let b = vm.namespace("packB");
+    vm.eval_str_in(&a, "(define entry 1)").unwrap();
+    vm.eval_str_in(&b, "(define entry 2)").unwrap();
+    vm.export(&a, &["entry"]).unwrap();
+    let err = vm.export(&b, &["entry"]).expect_err("second export fails");
+    assert!(
+        err.msg.contains("packA"),
+        "must name the existing owner: {err}"
+    );
+    assert!(
+        err.msg.contains("packB"),
+        "must name the new exporter: {err}"
+    );
+}
+
+#[test]
+fn a_pack_cannot_export_over_a_builtin_or_a_user_define() {
+    let mut vm = Vm::new();
+    let a = vm.namespace("packA");
+    vm.eval_str_in(&a, "(define car 'mine) (define mine 'v)")
+        .unwrap();
+    let err = vm.export(&a, &["car"]).expect_err("car is a builtin");
+    assert!(err.msg.contains("already bound"), "{err}");
+
+    vm.eval_str("(define mine 'users)").unwrap();
+    let err = vm
+        .export(&a, &["mine"])
+        .expect_err("the user bound it first");
+    assert!(err.msg.contains("already bound"), "{err}");
 }
