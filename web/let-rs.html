@@ -2518,6 +2518,180 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       </div>
     </section>
 
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">XIV</span>
+        <span class="mark">⊑</span>
+      </div>
+      <div class="body">
+        <h2>The same fix, one layer up
+          <span class="tag">— a routine slice, and the boundary it reopened for the second time running</span>
+        </h2>
+        <p>
+          The previous act named this one in its own list of what it left
+          undone: macros were still a single table, the same collision one
+          layer up, and the only place it still survived. This is that,
+          and it is deliberately the same fix — one table per namespace,
+          resolution outward along the chain, an afternoon. Which is worth
+          something on its own. The second application of a design is
+          where you find out whether it was a design or a lucky one-off,
+          and this one transplanted without argument.
+        </p>
+
+        <p>
+          So the feature isn't the story. What the slice walked into on
+          its way through is: one bug that had been wrong the whole time
+          and reported by nobody, and one door that had been closed
+          carefully, twice, and left ajar again both times by the
+          convenience written on top of it.
+        </p>
+
+        <h3 class="subact">The half that was left</h3>
+        <p>
+          A <code>defmacro</code> registers into the namespace its form
+          was evaluated in and never walks outward — the rule the binding
+          side already followed. A macro call resolves along that
+          namespace's chain, innermost first, so a pack's own macro
+          shadows a root one exactly as its <code>define</code> shadows a
+          builtin. Two packs can now hold different macros under one name,
+          which was the entire point.
+        </p>
+
+        <p>
+          The stdlib stays at the root, and the outward walk is what makes
+          that work rather than being decoration: the spell prelude uses
+          <code>and</code> and <code>or</code>, and the browser's curve
+          cast uses <code>begin</code>. Without the chain reaching out,
+          every pack would have to install its own copy of the standard
+          library.
+        </p>
+
+        <p>
+          One asymmetry is deliberate and worth defending, because the
+          instinct runs the other way. Bindings needed an
+          <code>export</code>, a collision refusal, and a record of which
+          pack published what — because packs publish into a shared root
+          and can therefore collide there. Macros publish nothing. With no
+          publication there is no collision to refuse, so the entire
+          apparatus has no counterpart here, and building the symmetric
+          half would have meant shipping machinery with no caller. Given
+          that the last two amendments in this project were both about
+          claims nothing exercised, that seemed like the wrong direction
+          to be generous in. So a pack's macros are private, full stop,
+          and <code>defspell</code> quietly stopped being language
+          vocabulary and became spell-pack vocabulary.
+        </p>
+
+        <p>
+          And one small refusal to assume. The expander keeps its own
+          tables, so it has to agree with the engine about resolution
+          order; it asks for the chain rather than hardcoding "the pack,
+          then the root." That shortcut is true today. It is true in the
+          way this log has learned to distrust — true where someone
+          looked, and silent on the day it stops being.
+        </p>
+
+        <h3 class="subact">The bug the fix walked into</h3>
+        <p>
+          Macro closures captured the <em>root</em> environment. A macro
+          defined inside a pack, whose body called one of that pack's own
+          helpers, reported the helper unbound.
+        </p>
+
+        <p>
+          Nothing had ever complained, because the only two pack macros in
+          the tree have bodies of pure quasiquote: they assemble a form
+          and call nothing, so they never once asked what they could see.
+          The feature couldn't have been correct without fixing it — a
+          per-pack macro table whose macros can't reach their own pack is
+          half a namespace — but the bug predates the feature entirely.
+          What the work contributed was the question. Which environment
+          should a macro body resolve against? Nobody had needed to have
+          an opinion before, and so the code had one by accident.
+        </p>
+
+        <h3 class="subact">A safe type with an unsafe method</h3>
+        <p>
+          The review found the real one. The new accessor handed back an
+          environment, and an environment could still be asked for the
+          namespace behind it — so a caller could keep a pack's table, its
+          cells, and its recursive closures alive after the machine that
+          owned them was gone. Exactly the sole-owner invariant Act XI
+          made those fields private to protect.
+        </p>
+
+        <p>
+          The shape of it is the part worth keeping, because it explains
+          why reading the diff doesn't catch it. An environment holds only
+          <em>weak</em> references. Handing one out roots nothing; that was
+          true before this change and is still true now. Nothing in the new
+          code returns an owning reference to anything. What it returns is
+          a type whose own API could produce one — the escape was one call
+          further on than the line you'd be looking at.
+        </p>
+
+        <p>
+          Given one instance, the cheap question is what else shares its
+          shape. The answer was one register over: the same environment
+          could also be asked for the <em>store</em>, upgrading to a strong
+          reference and keeping the whole arena alive on the same terms.
+          That one had been public since the fourth register landed back
+          in Act VII, roughly two months, and no test had ever tried it.
+          It cost one question to find.
+        </p>
+
+        <p>
+          The namespace accessor turned out to have no caller anywhere in
+          the engine, so it was deleted rather than made private — closing
+          the escape at compile time instead of guarding it at run time.
+          That makes it the second accessor this type has lost for being
+          the only way something could get out past an invariant. Act XI
+          removed the first: an address accessor added for diagnostic
+          tests and never used by one.
+        </p>
+
+        <p class="lift">
+          Twice in a row, then, on the same invariant. Act XI made the
+          fields private. The namespaces in Act XIII handed out the table
+          itself. This act handed out something that could be asked for the
+          table. Neither was a careless change; both were small
+          conveniences written on top of a boundary that had already been
+          closed deliberately, by someone who knew exactly why it was
+          closed, and had written it down.
+        </p>
+
+        <p class="lift">
+          Which suggests the thing to actually take away. Privacy is
+          enforced at the field, once. Every method added afterward is a
+          fresh opportunity to hand back what the field was hiding, and
+          nothing in the codebase asks the question at the moment it
+          matters. A private field is a claim about one line. The
+          invariant it exists for is a claim about every line that
+          returns — and only the first of those is checked by anything.
+        </p>
+
+        <p class="lift">
+          And the honest note, since the last act ended on tests. No test
+          caught either of these, and no test was going to. Three hundred
+          of them passed throughout, and they were not being lazy: an
+          escape like this isn't a behavior that can come out wrong, it's a
+          <em>reachability</em> — nothing misbehaves until someone writes
+          the line that takes advantage, and nobody had. What caught the
+          first was a reviewer asking whether the new convenience gave
+          anything away. What caught the second was asking the same
+          question about its neighbours. Both are questions rather than
+          artifacts, which is an uncomfortable place to have arrived after
+          two acts of concluding that the fix was better tests — and the
+          three lessons stack rather than compete. Run the code and look at
+          the number. Check that the test is testing the claim and not a
+          convenient neighbour of it. And then accept that some of this
+          isn't a claim about behavior at all, and will keep needing
+          somebody to go and ask.
+        </p>
+      </div>
+    </section>
+
     <div class="coda">
       <h3>What comes after</h3>
       <p>
@@ -2662,11 +2836,14 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         spells and genes can both define <code>thread</code> and a
         collision in the names they publish is refused out loud
         rather than resolved in silence. ADR-043 finished that job
-        the same day, giving the expander one macro table per
-        namespace so the last place the old collision survived is
-        closed — and turning up, on the way, that a macro's body had
-        been resolving against the root rather than against the pack
-        that defined it.
+        the next day (Act XIV), giving the expander one macro table
+        per namespace so the last place the old collision survived is
+        closed — and turning up two things on the way that nobody was
+        looking for: macro bodies had been resolving against the root
+        rather than against the pack that defined them, and the
+        environment type had two public methods that would upgrade a
+        weak back-edge into a strong one, letting a caller outlive the
+        machine holding either the globals table or the store.
         None of the remaining items are large; all of them are
         interesting; most of them are independent. The hard parts
         are done — the language is itself, three DSLs proved it,
