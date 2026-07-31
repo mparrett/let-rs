@@ -4526,3 +4526,47 @@ The cost is real and stated below.
 5. **Qualified macro names (`spells:defspell`).** Same objection ADR-042
    raised for bindings — it makes every DSL author type prefixes for a
    problem lexical scoping solves invisibly.
+
+**Amendment (2026-07-31, from review of PR #17).** One defect, plus a
+sibling of it found while fixing it. Both are the ADR-036 sole-strong-
+owner invariant, and this is the **second consecutive slice** to reopen
+it — ADR-042's `Vm::root()` handed out an `Rc<Namespace>` directly; this
+one handed out an `Env` that could still be asked for one.
+
+- **`Env::namespace()` was a public upgrade path.** `Vm::env_in` returns
+  a public `Env`, which is harmless by itself — `Env` holds only `Weak`s,
+  so handing one out roots nothing. But `Env::namespace()` *upgraded*
+  that back-edge to `Rc<Namespace>`, so
+  `vm.env_in(&ns)?.namespace().unwrap()` kept the pack table, its cells
+  and its recursive closures alive after the `Vm` dropped. Verified
+  before fixing. The method had **no caller inside the engine at all**,
+  so it was deleted rather than narrowed: the escape is now closed at
+  compile time instead of guarded at run time.
+- **`Env::store_handle()` is the same escape one register over**, found
+  by asking what else on `Env` upgrades. It yields a strong
+  `Rc<Store>` and leaks the whole arena identically; verified with the
+  same shape of repro. Now `pub(crate)`. Public since the ADR-023 CESK
+  migration, and no test had ever tried it — the reviewer flagged the
+  namespace case, and looking for its siblings is what turned this up.
+  `Env::with_globals` went `pub(crate)` at the same time: it *takes* the
+  two `Rc`s the `Vm` must solely own, so a public constructor is a public
+  request for exactly what must not escape.
+
+Neither was introduced here in the strict sense — `Env::namespace` and
+`store_handle` were both public on `main`, and the root namespace already
+leaked through `Vm::env()`. What ADR-043 did was widen the first from the
+root to *any pack*, which is what made it worth catching.
+
+The regression test can't call the removed method, so
+`an_env_handed_out_cannot_keep_the_globals_alive` pins the property that
+outlives it: an `Env` held across the `Vm`'s drop roots neither the pack
+table nor the store.
+
+**The lesson, given it is twice in a row.** Both reopenings came from
+adding a *convenience accessor* on top of a carefully-closed boundary —
+`root()`, then `env_in()`. The invariant lives in `Vm`'s private fields,
+but nothing checks it at the point where new API is written, so each new
+accessor is an unaudited chance to hand out a strong reference. The
+durable fix is not another ADR: it is that any new method returning a
+type holding a `Weak` back-edge to `globals` or `store` must be checked
+for whether the returned type can upgrade. `Env` was the one that could.

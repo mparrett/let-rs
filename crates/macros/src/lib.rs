@@ -504,10 +504,10 @@ impl MacroVm {
     /// inside `ns` so a pack's prelude and casts resolve its own private
     /// vocabulary (ADR-042).
     ///
-    /// Macros themselves stay global to the expander — the macro table is
-    /// not namespaced, so two packs defining the same macro name still
-    /// collide. Nothing in-tree does; noted in ADR-042 as the remaining
-    /// half.
+    /// Macros are namespaced the same way (ADR-043): a `defmacro` in this
+    /// batch registers into `ns`, and macro calls resolve along `ns`'s
+    /// chain outward to the root — so two packs can define one name, and
+    /// the stdlib installed at the root stays visible from inside `ns`.
     pub fn eval_str_in(&mut self, ns: &NsHandle, src: &str) -> Result<Val, LispErr> {
         let saved = self.expander.snapshot();
         let result = self.eval_str_inner(ns, src);

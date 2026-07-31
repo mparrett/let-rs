@@ -219,6 +219,44 @@ fn a_handle_cannot_keep_the_globals_alive() {
 }
 
 #[test]
+fn an_env_handed_out_cannot_keep_the_globals_alive() {
+    // ADR-043's amendment. `Vm::env_in` returns a public `Env`, which is
+    // fine in itself — `Env` holds only `Weak`s, so holding one roots
+    // nothing. What was not fine was `Env::namespace()`, a public method
+    // that *upgraded* that back-edge: `vm.env_in(&a)?.namespace()` handed
+    // back the pack table and kept it, its cells and its recursive
+    // closures alive past the Vm. Same invariant `NsHandle` exists to
+    // protect, reopened from the other side.
+    //
+    // The literal call is no longer expressible — the accessor is gone,
+    // so the escape is closed at compile time rather than guarded at run
+    // time, which is the stronger fix. What this pins is the property
+    // that survives that removal: an `Env` held across the drop roots
+    // nothing.
+    let mut vm = Vm::new();
+    let a = vm.namespace("packA");
+    vm.eval_str_in(&a, "(define f (lambda (x) (f x)))").unwrap();
+    vm.export(&a, &["f"]).unwrap();
+
+    let cell = vm.global_cell_weak("f").expect("f is exported to root");
+    let store = vm.store_weak();
+    let env = vm.env_in(&a).expect("pack env");
+
+    drop(vm);
+    assert!(
+        cell.upgrade().is_none(),
+        "a pack binding outlived its Vm — an Env is rooting the globals"
+    );
+    assert!(
+        store.upgrade().is_none(),
+        "the store outlived its Vm — an Env is rooting the arena"
+    );
+    // Held across the drop on purpose: the point is that this is inert,
+    // not that it was dropped early.
+    drop(env);
+}
+
+#[test]
 fn a_handle_from_another_vm_is_an_error_not_a_panic() {
     let mut other = Vm::new();
     let stranger = other.namespace("elsewhere");
