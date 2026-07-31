@@ -16,11 +16,16 @@ fn express(tape: &str) -> String {
 /// codons see deterministic randomness.
 fn express_seeded(tape: &str, seed: i64) -> String {
     let mut vm = Vm::new();
-    genes::install(&mut vm);
+    // Genome source references `thread`, which the pack keeps private
+    // (ADR-042), so it evaluates inside the pack's namespace.
+    let ns = genes::install(&mut vm);
     let list = tape_to_sexpr(tape).expect("tape should lex");
     let body = format!("(express! (thread '() {list}))");
     let src = genes::seeded(seed, &body);
-    format!("{}", vm.eval_str(&src).expect("express should evaluate"))
+    format!(
+        "{}",
+        vm.eval_str_in(&ns, &src).expect("express should evaluate")
+    )
 }
 
 #[test]
@@ -90,11 +95,11 @@ fn rec_rec_tiebreak_is_deterministic() {
 fn render_creature_produces_stable_name_for_same_genome() {
     // Two casts of the balanced strand should render the same name slug.
     let mut vm = Vm::new();
-    genes::install(&mut vm);
+    let ns = genes::install(&mut vm);
     let list = tape_to_sexpr("AUG CGA GCA ACA UCA GCG AUC GAU UAA").unwrap();
     let src = format!("(express! (thread '() {list}))");
-    let p1 = vm.eval_str(&src).unwrap();
-    let p2 = vm.eval_str(&src).unwrap();
+    let p1 = vm.eval_str_in(&ns, &src).unwrap();
+    let p2 = vm.eval_str_in(&ns, &src).unwrap();
     let card1 = genes::render_creature(&p1);
     let card2 = genes::render_creature(&p2);
     assert_eq!(card1, card2);
@@ -119,9 +124,9 @@ fn mutate_prim_rejects_rates_outside_zero_to_one() {
     // to rational probability (0..1). Old-style integer percents like
     // 25 now error rather than silently mutate at the wrong rate.
     let mut vm = Vm::new();
-    genes::install(&mut vm);
+    let ns = genes::install(&mut vm);
     for bad in ["25", "100", "-1", "2/1", "-1/4"] {
-        let r = vm.eval_str(&format!("(mutate! {bad} 1 '())"));
+        let r = vm.eval_str_in(&ns, &format!("(mutate! {bad} 1 '())"));
         assert!(
             r.is_err(),
             "{bad} should be rejected as a probability: {r:?}"
@@ -130,7 +135,7 @@ fn mutate_prim_rejects_rates_outside_zero_to_one() {
     // 0 and 1 (the integer-shaped endpoints) and any ratio in [0,1]
     // are accepted.
     for ok in ["0", "1", "1/4", "1/100"] {
-        let r = vm.eval_str(&format!("(mutate! {ok} 1 '())"));
+        let r = vm.eval_str_in(&ns, &format!("(mutate! {ok} 1 '())"));
         assert!(r.is_ok(), "{ok} should be accepted: {r:?}");
     }
 }
@@ -226,12 +231,15 @@ fn mutation_without_mut_codon_is_a_no_op() {
 /// helper but for tests — it asserts on phenotype substrings.
 fn breed(tape_a: &str, tape_b: &str, seed: i64) -> String {
     let mut vm = Vm::new();
-    genes::install(&mut vm);
+    let ns = genes::install(&mut vm);
     let la = tape_to_sexpr(tape_a).expect("parent A should lex");
     let lb = tape_to_sexpr(tape_b).expect("parent B should lex");
     let body = format!("(express! (breed! seed (thread '() {la}) (thread '() {lb})))");
     let src = genes::seeded(seed, &body);
-    format!("{}", vm.eval_str(&src).expect("breed should evaluate"))
+    format!(
+        "{}",
+        vm.eval_str_in(&ns, &src).expect("breed should evaluate")
+    )
 }
 
 const DIPLOID_A: &str = "AUG CGA CGU GCA GCU ACA ACU UCA UCU GCG GCC AUC AUA GAU GAC UAA";
@@ -310,6 +318,9 @@ fn child_phenotype_can_differ_from_both_parents() {
 #[test]
 fn express_numeric_overflow_errors_instead_of_panicking() {
     let mut vm = Vm::new();
+    // Deliberately at root rather than inside the pack: `express!` is
+    // one of the exported names (ADR-042), so this also checks the
+    // export path resolves.
     genes::install(&mut vm);
     let err = vm
         .eval_str(
@@ -326,6 +337,7 @@ fn mutate_saturates_on_extreme_alleles() {
     // across the two alleles; either way the result clamps into range
     // rather than overflowing on the ±10 drift.
     let mut vm = Vm::new();
+    // At root, through the exported `mutate!`.
     genes::install(&mut vm);
     let out = vm
         .eval_str(

@@ -13,10 +13,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use curves::Turtle;
+use lisp::Namespace;
 use lisp::Vm;
 use strokes::tape_to_sexpr;
 
-fn cast(vm: &mut Vm, label: &str, axiom: &str, rules: &str, iters: i64) {
+fn cast(vm: &mut Vm, ns: &Rc<Namespace>, label: &str, axiom: &str, rules: &str, iters: i64) {
     println!("── {label}  (iterations={iters}) ──");
     println!("axiom:  {axiom}");
     if !rules.is_empty() {
@@ -37,7 +38,7 @@ fn cast(vm: &mut Vm, label: &str, axiom: &str, rules: &str, iters: i64) {
            (let ((_ (draw! (grow {axiom_list} '({rules}) {iters})))) \
              (render!)))"
     );
-    match vm.eval_str(&body) {
+    match vm.eval_str_in(ns, &body) {
         Ok(v) => println!("{v}\n"),
         Err(e) => println!("err:    eval: {e}\n"),
     }
@@ -46,21 +47,22 @@ fn cast(vm: &mut Vm, label: &str, axiom: &str, rules: &str, iters: i64) {
 fn main() {
     let turtle = Rc::new(RefCell::new(Turtle::new()));
     let mut vm = Vm::new();
-    curves::install(&mut vm, turtle);
+    let ns = curves::install(&mut vm, turtle);
 
     println!("let-rs curves demo\n=================\n");
 
     // octagon: 8 unit edges, 45° turns. No recursion — just the axiom.
-    cast(&mut vm, "octagon", "F+F+F+F+F+F+F+F", "", 0);
+    cast(&mut vm, &ns, "octagon", "F+F+F+F+F+F+F+F", "", 0);
 
     // Lévy C curve at 45°: F → +F--F+ produces the canonical curlicue.
     // 3 iterations is enough to recognize the curve in ASCII.
-    cast(&mut vm, "lévy C curve", "F", "(F + F - - F +)", 3);
+    cast(&mut vm, &ns, "lévy C curve", "F", "(F + F - - F +)", 3);
 
     // Fractal-plant shape: F → F[+F]F[-F]F. Branches splay at 45°;
     // 2 iterations gives a recognizable Y-tree, 3 starts to fill in.
     cast(
         &mut vm,
+        &ns,
         "fractal plant",
         "F",
         "(F F [ + F ] F [ - F ] F)",
@@ -68,6 +70,6 @@ fn main() {
     );
 
     // Error surfaces: unknown glyph in tape, unmatched ']'
-    cast(&mut vm, "bad-glyph", "Fx", "", 0);
-    cast(&mut vm, "unmatched-pop", "F]F", "", 0);
+    cast(&mut vm, &ns, "bad-glyph", "Fx", "", 0);
+    cast(&mut vm, &ns, "unmatched-pop", "F]F", "", 0);
 }

@@ -23,6 +23,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use lisp::Namespace;
 use macros::MacroVm;
 use world::World;
 
@@ -160,17 +161,57 @@ pub const PRELUDE_DEFINES: &str = r#"
 /// the prelude's `mix` table can use `and`/`or`. The alchemy logic
 /// in ADR-030 made these unavoidable — sequences of `(if a (if b c
 /// #f) #f)` would render the table unreadable.
-pub fn install(mvm: &mut MacroVm) {
+/// Names this pack publishes to the root namespace (ADR-042) — the
+/// vocabulary a user types in the REPL, plus the entry points and the
+/// mana counter the host renders.
+///
+/// Everything else stays private, and `thread` / `assoc-set` / `mix` /
+/// `add-element` / `spell-cost` / `assoc-or` are deliberately on the
+/// private side: `thread` and `assoc-set` are the two names genes also
+/// defines, and exporting either would put the collision straight back
+/// into the root table. They are internals in both packs, so neither
+/// needs to.
+pub const EXPORTS: &[&str] = &[
+    "cast!",
+    "tick!",
+    "reset-mana!",
+    "mana",
+    "max-mana",
+    "start",
+    "fire",
+    "ice",
+    "earth",
+    "bolt",
+    "self",
+    "area",
+    "power",
+    "aftershock",
+];
+
+/// Install the spell prelude into its own namespace and publish
+/// [`EXPORTS`] to the root. Returns the namespace, which hosts pass to
+/// `eval_str_in` when running spell source — casts reference `thread`
+/// and the ctx helpers, which are private.
+pub fn install(mvm: &mut MacroVm) -> Rc<Namespace> {
     macros::install_stdlib(mvm).expect("macros stdlib failed to install");
-    mvm.eval_str(PRELUDE_DEFINES)
+    let ns = mvm.vm.namespace("spells");
+    mvm.eval_str_in(&ns, PRELUDE_DEFINES)
         .expect("spells prelude failed to install");
+    mvm.vm
+        .export(&ns, EXPORTS)
+        .expect("spells exports collided with another pack");
+    ns
 }
 
 /// Convenience: install the spell prelude AND the world prims that
 /// resolve a finished ctx against `world` (`world-apply!` and friends).
 /// Both `examples/spells.rs` and the WASM bridge want exactly this
 /// wiring; one helper saves the two-line duplication.
-pub fn install_with_world(mvm: &mut MacroVm, world: Rc<RefCell<World>>) {
-    install(mvm);
+pub fn install_with_world(mvm: &mut MacroVm, world: Rc<RefCell<World>>) -> Rc<Namespace> {
+    // World prims go to the *root*, not to this pack: they're a host
+    // capability rather than spell vocabulary, `examples/world.rs` uses
+    // them directly, and the spells namespace reaches them by chaining
+    // outward anyway (ADR-042).
     world::world_prim::install(&mut mvm.vm, world);
+    install(mvm)
 }

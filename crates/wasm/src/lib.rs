@@ -36,7 +36,7 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
 use curves::Turtle;
-use lisp::{LispErr, Session};
+use lisp::{LispErr, Namespace, Session};
 use macros::MacroVm;
 use world::World;
 
@@ -66,6 +66,13 @@ pub struct WasmVm {
     /// clone in the `draw!`/`render!`/`reset!` prims. See ADR-019.
     #[allow(dead_code)] // held to keep the prim closures alive
     turtle: Rc<RefCell<Turtle>>,
+    /// Each pack's namespace (ADR-042). Cast source references helpers
+    /// the packs keep private — `thread` above all, which spells and
+    /// genes both define — so every generated cast evaluates *inside*
+    /// the pack it belongs to rather than at the root.
+    spells_ns: Rc<Namespace>,
+    genes_ns: Rc<Namespace>,
+    curves_ns: Rc<Namespace>,
     /// An in-flight resumable evaluation, if any (ADR-040), plus the
     /// source it came from so errors can still be rendered with a caret
     /// after `eval_start` has returned.
@@ -91,9 +98,9 @@ impl WasmVm {
         ));
         let turtle = Rc::new(RefCell::new(Turtle::new()));
         let mut inner = MacroVm::with_stdlib();
-        spells::install_with_world(&mut inner, world.clone());
-        genes::install(&mut inner.vm);
-        curves::install(&mut inner.vm, turtle.clone());
+        let spells_ns = spells::install_with_world(&mut inner, world.clone());
+        let genes_ns = genes::install(&mut inner.vm);
+        let curves_ns = curves::install(&mut inner.vm, turtle.clone());
         // Default budget for browser hosts: 10M CEK steps. Tail-call test
         // currently uses ~1M; spells/genes runs are well under 100k. The
         // browser eval runs on the main thread, so an unbounded loop
@@ -103,6 +110,9 @@ impl WasmVm {
             inner,
             world,
             turtle,
+            spells_ns,
+            genes_ns,
+            curves_ns,
             pending: None,
             width,
             height,
@@ -213,7 +223,8 @@ impl WasmVm {
                  (assoc-set 'ty {y} \
                    (thread (start) {list_expr}))))"
         );
-        self.inner.eval_str(&src).map_err(generated_err)?;
+        let ns = Rc::clone(&self.spells_ns);
+        self.inner.eval_str_in(&ns, &src).map_err(generated_err)?;
         // safety: see ADR-005 — no callback primitives, so a JS handler cannot
         // re-enter Vm during this borrow.
         let log = &self.world.borrow().log;
@@ -226,7 +237,7 @@ impl WasmVm {
     /// tiles that decayed this tick (0+ as a string for JS).
     pub fn tick(&mut self) -> Result<String, JsValue> {
         self.inner
-            .eval_str("(tick!)")
+            .eval_str_in(&Rc::clone(&self.spells_ns), "(tick!)")
             .map(|v| format!("{v}"))
             .map_err(generated_err)
     }
@@ -293,7 +304,8 @@ impl WasmVm {
             .map_err(|e| JsValue::from_str(&format!("codon (parent B): {e}")))?;
         let body = format!("(express! (breed! seed (thread '() {la}) (thread '() {lb})))");
         let src = genes::seeded(seed, &body);
-        let phenotype = self.inner.eval_str(&src).map_err(generated_err)?;
+        let ns = Rc::clone(&self.genes_ns);
+        let phenotype = self.inner.eval_str_in(&ns, &src).map_err(generated_err)?;
         Ok(genes::render_creature(&phenotype))
     }
 
@@ -309,7 +321,8 @@ impl WasmVm {
         // ADR-012.
         let body = format!("(express! (thread '() {list_expr}))");
         let src = genes::seeded(seed, &body);
-        let phenotype = self.inner.eval_str(&src).map_err(generated_err)?;
+        let ns = Rc::clone(&self.genes_ns);
+        let phenotype = self.inner.eval_str_in(&ns, &src).map_err(generated_err)?;
         Ok(genes::render_creature(&phenotype))
     }
 
@@ -345,7 +358,7 @@ impl WasmVm {
                     (render!))"
         );
         self.inner
-            .eval_str(&src)
+            .eval_str_in(&Rc::clone(&self.curves_ns), &src)
             .map(|v| format!("{v}"))
             .map_err(generated_err)
     }

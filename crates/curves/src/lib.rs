@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use lisp::Namespace;
 use lisp::Vm;
 use lisp::val::{Arity, Val};
 
@@ -276,28 +277,40 @@ fn reset_prim(_args: &[Val], t: &mut Turtle) -> Result<Val, String> {
 /// own the `Rc<RefCell<Turtle>>` so they can read state directly (for
 /// renderers, tests, the WASM bridge) — same shape as
 /// `world::world_prim::install`.
-pub fn install(vm: &mut Vm, turtle: Rc<RefCell<Turtle>>) {
+/// Names this pack publishes to the root namespace (ADR-042). Curves
+/// shares no name with the other two packs, so its whole surface is
+/// public; `expand` / `expand-one` are the rewrite engine's internals
+/// but the Curve Lab cheatsheet shows them, so they go out too.
+pub const EXPORTS: &[&str] = &["draw!", "render!", "reset!", "grow", "expand", "expand-one"];
+
+/// Install the L-system vocabulary into its own namespace and publish
+/// [`EXPORTS`] to the root. Returns the namespace.
+pub fn install(vm: &mut Vm, turtle: Rc<RefCell<Turtle>>) -> Rc<Namespace> {
+    let ns = vm.namespace("curves");
     {
         let t = turtle.clone();
-        vm.register_prim("draw!", Arity::Exact(1), move |args| {
+        vm.register_prim_in(&ns, "draw!", Arity::Exact(1), move |args| {
             let mut tt = t.borrow_mut();
             draw_prim(args, &mut tt)
         });
     }
     {
         let t = turtle.clone();
-        vm.register_prim("render!", Arity::Exact(0), move |args| {
+        vm.register_prim_in(&ns, "render!", Arity::Exact(0), move |args| {
             let mut tt = t.borrow_mut();
             render_prim(args, &mut tt)
         });
     }
     {
         let t = turtle.clone();
-        vm.register_prim("reset!", Arity::Exact(0), move |args| {
+        vm.register_prim_in(&ns, "reset!", Arity::Exact(0), move |args| {
             let mut tt = t.borrow_mut();
             reset_prim(args, &mut tt)
         });
     }
-    vm.eval_str(PRELUDE_DEFINES)
+    vm.eval_str_in(&ns, PRELUDE_DEFINES)
         .expect("curves prelude failed to install");
+    vm.export(&ns, EXPORTS)
+        .expect("curves exports collided with another pack");
+    ns
 }
