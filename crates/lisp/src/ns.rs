@@ -70,7 +70,7 @@ impl std::fmt::Display for NsHandle {
     }
 }
 
-pub struct Namespace {
+pub(crate) struct Namespace {
     name: Rc<str>,
     table: RefCell<HashMap<Sym, Cell>>,
     /// `None` for the root. A pack's namespace parents to the root, so
@@ -142,11 +142,6 @@ impl Namespace {
     /// Bind `name` to an existing cell — the aliasing that `export` uses.
     pub(crate) fn bind_cell(&self, name: Sym, cell: Cell) {
         self.table.borrow_mut().insert(name, cell);
-    }
-
-    /// Whether *this* table binds `name`, ignoring the parent chain.
-    pub fn defines_locally(&self, name: &str) -> bool {
-        self.table.borrow().contains_key(name)
     }
 
     /// Write through the cell bound to `name`, wherever in the chain it
@@ -222,20 +217,9 @@ impl Namespace {
         *self.table.borrow_mut() = snap;
     }
 
-    /// Names bound in this table alone, sorted. Diagnostic, and how a
-    /// pack's install can report what it is about to export.
-    pub fn names(&self) -> Vec<Sym> {
-        let mut v: Vec<Sym> = self.table.borrow().keys().cloned().collect();
-        v.sort();
-        v
-    }
-
-    /// Number of names bound in this table alone. Diagnostic.
-    pub fn len(&self) -> usize {
-        self.table.borrow().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+    // `names`, `len`, `is_empty` and `defines_locally` were removed in
+    // ADR-044. They were public diagnostics on a type that is now
+    // crate-private, so nothing could reach them; keeping them would
+    // have meant carrying four methods whose only remaining purpose was
+    // to be found by someone looking for a way in.
 }

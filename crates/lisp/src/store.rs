@@ -49,14 +49,19 @@ use crate::val::Val;
 /// there is no public accessor that hands one out — see ADR-033.
 ///
 /// The `u32` is private (ADR-036) so an `Addr` can only come from
-/// `Store::alloc`. That is what makes the invariant above enforceable
-/// rather than merely documented: `store_weak` hands out a `Store`, but
-/// without a constructible `Addr` there is nothing a holder can read or
-/// write through it.
+/// `Store::alloc`. That is what made the invariant above enforceable
+/// rather than merely documented, back when `store_weak` handed out the
+/// `Store` itself: without a constructible `Addr` there was nothing a
+/// holder could read or write through it.
+///
+/// As of ADR-044 the `Store` doesn't cross the crate boundary at all —
+/// it is private, and `Vm::store_probe` answers questions without
+/// yielding a reference. `Addr` stays public because it appears in no
+/// public signature that hands out anything; it is inert on its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Addr(u32);
 
-pub struct Store {
+pub(crate) struct Store {
     cells: RefCell<Vec<Val>>,
     /// Slots whose owning frame has dropped, available for reuse.
     /// Every entry holds `Val::Nil` — `free` clears the slot so a dead

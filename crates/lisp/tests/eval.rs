@@ -591,24 +591,21 @@ fn letrec_does_not_leak() {
     // by the CESK store. Frame slots are now `Addr` (Copy) indices
     // into a Vm-owned `Store`; closures Rc-reach the env, which holds
     // a `Weak<Store>`, so no closure can root its own store. When the
-    // Vm drops, the store drops in one shot — observable via the
-    // `Weak<Store>` taken before the Vm dropped.
+    // Vm drops, the store drops in one shot — observable through the
+    // probe taken before the Vm dropped.
     let mut vm = lisp::Vm::new();
-    let store_weak = vm.store_weak();
+    let store = vm.store_probe();
     let v = vm.eval_str("(letrec ((f (lambda () (f)))) f)").unwrap();
     // Sanity: the letrec did allocate at least one slot.
-    let store_pre_drop = store_weak
-        .upgrade()
-        .expect("store should be alive while Vm is");
-    assert!(
-        !store_pre_drop.is_empty(),
+    assert_eq!(
+        store.is_empty(),
+        Some(false),
         "letrec should have allocated at least one store slot"
     );
-    drop(store_pre_drop);
     drop(v);
     drop(vm);
     assert!(
-        store_weak.upgrade().is_none(),
+        !store.is_alive(),
         "after Vm drop, the store must release. If this fires, some \
          closure is rooting the store — the ADR-021 cycle has come back."
     );
@@ -654,30 +651,28 @@ fn store_reclaims_frame_slots() {
 
     for (setup, body) in cases {
         let mut vm = Vm::new();
-        let store = vm
-            .store_weak()
-            .upgrade()
-            .expect("store is alive while the Vm is");
+        let store = vm.store_probe();
         if !setup.is_empty() {
             vm.eval_str(setup).unwrap();
         }
 
         vm.eval_str(body).unwrap();
-        let live = store.len();
-        let high_water = store.slots();
+        let alive = || store.len().expect("store is alive while the Vm is");
+        let live = alive();
+        let high_water = store.slots().expect("store is alive while the Vm is");
 
         for _ in 0..20 {
             vm.eval_str(body).unwrap();
         }
 
         assert_eq!(
-            store.len(),
+            alive(),
             live,
             "{body}: live slot count grew across repeated evaluation — \
              frame slots are no longer being reclaimed (ADR-033)"
         );
         assert_eq!(
-            store.slots(),
+            store.slots().expect("store is alive while the Vm is"),
             high_water,
             "{body}: the store's high-water mark grew across repeated \
              evaluation — freed slots are not being reused (ADR-033)"
@@ -725,17 +720,15 @@ fn recursive_closures_retain_their_slot() {
 
     for (src, per_eval) in cases {
         let mut vm = Vm::new();
-        let store = vm
-            .store_weak()
-            .upgrade()
-            .expect("store is alive while the Vm is");
+        let store = vm.store_probe();
         vm.eval_str(src).unwrap();
-        let after_one = store.len();
+        let live = || store.len().expect("store is alive while the Vm is");
+        let after_one = live();
         for _ in 0..9 {
             vm.eval_str(src).unwrap();
         }
         assert_eq!(
-            store.len(),
+            live(),
             after_one + per_eval * 9,
             "{src}: expected {per_eval} retained slot(s) per evaluation. \
              If this now retains *fewer*, the cycle is being collected — \

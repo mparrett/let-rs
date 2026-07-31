@@ -4570,3 +4570,172 @@ accessor is an unaudited chance to hand out a strong reference. The
 durable fix is not another ADR: it is that any new method returning a
 type holding a `Weak` back-edge to `globals` or `store` must be checked
 for whether the returned type can upgrade. `Env` was the one that could.
+
+## ADR-044: The ownership invariant is enforced by the compiler (2026-07-31)
+
+**Context**: ADR-036 made `Vm::globals` and `Vm::store` private so the
+`Vm` would be their sole strong owner — drop it and every binding,
+closure and frame slot goes with it. The rule was right and it did not
+hold. Two consecutive slices reopened it:
+
+| | how |
+|---|---|
+| ADR-042 | `Vm::root()` returned `Rc<Namespace>` outright |
+| ADR-043 | `Vm::env_in()` returned an `Env`, which had a public method that upgraded to `Rc<Namespace>` |
+
+Both were caught in review, neither by a test, and both were small
+conveniences written on top of a boundary somebody had closed
+deliberately and documented carefully. Fixing ADR-043's turned up a
+third — `Env::store_handle()` yielded `Rc<Store>` and had been public
+since the ADR-023 CESK migration, roughly two months, untried.
+
+The diagnosis is the point. Privacy is enforced at the *field*, once. The
+invariant is a claim about every line that returns, and nothing checked
+those. Writing the rule down again — a third time, in a third place —
+would have produced a third reopening.
+
+**Decision**: make the two containers unnameable outside the crate, so
+the compiler checks every signature instead.
+
+- `ns::Namespace` and `store::Store` are `pub(crate)`. `env::Globals`
+  (an alias for `Rc<Namespace>`) goes with them.
+- `lib.rs` carries `#![deny(private_interfaces, private_bounds)]`. This
+  is the half that turns it into enforcement: leaking a private type
+  through a public signature is a *warning* by default, and a warning is
+  not an invariant. It fired immediately on `prim::install_builtins`,
+  which had been `pub` and takes a `&Globals`.
+- `Vm::store_weak() -> Weak<Store>` becomes
+  `Vm::store_probe() -> StoreProbe`. The old signature was honest about
+  being weak and still left the escape one `.upgrade()` away. `StoreProbe`
+  answers `is_alive` / `len` / `is_empty` / `slots` from a momentary
+  upgrade it drops again, so holding one forever roots nothing.
+
+**Verified both directions rather than assumed.** Three would-be
+accessors — returning `Rc<Namespace>`, `Rc<Store>`, and `Weak<Store>` —
+were added to `Vm` and all three failed to compile with "type is more
+private than the item". From outside the crate, naming
+`lisp::ns::Namespace` or `lisp::store::Store` is `E0603: private struct`.
+
+**Where the line is, and why there.** This seals the *containers*, not
+individual values. `Vm::global_cell_weak` still hands out a
+`Weak<RefCell<Val>>`, and upgrading it keeps one cell alive past its Vm —
+deliberately allowed, because `Val` is `Clone` and `Vm::global` already
+hands out copies, so a single value can always escape and sealing cells
+would buy nothing. What must not escape is a structure that transitively
+holds *everything*: the globals table, or the store arena. A closure in a
+retained cell reaches its `Env`, whose back-edges to both are `Weak`, so
+the boundary holds.
+
+**Consequences**:
+
+- **+** The invariant is checked on every build, on every line that
+  returns, by something that cannot forget. A future `env_in`-shaped
+  accessor fails to compile rather than being caught in review or not at
+  all.
+- **+** `Store`'s own docs get simpler. The `Addr`-is-opaque argument
+  (ADR-036) existed to make a handed-out `Store` harmless; the `Store`
+  isn't handed out now. `Addr` stays public — it appears in no signature
+  that yields anything and is inert alone.
+- **−** `Vm::store_weak` is renamed and reshaped. Only `lisp`'s own
+  integration tests called it — five sites, mechanical — but it is a
+  breaking change to a public API.
+- **−** Four public diagnostics on `Namespace` (`names`, `len`,
+  `is_empty`, `defines_locally`) became unreachable and were deleted
+  rather than kept as `pub(crate)` dead code. If something needs them
+  later, a probe type is the shape to add.
+- **−** The engine now has two "handle" types (`NsHandle`, `StoreProbe`)
+  that exist purely to not be the thing they refer to. That is real
+  surface area bought for a property, and worth naming as a cost rather
+  than pretending it's free.
+- **~** This does not make the crate leak-proof in general; it closes one
+  specific, twice-demonstrated hole. `Rc` cycles inside the engine
+  (ADR-038's retained frame slots) are a separate problem and unaffected.
+
+**Alternatives considered**:
+
+1. **Write the rule down again** — a stronger note in `CLAUDE.md` and the
+   ADR, saying to check new accessors. Rejected as the thing that already
+   failed twice. This project's recurring failure is documentation that
+   outlives its truth; a rule that depends on being read at the right
+   moment is the same bet a third time.
+2. **A test that walks the public API.** Can't be written honestly: the
+   escape isn't a behavior, it's a reachability, so a test would have to
+   enumerate accessors by hand — which is the manual audit, wearing a
+   test's clothes, and it goes stale the moment someone adds one.
+3. **A compile-fail test (`trybuild`).** Would pin the enforcement
+   itself, and it's the right tool. Rejected on ADR-002's zero-deps rule
+   for `lisp`; the `deny` plus private types gets the enforcement, and
+   what a `trybuild` case would add is a *test of the enforcement*, which
+   is a smaller prize than it sounds when the enforcement is the
+   compiler.
+4. **Seal cells too**, for uniformity. Rejected: see the line above.
+   Values already escape by design, so it would be ceremony without a
+   property.
+5. **Keep `Store` public and rely on CI's `-D warnings`.** Rejected —
+   `private_interfaces` only fires when a private type leaks, and if
+   `Store` is public nothing fires at all. The privacy is what creates
+   the check; the `deny` only sharpens it.
+
+**Amendment (2026-07-31, from review of PR #19).** The decision above
+overclaimed, and the reviewer was right to call it blocking: **the lint
+does not enforce the invariant, it enforces one half of it.**
+`private_interfaces` checks types that appear in public *signatures*. It
+has nothing to say about a public type that stores a container in a
+private field — and `Session` did exactly that:
+
+- `ns: Rc<Namespace>` — the target namespace, held strong.
+- `saved_globals: HashMap<Sym, Cell>` — a clone of that namespace's
+  entire table, every binding cell in it, kept for rollback.
+
+A `Session` holds no borrow of its `Vm` *by design* (ADR-040), so a host
+can park one between event-loop turns — which means it can also outlive
+the `Vm` completely. Reproduced before fixing: start a session, drop the
+`Vm`, and a binding defined beforehand was still upgradeable through
+`global_cell_weak`. The store correctly died; the globals did not.
+Sharpening the joke slightly, the `ns` field's own comment read "a
+session outlives no Vm," which was false the day ADR-040 was written.
+
+**Both fields moved to the `Vm`.** The rollback snapshot now lives in
+`Vm::rollbacks`, keyed by a session id, and carries the `NsHandle` it
+targets — which the rollback needs anyway, so `Session` stopped needing
+the namespace at all rather than being downgraded to a handle nothing
+read. The cost is that a session the host abandons rather than resuming
+leaves its entry behind; entries are pruned when the next session starts,
+so the garbage is bounded by "abandoned since the last `start`" and all
+of it dies with the `Vm`. `abandoning_sessions_does_not_accumulate_rollbacks`
+pins that.
+
+**And the general fix, since fixing only `Session` would repeat this
+ADR's own mistake** — closing the instance you were shown while the class
+stays open. `Vm` now implements `Drop` and `debug_assert`s the strong
+counts: one for the store, one plus the pack count for the root (each
+pack holds a strong parent), one for each pack. Anything still holding a
+container when the `Vm` goes trips it, wherever it is held from, without
+needing to be enumerated. It skips while `std::thread::panicking()` so a
+failing test still reports its own error rather than an abort in a
+destructor.
+
+`mod ownership_guard` pins the guard in both directions: three cases that
+must trip it, and one ordinary `Vm` with packs and a completed session
+that must not — the latter mattering as much, since a guard that fires on
+correct code is just a flaky test.
+
+**What is and isn't enforced now**, stated precisely so the next slice
+doesn't have to rediscover it:
+
+- Handing a container out through a signature: **compile error**.
+- Retaining one anywhere, by any means, past the `Vm`: **debug-assert at
+  drop**, in every test run.
+- Retaining individual *cells* past the `Vm`: **allowed**, deliberately —
+  `Val` is `Clone` and `Vm::global` already copies, so values escape by
+  design. `Session::define_cells` still holds the current batch's define
+  cells, which is bounded by that batch and dies with the session.
+- Cycles *within* a live `Vm` (ADR-038's retained frame slots):
+  **untouched**, a different problem.
+
+The lesson is the one from the act this ADR came out of, arriving one
+round later than it should have: the mechanism I reached for was the one
+that checks what is *easy* to check. Signatures are where the last two
+bugs happened to be, so signature-checking felt like enforcement, and I
+wrote "enforced by the compiler" without asking what the compiler was
+actually looking at.

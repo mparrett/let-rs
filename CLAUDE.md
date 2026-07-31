@@ -101,9 +101,11 @@ file before anything else; the rest of the engine is decoration.
   pinned by `recursive_closures_retain_their_slot`, fix sketched in
   ADR-038. Don't restate reclamation as unconditional.
   `alloc`/`get`/`set` are `pub(crate)` and `Addr`'s
-  index is private (ADR-036), so `Vm::store_weak` is a read-only
-  diagnostic handle — there's no way to mint an `Addr` outside the
-  engine and therefore nothing to read or write through it.
+  index is private (ADR-036). **`Store` itself is crate-private as of
+  ADR-044** — it appears in no public signature, so nothing can hold
+  one; `Vm::store_probe` returns a `StoreProbe` that answers
+  `is_alive`/`len`/`slots` from a momentary upgrade and never yields a
+  reference.
 - `k.rs` — continuation variants: `Halt | App | If | Letrec | SetBang`.
   `apply_k` takes the `Rc<K>` **by value** and `Rc::try_unwrap`s it so
   fields move out rather than being cloned — valid because there are no
@@ -157,9 +159,22 @@ host types.)
   `format!`-ing source (ADR-034). The engine is macro-unaware:
   `defmacro` lives in the sibling `macros` crate (ADR-024). Hosts
   that want macros wrap a `Vm` in `macros::MacroVm`. `globals` and
-  `store` are private (ADR-036) — reach them via `store_weak` /
+  `store` are private (ADR-036) — reach them via `store_probe` /
   `global_cell_weak`, and add a purpose-built accessor rather than
-  re-exposing either field. `Vm::start` / `Vm::resume` drive a `Session`
+  re-exposing either field. **You cannot re-expose them even if you
+  try**: `Namespace` and `Store` are crate-private and `lib.rs` carries
+  `#![deny(private_interfaces)]`, so a `pub fn` mentioning either fails
+  to compile (ADR-044). That is deliberate — the invariant was reopened
+  by ADR-042 and ADR-043 in consecutive slices, both times by a
+  convenience accessor. If you need a new diagnostic, add a probe type
+  that answers questions rather than handing back the container.
+  **The lint only sees signatures**, though, so `Vm::drop` also
+  `debug_assert`s the strong counts — that's what catches a public type
+  storing a container in a *private field*, which is how `Session` kept
+  a whole globals table alive past its Vm. A public struct needing
+  per-batch state belongs in the `Vm` keyed by id (see `Vm::rollbacks`),
+  not in the struct itself. `mod ownership_guard` pins both directions.
+  `Vm::start` / `Vm::resume` drive a `Session`
   (a resumable batch holding no borrow of the `Vm`, so a host can park
   one between event-loop turns); `eval_datums` is implemented as
   `start_datums` plus one unbounded `resume`, so **don't reintroduce a
