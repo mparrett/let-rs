@@ -1,12 +1,12 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use crate::expr::Sym;
+use crate::ns::Namespace;
 use crate::store::{Addr, Store};
 use crate::val::Val;
 
-/// Shared table of top-level bindings, owned by `Vm`. Closures see it
+/// The top-level bindings an `Env` resolves against: a [`Namespace`],
+/// and through it the chain out to the root (ADR-042). Closures see it
 /// via `Env::globals` as a `Weak` back-edge so the cycle that would
 /// otherwise form — globals slot → closure → captured env → globals —
 /// stays open. See ADR-015 / issue_2.
@@ -15,7 +15,7 @@ use crate::val::Val;
 /// ADR-023 CESK migration. Frame slots moved to the `Store`; globals
 /// kept their `Rc<RefCell<Val>>` cells so the ADR-015 Weak back-edge
 /// pattern still holds end-to-end without re-derivation.
-pub type Globals = Rc<RefCell<HashMap<Sym, Rc<RefCell<Val>>>>>;
+pub type Globals = Rc<Namespace>;
 
 /// Immutable, structurally-shared linked frames for lexical bindings
 /// (`let`, `letrec`, closure params). Each slot is an `Addr` into the
@@ -39,7 +39,7 @@ pub type Globals = Rc<RefCell<HashMap<Sym, Rc<RefCell<Val>>>>>;
 #[derive(Clone)]
 pub struct Env {
     frame: Option<Rc<Frame>>,
-    globals: Weak<RefCell<HashMap<Sym, Rc<RefCell<Val>>>>>,
+    globals: Weak<Namespace>,
     store: Weak<Store>,
 }
 
@@ -139,12 +139,32 @@ impl Env {
             }
             cur = f.parent.as_deref();
         }
-        // Frame miss — fall through to the Vm's globals. The Weak
+        // Frame miss — fall through to this env's namespace and, on a
+        // miss there, outward along its chain to the root. The Weak
         // upgrade only fails after the owning Vm has been dropped, in
         // which case any surviving closure was definitionally orphaned.
-        let globals = self.globals.upgrade()?;
-        let table = globals.borrow();
-        table.get(name).map(|slot| slot.borrow().clone())
+        //
+        // *Which* namespace comes from the closure's captured env, not
+        // from anything ambient, which is what makes a pack's internals
+        // resolve to its own definitions no matter who calls them
+        // (ADR-042).
+        self.globals.upgrade()?.get(name)
+    }
+
+    /// The namespace this env resolves top-level names against, if the
+    /// owning Vm is still alive.
+    pub fn namespace(&self) -> Option<Rc<Namespace>> {
+        self.globals.upgrade()
+    }
+
+    /// Same frames and store, resolving top-level names against `ns`
+    /// instead. How a host evaluates source *inside* a pack.
+    pub fn with_namespace(&self, ns: &Rc<Namespace>) -> Env {
+        Env {
+            frame: self.frame.clone(),
+            globals: Rc::downgrade(ns),
+            store: self.store.clone(),
+        }
     }
 
     /// Return the store handle this env is anchored to, if the owning
@@ -178,17 +198,9 @@ impl Env {
             }
             cur = f.parent.as_deref();
         }
-        let globals = self
-            .globals
+        self.globals
             .upgrade()
-            .ok_or_else(|| "set!: globals dropped before assignment".to_string())?;
-        let table = globals.borrow();
-        match table.get(name) {
-            Some(slot) => {
-                *slot.borrow_mut() = val;
-                Ok(())
-            }
-            None => Err(format!("set!: unbound variable: {name}")),
-        }
+            .ok_or_else(|| "set!: globals dropped before assignment".to_string())?
+            .set(name, val)
     }
 }
