@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::val::{Arity, Val, gcd_i128};
@@ -506,13 +505,14 @@ pub(crate) fn builtin(name: &str) -> Val {
 /// `(define …)` bindings, so a `(define + 5)` overwrites the slot and
 /// the next `(+ 1 2)` errors with "not callable: 5" — see ADR-020.
 pub fn install_builtins(globals: &crate::env::Globals) {
-    let mut g = globals.borrow_mut();
     for &(name, arity, f) in BUILTINS {
-        let val = Val::Prim {
-            name,
-            arity,
-            f: Rc::new(f),
-        };
-        g.insert(name.into(), Rc::new(RefCell::new(val)));
+        globals.define(
+            name.into(),
+            Val::Prim {
+                name,
+                arity,
+                f: Rc::new(f),
+            },
+        );
     }
 }

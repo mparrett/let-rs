@@ -27,6 +27,7 @@ pub mod env;
 pub mod error;
 pub mod expr;
 pub mod k;
+pub mod ns;
 pub mod parse;
 pub mod prim;
 pub mod step;
@@ -36,6 +37,7 @@ pub mod val;
 pub use env::{Env, Globals};
 pub use error::{LispErr, Span, render_span};
 pub use expr::{Expr, Sym};
+pub use ns::Namespace;
 pub use parse::{Datum, DatumKind};
 pub use step::{Machine, Progress, Step, run, run_bounded};
 pub use store::{Addr, Store};
@@ -71,6 +73,12 @@ pub struct Vm {
     /// been the way to break exactly that. Diagnostics go through
     /// [`Vm::store_weak`].
     store: Rc<Store>,
+    /// Namespaces created by [`Vm::namespace`], keyed by name (ADR-042).
+    /// The `Vm` holds the sole strong references, matching how it holds
+    /// the root: a pack's closures reach their namespace through
+    /// `Env::globals` as a `Weak`, so dropping the Vm collapses every
+    /// pack without leaks, exactly as ADR-015 arranged for the root.
+    packs: HashMap<String, Rc<Namespace>>,
     /// CEK step budget, applied *per top-level form* — not per
     /// `eval_str` call. A source of N forms can therefore run up to
     /// N × `step_budget` steps in total; the budget bounds any single
@@ -91,16 +99,60 @@ impl Vm {
     /// tile grid call `world::world_prim::install(&mut vm, world)` on
     /// top (ADR-018).
     pub fn new() -> Self {
-        let globals: Globals = Rc::new(RefCell::new(HashMap::new()));
+        let globals: Globals = Namespace::root();
         let store: Rc<Store> = Rc::new(Store::new());
         prim::install_builtins(&globals);
         let env = Env::with_globals(&globals, &store);
         Vm {
             env,
             globals,
+            packs: HashMap::new(),
             store,
             step_budget: u64::MAX,
         }
+    }
+
+    /// The root namespace: builtins, user top-level `define`s, and
+    /// whatever the installed packs have exported (ADR-042).
+    pub fn root(&self) -> &Rc<Namespace> {
+        &self.globals
+    }
+
+    /// Get or create the namespace named `name`, a child of the root.
+    ///
+    /// A DSL pack calls this once at install time and evaluates its
+    /// prelude there. Its internal helpers stay private to it, so two
+    /// packs can both define `thread` without either noticing — which
+    /// they already both did, identically, until this existed.
+    pub fn namespace(&mut self, name: &str) -> Rc<Namespace> {
+        if let Some(ns) = self.packs.get(name) {
+            return Rc::clone(ns);
+        }
+        let ns = Namespace::child(name, &self.globals);
+        self.packs.insert(name.to_string(), Rc::clone(&ns));
+        ns
+    }
+
+    /// The namespace named `name`, if it has been created.
+    pub fn find_namespace(&self, name: &str) -> Option<Rc<Namespace>> {
+        self.packs.get(name).map(Rc::clone)
+    }
+
+    /// Publish `names` from `ns` into the root, so unqualified code —
+    /// the REPL, a host's generated source — can reach a pack's public
+    /// vocabulary.
+    ///
+    /// Exported names share the *cell*, not the value, so `set!` through
+    /// either path writes the same slot; that's what lets the mana
+    /// counter live in the spells pack and still be read from root.
+    /// Fails, naming both packs, if another pack already exported the
+    /// same name — the diagnostic whose absence made the old flat table
+    /// dangerous.
+    pub fn export(&mut self, ns: &Rc<Namespace>, names: &[&str]) -> Result<(), LispErr> {
+        for name in names {
+            ns.export(&self.globals, name).map_err(LispErr::new)?;
+        }
+        Ok(())
     }
 
     /// `Weak` handle to the Vm's store. Exposed for ADR-023's
@@ -123,7 +175,13 @@ impl Vm {
     /// Takes `&self`: reading a binding is not evaluation and shouldn't
     /// require a mutable borrow of the Vm.
     pub fn global(&self, name: &str) -> Option<Val> {
-        self.globals.borrow().get(name).map(|c| c.borrow().clone())
+        self.globals.get(name)
+    }
+
+    /// [`Vm::global`] against a specific namespace, for reading a value a
+    /// pack keeps private.
+    pub fn global_in(&self, ns: &Rc<Namespace>, name: &str) -> Option<Val> {
+        ns.get(name)
     }
 
     /// `Weak` handle to the cell backing top-level binding `name`, or
@@ -132,7 +190,7 @@ impl Vm {
     /// cell outlives this Vm — the ADR-015 property — without holding
     /// the cell (or the table) alive and thereby changing the answer.
     pub fn global_cell_weak(&self, name: &str) -> Option<Weak<RefCell<Val>>> {
-        self.globals.borrow().get(name).map(Rc::downgrade)
+        self.globals.cell(name).map(|c| Rc::downgrade(&c))
     }
 
     /// Borrow the Vm's root environment. Exposed for the `macros`
@@ -162,14 +220,29 @@ impl Vm {
     where
         F: Fn(&[Val]) -> Result<Val, String> + 'static,
     {
-        let val = Val::Prim {
-            name,
-            arity,
-            f: Rc::new(f),
-        };
-        self.globals
-            .borrow_mut()
-            .insert(name.into(), Rc::new(RefCell::new(val)));
+        let root = Rc::clone(&self.globals);
+        self.register_prim_in(&root, name, arity, f);
+    }
+
+    /// [`Vm::register_prim`] into a specific namespace, so a pack's prims
+    /// are private to it unless exported.
+    pub fn register_prim_in<F>(
+        &mut self,
+        ns: &Rc<Namespace>,
+        name: &'static str,
+        arity: val::Arity,
+        f: F,
+    ) where
+        F: Fn(&[Val]) -> Result<Val, String> + 'static,
+    {
+        ns.define(
+            name.into(),
+            Val::Prim {
+                name,
+                arity,
+                f: Rc::new(f),
+            },
+        );
     }
 
     /// Evaluate a sequence of top-level forms. Each form is one of:
@@ -248,6 +321,23 @@ impl Vm {
         self.start_datums(&forms)
     }
 
+    /// [`Vm::eval_str`] evaluated inside `ns` (ADR-042). `define`s land
+    /// there and names resolve from there outward to the root, so a pack
+    /// sees its own private vocabulary.
+    pub fn eval_str_in(&mut self, ns: &Rc<Namespace>, src: &str) -> Result<Val, LispErr> {
+        let forms = parse::read_many(src)?;
+        self.eval_datums_in(ns, &forms)
+    }
+
+    /// [`Vm::eval_datums`] evaluated inside `ns`.
+    pub fn eval_datums_in(&mut self, ns: &Rc<Namespace>, forms: &[Datum]) -> Result<Val, LispErr> {
+        let mut session = self.start_datums_in(ns, forms)?;
+        match self.resume(&mut session, u64::MAX)? {
+            Progress::Done(v) => Ok(v),
+            Progress::Paused => Err(LispErr::new("execution exceeded step budget")),
+        }
+    }
+
     /// [`Vm::start`] for callers that already hold read forms — the
     /// `eval_datums` counterpart of `start`.
     ///
@@ -255,6 +345,17 @@ impl Vm {
     /// evaluation, so a syntax error surfaces from `start` rather than
     /// from the first `resume`.
     pub fn start_datums(&mut self, forms: &[Datum]) -> Result<Session, LispErr> {
+        let root = Rc::clone(&self.globals);
+        self.start_datums_in(&root, forms)
+    }
+
+    /// [`Vm::start_datums`] targeting `ns`: `define`s land there, and
+    /// top-level expressions resolve names from there outward.
+    pub fn start_datums_in(
+        &mut self,
+        ns: &Rc<Namespace>,
+        forms: &[Datum],
+    ) -> Result<Session, LispErr> {
         // Binding-level rollback: if any form in the batch fails,
         // restore the globals *table* to its pre-call state. Pre-fix, a
         // failed define left a placeholder cell visible in env (e.g.
@@ -272,7 +373,7 @@ impl Vm {
         // and leaves `x` at 99. Host prim effects — painted tiles,
         // turtle state, log entries — likewise stand. Undoing those
         // would need the persistent store ADR-023 leaves open.
-        let saved_globals = self.globals.borrow().clone();
+        let saved_globals = ns.snapshot();
 
         // Pre-pass: allocate placeholder cells in `globals` for every
         // top-level `(define name body)` in this batch. Bodies that
@@ -286,7 +387,7 @@ impl Vm {
             for datum in forms {
                 if let Some(name) = extract_define_name(datum)? {
                     let cell = Rc::new(RefCell::new(Val::Bool(false)));
-                    self.globals.borrow_mut().insert(name.clone(), cell.clone());
+                    ns.bind_cell(name.clone(), cell.clone());
                     define_cells.insert(name.to_string(), cell);
                 }
             }
@@ -295,7 +396,7 @@ impl Vm {
         if let Err(e) = pre_pass() {
             // A malformed define in the batch has to undo the cells the
             // pre-pass already installed for its well-formed siblings.
-            *self.globals.borrow_mut() = saved_globals;
+            ns.restore(saved_globals);
             return Err(e);
         }
 
@@ -307,6 +408,12 @@ impl Vm {
             pending_define: None,
             form_steps: 0,
             last: Val::Bool(true),
+            // The env every form in this batch evaluates against. A
+            // pack's prelude therefore resolves its own helpers, and the
+            // closures it creates capture this env and keep doing so
+            // forever after (ADR-042).
+            env: self.env.with_namespace(ns),
+            ns: Rc::clone(ns),
             saved_globals: Some(saved_globals),
         })
     }
@@ -332,7 +439,7 @@ impl Vm {
         if result.is_err()
             && let Some(saved) = session.saved_globals.take()
         {
-            *self.globals.borrow_mut() = saved;
+            session.ns.restore(saved);
         }
         result
     }
@@ -360,7 +467,7 @@ impl Vm {
                     None => (parse::compile(datum)?, None),
                 };
                 session.pending_define = define;
-                session.machine = Some(Machine::new(expr, self.env.clone()));
+                session.machine = Some(Machine::new(expr, session.env.clone()));
             }
 
             let machine = session
@@ -464,7 +571,14 @@ pub struct Session {
     /// per form, unlike `Machine::steps`.
     form_steps: u64,
     last: Val,
-    /// Pre-call globals table, dropped once the batch completes. `Some`
+    /// The environment this batch evaluates against — the Vm's root env
+    /// rebased onto the target namespace (ADR-042).
+    env: Env,
+    /// The namespace `define`s land in, and the one rolled back on
+    /// failure. Held strong: a session outlives no Vm, and the `Vm` keeps
+    /// the authoritative reference either way.
+    ns: Rc<Namespace>,
+    /// Pre-call table of `ns`, dropped once the batch completes. `Some`
     /// means a rollback is still owed if something fails.
     saved_globals: Option<HashMap<Sym, Rc<RefCell<Val>>>>,
 }
