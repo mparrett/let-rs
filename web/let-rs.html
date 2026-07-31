@@ -2284,14 +2284,276 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
       </div>
     </section>
 
+    <section class="act">
+      <div class="glyph">
+        Act
+        <span class="roman">XIII</span>
+        <span class="mark">⋔</span>
+      </div>
+      <div class="body">
+        <h2>Two ways to fail badly
+          <span class="tag">— a failure that took everything with it, and one that said nothing at all</span>
+        </h2>
+        <p>
+          The language had no vocabulary for either situation, so in each
+          case it did the most extreme thing available. A primitive that
+          failed took the entire evaluation down with it, because there
+          was no way to say <em>this failed, recoverably</em>. Two packs
+          defining the same name produced no signal whatsoever, because
+          there was no way to say <em>that name is taken</em>. Loud where
+          it should have been quiet; silent where it should have spoken.
+        </p>
+
+        <p>
+          Both came due for the same reason. For eleven acts the engine
+          absorbed new vocabulary without learning anything — that was
+          the thesis and it held. But there are three DSLs now, installed
+          into one machine, running on a public page. These two slices are
+          what that costs: three vocabularies sharing one process, and one
+          of them allowed to fail in front of someone.
+        </p>
+
+        <h3 class="subact">The failure that took everything with it</h3>
+        <p>
+          <code>(car '())</code> returned an error from <code>step</code>,
+          unwound to the driver, and aborted the top-level form. Lisp code
+          could neither catch that nor signal a recoverable failure of its
+          own. The DSLs had already felt the absence and worked around it
+          with sentinels — the mana model answers a shortfall by logging
+          <code>mana-short</code> and returning <code>0</code>, a number
+          standing in for a condition because there was nothing else to
+          use.
+        </p>
+
+        <p>
+          The sharper motivation was a live bug, and it took two clicks to
+          reach. A rune tape of modifiers with no element rune is a legal
+          thing to build in the Spell Lab; <code>world-apply!</code>
+          rejects the resulting ctx. That rejection left the bridge as a
+          JavaScript exception — and because <code>cast!</code> charges
+          mana <em>before</em> applying, the failed cast kept the mana it
+          had spent. One missing feature, two failures: it died badly and
+          it charged you for it.
+        </p>
+
+        <p>
+          What went in is unwinding conditions in the Scheme tradition —
+          <code>raise</code>, <code>error</code>, <code>guard</code> — and
+          a third mode in the machine that discards continuation frames
+          until it meets a handler or reaches the halt frame. The detail
+          worth keeping is that it discards <em>one frame per step</em>
+          rather than looping to the handler. That keeps unwinding
+          interruptible and step-counted like everything else, and because
+          each discarded frame drops the environment it held, the store
+          slots those bindings owned come back through the destructor that
+          already existed. Unwinding reclaims as it goes, and there is no
+          line in the unwinder that knows about reclamation. Two earlier
+          acts' machinery paid for this one's feature without being asked.
+        </p>
+
+        <p>
+          Everything the machine can fail at is catchable, with one
+          deliberate hole. Prim complaints, unbound variables, arity
+          mismatches, non-callable heads — all of them raise, so there is
+          a single answer to "what can a guard catch" instead of a
+          taxonomy to defend at every new error site. The exception is the
+          step budget from the last act, which never becomes a condition,
+          because a guard that could swallow it would make a runaway loop
+          unkillable — the precise hazard the budget exists to prevent.
+        </p>
+
+        <p>
+          A condition is an ordinary list. No tenth <code>Val</code>
+          variant, which keeps values cheap to clone the way Act XI needed
+          them to be, at a cost recorded rather than prevented: a
+          hand-built <code>(error "…")</code> is indistinguishable from a
+          raised one. That is the usual Lisp bargain, and the accessors
+          are the supported way to read a condition rather than the only
+          one.
+        </p>
+
+        <p>
+          And there is a bill. This project's pitch is five transition
+          rules. It is now five rules plus a raise mode and two more
+          continuation variants, and no phrasing makes that sentence as
+          small as the one it replaces. What it buys is the single thing
+          sentinels cannot fake — a cast that fails recoverably without
+          taking the interpreter, or the tab, with it.
+        </p>
+
+        <h3 class="subact">The failure that said nothing</h3>
+        <p>
+          Every <code>define</code> in the process landed in one table.
+          Spells and genes both define <code>thread</code>; both define
+          <code>assoc-set</code>; the bridge installs all three packs into
+          one machine. Whichever went second won, in silence.
+        </p>
+
+        <p>
+          Measured before designing, because <em>the definitions are
+          identical anyway</em> is exactly the kind of claim this log has
+          learned to distrust. It wasn't false — a cast with both packs
+          installed still returned the right answer. Then genes redefines
+          <code>thread</code> to something else and the same cast returns
+          a wrong answer quietly. Then the third measurement settled the
+          design: a closure that had captured the <em>old</em>
+          <code>thread</code> was hijacked too.
+        </p>
+
+        <p>
+          The reason is a feature from Act VI. Closures resolve top-level
+          names at call time against the table's current contents — which
+          is what made mutual recursion work across REPL lines, and which
+          means a closure re-resolves its own name on every recursive
+          call. Saving a reference before something is shadowed does not
+          protect you. Shadowing was never containable by discipline at
+          the call site, and that rules out every fix that is really a
+          convention.
+        </p>
+
+        <p>
+          So: a namespace is a table plus an optional parent. Each pack
+          installs into its own, chained to a shared root holding the
+          builtins. Lookup walks outward; <code>define</code> always
+          writes to the table it started in, so a pack shadowing a builtin
+          affects nobody else. What makes that lexical rather than dynamic
+          is one sentence — the environment holds the namespace, and
+          closures capture their environment — so a spells closure calling
+          <code>thread</code> gets spells' <code>thread</code> even when a
+          genes closure invoked it.
+        </p>
+
+        <p>
+          Publishing a name into the root shares the <em>cell</em>, not
+          the value, so <code>set!</code> through either path writes the
+          same slot. That is what lets the mana counter stay inside the
+          spells pack and still be read from the root by the bridge, which
+          is the grandfathered exception from two acts ago, working
+          unchanged.
+        </p>
+
+        <p>
+          The actual fix is the refusal: exporting a name another pack has
+          already exported is an error that names both packs. Silence was
+          always the hazard here — shadowing, contained and announced, is
+          a feature. The visible cost is small and worth stating, because
+          someone will hit it: <code>(thread …)</code> typed into the web
+          REPL now errors, where before it worked by accident.
+        </p>
+
+        <h3 class="subact">What the new surfaces reopened</h3>
+        <p>
+          Both went to review and came back with seven defects between
+          them, two serious enough that namespaces did not work as
+          documented. The count isn't the interesting part. What's
+          interesting is how many of them were old invariants that a new
+          surface quietly reopened.
+        </p>
+
+        <p>
+          <code>error</code> builds its condition using <code>list</code>,
+          and compiled that as a variable reference — so
+          <code>(let ((list …)) (error "boom"))</code> returned the user's
+          <code>list</code> instead of raising. Quasiquote had the same
+          bug against <code>list</code> and <code>append</code>, and had
+          had it since the day it was written; the review found it on
+          <code>error</code>, and the shared cause made each a one-line
+          fix. The rule generalizes cleanly, which is why it's here: a
+          compiler that emits a variable reference is emitting a name the
+          user is allowed to rebind.
+        </p>
+
+        <p>
+          The expander had no branch for <code>guard</code>, so it read
+          the binder <code>(var handler)</code> as an application and
+          expanded <code>var</code> when the name happened to be a macro.
+          Every new binding form needs a matching branch there, and
+          nothing enforces that except a test that thinks to try it.
+        </p>
+
+        <p>
+          And the accessor this work added to reach a namespace handed
+          back the namespace itself — letting a caller keep the entire
+          globals table, and every closure and binding cell in it, alive
+          past the machine that owned it. That is exactly the invariant
+          Act XI made the field private to protect, reintroduced two acts
+          later by the API written on top of it. It is now an opaque
+          handle: a name the machine resolves internally, with nothing
+          inside it to hold.
+        </p>
+
+        <p class="lift">
+          The reinstall defect earns its own paragraph. Installing a pack
+          twice panicked — because re-running a prelude allocates fresh
+          cells, so the second install presented a <em>different</em> cell
+          for a name that same pack had already published, and the check
+          compared cell identity and called that a collision. Export was
+          documented as idempotent. It had never once been idempotent. The
+          fix is to compare provenance instead — which pack published the
+          name — and it fell out of that change for free that a pack
+          exporting <code>car</code> is now refused rather than silently
+          replacing it.
+        </p>
+
+        <p class="lift">
+          Both of the serious ones had tests. The idempotence test
+          re-exported without re-evaluating the prelude, which is not what
+          a reinstall does. The test named for asserting that a collision
+          names both packs asserted only the half that was present. Each
+          was written against a <em>simplification</em> of the thing it
+          claimed to cover. Each passed.
+        </p>
+
+        <p class="lift">
+          Which sharpens the last act's lesson rather than repeating it.
+          Act XII ended on the only thing that has ever caught these:
+          running the code and looking at the number. That is necessary
+          and it is not sufficient, because here the code <em>was</em>
+          run, deliberately, by a test written for the purpose — and it
+          looked at the number next to the one that mattered. A test is a
+          claim like the prose around it and goes stale the same way, with
+          one difference that cuts the wrong direction. Stale prose merely
+          sits there being wrong. A stale test reports success.
+        </p>
+      </div>
+    </section>
+
     <div class="coda">
       <h3>What comes after</h3>
       <p>
-        The substrate is in place — and now it's a substrate with two
+        The substrate is in place — and now it's a substrate with three
         consumers, which makes the next moves both clearer and less
         urgent than they looked on day one. The shortlist:
       </p>
       <ul>
+        <li><strong>Namespaced macros.</strong> The expander's table is
+          still one table, so two packs defining the same macro name
+          still collide in silence — the bug Act XIII fixed for
+          bindings, one layer up, and now the only place it survives.
+          Nothing in-tree does it; only spells defines macros at all.
+          The fix is the same shape as the one that already landed.</li>
+        <li><strong>A declarative <code>(export …)</code>.</strong>
+          Export lists are hand-written Rust consts today, so a pack
+          that adds public vocabulary and forgets to list it fails at
+          the call site rather than at install. Moving the declaration
+          into the prelude moves the failure earlier.</li>
+        <li><strong>A cleanup hook.</strong> There is no
+          <code>dynamic-wind</code> or <code>unwind-protect</code>, so a
+          raise crossing a frame that acquired something releases
+          nothing. Nothing in-tree is exposed — host prims are
+          single-call and effectively atomic — but the first multi-step
+          host effect that needs a release path will want this, and the
+          guard frame is what it gets built on.</li>
+        <li><strong>Restarts.</strong> Act XIII's alternative 1,
+          deferred rather than rejected. The handler would run
+          <em>before</em> unwinding and could resume the failed
+          computation with a substitute value. That is expensive in most
+          languages because the stack has to be kept alive, and nearly
+          free here, where the continuation is already a value — and it
+          fits the domain better than dying does: a cast that meets an
+          unknown element could substitute <code>'inert</code> and carry
+          on. <code>guard</code> is the unwinding special case of it, so
+          nothing already built would have to be undone.</li>
         <li><strong>A depth cap the whole pipeline honors.</strong>
           The reader accepts 1024 levels of nesting;
           <code>compile</code> is still recursive and overflows between
@@ -2390,6 +2652,15 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         sliced, resumed, single-stepped and cancelled, the web REPL
         no longer freezes the tab to protect it, and the REPL grew a
         stepping debugger for the cost of a print statement.
+        Then, the next day (Act XIII), the two failure modes three
+        DSLs on a public page had made unaffordable: ADR-041 gave
+        the language <code>raise</code> / <code>error</code> /
+        <code>guard</code>, so a cast can fail recoverably instead
+        of taking the interpreter with it, and ADR-042 gave each
+        pack its own binding table chained to a shared root, so
+        spells and genes can both define <code>thread</code> and a
+        collision in the names they publish is refused out loud
+        rather than resolved in silence.
         None of the remaining items are large; all of them are
         interesting; most of them are independent. The hard parts
         are done — the language is itself, three DSLs proved it,
