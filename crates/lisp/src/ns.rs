@@ -112,6 +112,12 @@ impl Namespace {
         &self.name
     }
 
+    /// This namespace's parent, or `None` at the root. Lets a caller walk
+    /// the chain a name resolves along — see [`crate::Vm::ns_chain`].
+    pub(crate) fn parent(&self) -> Option<Rc<Namespace>> {
+        self.parent.clone()
+    }
+
     /// The cell bound to `name`, searching this table then outward.
     pub(crate) fn cell(&self, name: &str) -> Option<Cell> {
         if let Some(c) = self.table.borrow().get(name) {

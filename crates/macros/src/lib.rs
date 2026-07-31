@@ -43,16 +43,38 @@ struct Macro {
 
 /// Macro registry + expansion logic. Borrows `&mut Vm` per call so the
 /// expander can evaluate macro closures against the Vm's env.
+///
+/// The registry is one table *per namespace* (ADR-043), mirroring what
+/// ADR-042 did for bindings. A `defmacro` registers into the namespace
+/// its form was evaluated in; a macro call resolves outward along that
+/// namespace's chain to the root. So two packs can define `when`
+/// differently, and the stdlib — installed at the root — stays visible
+/// inside every pack.
 #[derive(Default)]
 pub struct Expander {
-    macros: HashMap<String, Macro>,
+    /// Keyed by namespace name. Absent key and empty table mean the same
+    /// thing; a namespace that has never registered a macro simply
+    /// contributes nothing to a lookup.
+    tables: HashMap<String, HashMap<String, Macro>>,
 }
 
 impl Expander {
     pub fn new() -> Self {
         Expander {
-            macros: HashMap::new(),
+            tables: HashMap::new(),
         }
+    }
+
+    /// Resolve `name` along `chain` (innermost first), returning the first
+    /// binding found. This is the macro-side counterpart of
+    /// `Namespace::cell` and has to agree with it about order: a pack's
+    /// own macro shadows a root one of the same name, exactly as a pack's
+    /// `define` shadows a builtin.
+    fn lookup(&self, chain: &[NsHandle], name: &str) -> Option<Macro> {
+        chain
+            .iter()
+            .find_map(|ns| self.tables.get(ns.name())?.get(name))
+            .cloned()
     }
 
     /// Top-level expansion entry point. Differs from [`expand_all`] in
@@ -64,13 +86,20 @@ impl Expander {
     /// this — otherwise the expander's invariant "no nested define"
     /// would forbid the expansion even at the top of an `eval_str`
     /// batch.
-    pub fn expand_top_level(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, LispErr> {
-        self.expand_top_level_at(vm, d, 0)
+    pub fn expand_top_level(
+        &mut self,
+        vm: &mut Vm,
+        ns: &NsHandle,
+        d: Datum,
+    ) -> Result<Datum, LispErr> {
+        let chain = vm.ns_chain(ns)?;
+        self.expand_top_level_at(vm, &chain, d, 0)
     }
 
     fn expand_top_level_at(
         &mut self,
         vm: &mut Vm,
+        chain: &[NsHandle],
         d: Datum,
         depth: usize,
     ) -> Result<Datum, LispErr> {
@@ -88,25 +117,25 @@ impl Expander {
             if name_str == "define" && items.len() >= 3 {
                 let mut out = vec![items[0].clone(), items[1].clone()];
                 for i in &items[2..] {
-                    out.push(self.expand_all_at(vm, i.clone(), depth + 1)?);
+                    out.push(self.expand_all_at(vm, chain, i.clone(), depth + 1)?);
                 }
                 return Ok(Datum::list(out, d.span));
             }
             // Top-level macro call: expand once, then re-enter at top
             // level so a macro that expands to `(define …)` is allowed.
-            let mac = self.macros.get(name_str).cloned();
-            if let Some(m) = mac {
+            if let Some(m) = self.lookup(chain, name_str) {
                 let expansion = self.expand_macro_call(vm, &m, &items[1..], d.span)?;
-                return self.expand_top_level_at(vm, expansion, depth + 1);
+                return self.expand_top_level_at(vm, chain, expansion, depth + 1);
             }
         }
-        self.expand_all_at(vm, d, depth)
+        self.expand_all_at(vm, chain, d, depth)
     }
 
     /// Recursively expand macro calls inside `d`. Returns the expanded
     /// datum (or `d` unchanged if no macros apply).
-    pub fn expand_all(&mut self, vm: &mut Vm, d: Datum) -> Result<Datum, LispErr> {
-        self.expand_all_at(vm, d, 0)
+    pub fn expand_all(&mut self, vm: &mut Vm, ns: &NsHandle, d: Datum) -> Result<Datum, LispErr> {
+        let chain = vm.ns_chain(ns)?;
+        self.expand_all_at(vm, &chain, d, 0)
     }
 
     /// Depth-bounded workhorse for [`expand_all`]. A self-referential macro
@@ -115,7 +144,13 @@ impl Expander {
     /// expansion — and a macro that emits deeply nested output recurses
     /// structurally. Both funnel through here, so one depth cap converts either
     /// into a clean error instead of a stack-overflow abort (fatal in wasm).
-    fn expand_all_at(&mut self, vm: &mut Vm, d: Datum, depth: usize) -> Result<Datum, LispErr> {
+    fn expand_all_at(
+        &mut self,
+        vm: &mut Vm,
+        chain: &[NsHandle],
+        d: Datum,
+        depth: usize,
+    ) -> Result<Datum, LispErr> {
         if depth > MAX_EXPANSION_DEPTH {
             return Err(LispErr::maybe_at("macro expansion too deep", d.span));
         }
@@ -131,14 +166,14 @@ impl Expander {
             }
             // Quasiquote: descend, but unquoted parts get full macro expansion.
             if name_str == "quasiquote" && items.len() == 2 {
-                let inside = self.expand_in_qq(vm, items[1].clone(), 1)?;
+                let inside = self.expand_in_qq(vm, chain, items[1].clone(), 1)?;
                 return Ok(Datum::list(vec![items[0].clone(), inside], d.span));
             }
             // Lambda: don't macro-expand the params list (it's symbols).
             if (name_str == "lambda" || name_str == "λ") && items.len() >= 3 {
                 let mut out = vec![items[0].clone(), items[1].clone()];
                 for i in &items[2..] {
-                    out.push(self.expand_all_at(vm, i.clone(), depth + 1)?);
+                    out.push(self.expand_all_at(vm, chain, i.clone(), depth + 1)?);
                 }
                 return Ok(Datum::list(out, d.span));
             }
@@ -150,7 +185,7 @@ impl Expander {
                     vec![
                         items[0].clone(),
                         items[1].clone(),
-                        self.expand_all_at(vm, items[2].clone(), depth + 1)?,
+                        self.expand_all_at(vm, chain, items[2].clone(), depth + 1)?,
                     ],
                     d.span,
                 ));
@@ -167,7 +202,7 @@ impl Expander {
                     Some(pair) if pair.len() == 2 => Datum::list(
                         vec![
                             pair[0].clone(),
-                            self.expand_all_at(vm, pair[1].clone(), depth + 1)?,
+                            self.expand_all_at(vm, chain, pair[1].clone(), depth + 1)?,
                         ],
                         items[1].span,
                     ),
@@ -179,7 +214,7 @@ impl Expander {
                     vec![
                         items[0].clone(),
                         clause,
-                        self.expand_all_at(vm, items[2].clone(), depth + 1)?,
+                        self.expand_all_at(vm, chain, items[2].clone(), depth + 1)?,
                     ],
                     d.span,
                 ));
@@ -195,7 +230,12 @@ impl Expander {
                                     new_pairs.push(Datum::list(
                                         vec![
                                             pair[0].clone(),
-                                            self.expand_all_at(vm, pair[1].clone(), depth + 1)?,
+                                            self.expand_all_at(
+                                                vm,
+                                                chain,
+                                                pair[1].clone(),
+                                                depth + 1,
+                                            )?,
                                         ],
                                         p.span,
                                     ));
@@ -209,7 +249,7 @@ impl Expander {
                 };
                 let mut out = vec![items[0].clone(), bindings_out];
                 for i in &items[2..] {
-                    out.push(self.expand_all_at(vm, i.clone(), depth + 1)?);
+                    out.push(self.expand_all_at(vm, chain, i.clone(), depth + 1)?);
                 }
                 return Ok(Datum::list(out, d.span));
             }
@@ -226,10 +266,9 @@ impl Expander {
             }
 
             // Macro lookup
-            let mac = self.macros.get(name_str).cloned();
-            if let Some(m) = mac {
+            if let Some(m) = self.lookup(chain, name_str) {
                 let expansion = self.expand_macro_call(vm, &m, &items[1..], d.span)?;
-                return self.expand_all_at(vm, expansion, depth + 1);
+                return self.expand_all_at(vm, chain, expansion, depth + 1);
             }
         }
 
@@ -238,7 +277,7 @@ impl Expander {
             DatumKind::List(items) => {
                 let mut new_items = Vec::with_capacity(items.len());
                 for i in items {
-                    new_items.push(self.expand_all_at(vm, i, depth + 1)?);
+                    new_items.push(self.expand_all_at(vm, chain, i, depth + 1)?);
                 }
                 Ok(Datum::list(new_items, span))
             }
@@ -246,9 +285,15 @@ impl Expander {
         }
     }
 
-    fn expand_in_qq(&mut self, vm: &mut Vm, d: Datum, depth: usize) -> Result<Datum, LispErr> {
+    fn expand_in_qq(
+        &mut self,
+        vm: &mut Vm,
+        chain: &[NsHandle],
+        d: Datum,
+        depth: usize,
+    ) -> Result<Datum, LispErr> {
         if depth == 0 {
-            return self.expand_all(vm, d);
+            return self.expand_all_at(vm, chain, d, 0);
         }
         if let Some(items) = d.as_list()
             && !items.is_empty()
@@ -256,17 +301,17 @@ impl Expander {
             if let Some(s) = items[0].as_sym() {
                 let name = &**s;
                 if name == "quasiquote" && items.len() == 2 {
-                    let inside = self.expand_in_qq(vm, items[1].clone(), depth + 1)?;
+                    let inside = self.expand_in_qq(vm, chain, items[1].clone(), depth + 1)?;
                     return Ok(Datum::list(vec![items[0].clone(), inside], d.span));
                 }
                 if (name == "unquote" || name == "unquote-splicing") && items.len() == 2 {
-                    let inside = self.expand_in_qq(vm, items[1].clone(), depth - 1)?;
+                    let inside = self.expand_in_qq(vm, chain, items[1].clone(), depth - 1)?;
                     return Ok(Datum::list(vec![items[0].clone(), inside], d.span));
                 }
             }
             let mut new_items = Vec::with_capacity(items.len());
             for i in items {
-                new_items.push(self.expand_in_qq(vm, i.clone(), depth)?);
+                new_items.push(self.expand_in_qq(vm, chain, i.clone(), depth)?);
             }
             return Ok(Datum::list(new_items, d.span));
         }
@@ -303,10 +348,19 @@ impl Expander {
         val_to_datum(&result, call_span)
     }
 
-    /// If `d` is `(defmacro name params body)`, register the macro and
-    /// return `Ok(true)`. Otherwise return `Ok(false)` and leave `d` for
-    /// the caller to handle.
-    pub fn try_register_defmacro(&mut self, vm: &mut Vm, d: &Datum) -> Result<bool, LispErr> {
+    /// If `d` is `(defmacro name params body)`, register the macro into
+    /// `ns` and return `Ok(true)`. Otherwise return `Ok(false)` and leave
+    /// `d` for the caller to handle.
+    ///
+    /// Registration writes to `ns` itself and never walks outward, which
+    /// is the same rule `Namespace::define` follows: a pack defining a
+    /// macro the root also has gets its own, and shadows nobody else's.
+    pub fn try_register_defmacro(
+        &mut self,
+        vm: &mut Vm,
+        ns: &NsHandle,
+        d: &Datum,
+    ) -> Result<bool, LispErr> {
         let items = match d.as_list() {
             Some(items) => items,
             None => return Ok(false),
@@ -351,25 +405,51 @@ impl Expander {
             }
         };
         // Expand macros inside the body so macros can use other macros.
-        let body_datum = self.expand_all(vm, items[3].clone())?;
+        // Resolved from `ns`, so a pack's macro can build on a sibling
+        // macro of its own as well as on the stdlib at the root.
+        let body_datum = self.expand_all(vm, ns, items[3].clone())?;
         let body_expr = parse::compile(&body_datum)?;
         let closure = Val::Clo {
             params: params.into(),
             body: Rc::new(body_expr),
-            env: vm.env().clone(),
+            // `env_in(ns)`, not `vm.env()`. The root env resolves names
+            // from the root outward and so cannot see the defining pack's
+            // private vocabulary — a macro body calling a pack helper
+            // reported it unbound. Latent until now only because the one
+            // in-tree pack macro pair (`defspell` / `defparam`) has a
+            // body of pure quasiquote (ADR-043).
+            env: vm.env_in(ns)?,
         };
-        self.macros
+        self.tables
+            .entry(ns.name().to_string())
+            .or_default()
             .insert(name.to_string(), Macro { closure, variadic });
         Ok(true)
     }
 
-    /// Snapshot the macro table for transactional rollback.
-    fn snapshot(&self) -> HashMap<String, Macro> {
-        self.macros.clone()
+    /// Snapshot every namespace's macro table for transactional rollback.
+    fn snapshot(&self) -> HashMap<String, HashMap<String, Macro>> {
+        self.tables.clone()
     }
 
-    fn restore(&mut self, snap: HashMap<String, Macro>) {
-        self.macros = snap;
+    fn restore(&mut self, snap: HashMap<String, HashMap<String, Macro>>) {
+        self.tables = snap;
+    }
+
+    /// Macro names visible from `ns`, innermost first, deduplicated and
+    /// sorted. Diagnostic — the macro-side counterpart of
+    /// `Namespace::names`, and how a test asserts what a pack can and
+    /// cannot see without reaching into the tables.
+    pub fn names_visible_from(&self, vm: &Vm, ns: &NsHandle) -> Result<Vec<String>, LispErr> {
+        let mut out: Vec<String> = Vec::new();
+        for h in vm.ns_chain(ns)? {
+            if let Some(t) = self.tables.get(h.name()) {
+                out.extend(t.keys().cloned());
+            }
+        }
+        out.sort();
+        out.dedup();
+        Ok(out)
     }
 }
 
@@ -424,10 +504,10 @@ impl MacroVm {
     /// inside `ns` so a pack's prelude and casts resolve its own private
     /// vocabulary (ADR-042).
     ///
-    /// Macros themselves stay global to the expander — the macro table is
-    /// not namespaced, so two packs defining the same macro name still
-    /// collide. Nothing in-tree does; noted in ADR-042 as the remaining
-    /// half.
+    /// Macros are namespaced the same way (ADR-043): a `defmacro` in this
+    /// batch registers into `ns`, and macro calls resolve along `ns`'s
+    /// chain outward to the root — so two packs can define one name, and
+    /// the stdlib installed at the root stays visible from inside `ns`.
     pub fn eval_str_in(&mut self, ns: &NsHandle, src: &str) -> Result<Val, LispErr> {
         let saved = self.expander.snapshot();
         let result = self.eval_str_inner(ns, src);
@@ -448,10 +528,13 @@ impl MacroVm {
         // know about macros.
         let mut remaining: Vec<Datum> = Vec::with_capacity(forms.len());
         for datum in forms {
-            if self.expander.try_register_defmacro(&mut self.vm, &datum)? {
+            if self
+                .expander
+                .try_register_defmacro(&mut self.vm, ns, &datum)?
+            {
                 continue;
             }
-            remaining.push(self.expander.expand_top_level(&mut self.vm, datum)?);
+            remaining.push(self.expander.expand_top_level(&mut self.vm, ns, datum)?);
         }
 
         // Hand the expanded datums straight to the engine. This used to
@@ -500,10 +583,13 @@ impl MacroVm {
         let forms = parse::read_many(src)?;
         let mut remaining: Vec<Datum> = Vec::with_capacity(forms.len());
         for datum in forms {
-            if self.expander.try_register_defmacro(&mut self.vm, &datum)? {
+            if self
+                .expander
+                .try_register_defmacro(&mut self.vm, ns, &datum)?
+            {
                 continue;
             }
-            remaining.push(self.expander.expand_top_level(&mut self.vm, datum)?);
+            remaining.push(self.expander.expand_top_level(&mut self.vm, ns, datum)?);
         }
         self.vm.start_datums_in(ns, &remaining)
     }

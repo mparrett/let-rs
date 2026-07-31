@@ -2526,12 +2526,13 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         urgent than they looked on day one. The shortlist:
       </p>
       <ul>
-        <li><strong>Namespaced macros.</strong> The expander's table is
-          still one table, so two packs defining the same macro name
-          still collide in silence — the bug Act XIII fixed for
-          bindings, one layer up, and now the only place it survives.
-          Nothing in-tree does it; only spells defines macros at all.
-          The fix is the same shape as the one that already landed.</li>
+        <li><strong>Macro export.</strong> Macros got their per-pack
+          tables (ADR-043), but a pack still can't <em>publish</em> one:
+          they're private, full stop, so <code>defspell</code> resolves
+          inside the spell pack and nowhere else. Nothing needs more
+          yet. The first pack that wants user-typeable syntax —
+          <code>defcodon</code>, <code>defstroke</code> — is when to
+          build it, against a caller rather than a guess.</li>
         <li><strong>A declarative <code>(export …)</code>.</strong>
           Export lists are hand-written Rust consts today, so a pack
           that adds public vocabulary and forgets to list it fails at
@@ -2660,7 +2661,12 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         pack its own binding table chained to a shared root, so
         spells and genes can both define <code>thread</code> and a
         collision in the names they publish is refused out loud
-        rather than resolved in silence.
+        rather than resolved in silence. ADR-043 finished that job
+        the same day, giving the expander one macro table per
+        namespace so the last place the old collision survived is
+        closed — and turning up, on the way, that a macro's body had
+        been resolving against the root rather than against the pack
+        that defined it.
         None of the remaining items are large; all of them are
         interesting; most of them are independent. The hard parts
         are done — the language is itself, three DSLs proved it,

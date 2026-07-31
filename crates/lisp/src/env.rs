@@ -76,7 +76,11 @@ impl Env {
     /// Env with no frames but a live back-edge to a globals table and
     /// a store. The `Weak`s are upgraded on lookup; while the Vm holds
     /// the strong refs they always succeed.
-    pub fn with_globals(globals: &Globals, store: &Rc<Store>) -> Self {
+    ///
+    /// Crate-private: it takes the two `Rc`s the `Vm` is meant to be sole
+    /// strong owner of, so a public constructor is a public request for
+    /// exactly what must not escape. Only `Vm::new` calls it.
+    pub(crate) fn with_globals(globals: &Globals, store: &Rc<Store>) -> Self {
         Env {
             frame: None,
             globals: Rc::downgrade(globals),
@@ -151,15 +155,25 @@ impl Env {
         self.globals.upgrade()?.get(name)
     }
 
-    /// The namespace this env resolves top-level names against, if the
-    /// owning Vm is still alive.
-    pub fn namespace(&self) -> Option<Rc<Namespace>> {
-        self.globals.upgrade()
-    }
+    // `namespace` (upgrade the globals back-edge to `Rc<Namespace>`) was
+    // removed in ADR-043. It had no caller inside the engine and was a
+    // public ownership escape: `Env` is public and holds only `Weak`s, so
+    // handing one out roots nothing — but *upgrading* let a caller keep a
+    // pack table, its cells and its closures alive after the `Vm` was
+    // gone. That is the sole-strong-owner invariant ADR-036 made
+    // `Vm::globals` private to protect and ADR-042 restored via the
+    // opaque `NsHandle`, reopened from the other side. `Vm::env_in`
+    // widened it from the root to any pack, which is how it was found.
+    // If something ever genuinely needs the namespace behind an `Env`,
+    // give it a `pub(crate)` accessor — not a public one.
 
     /// Same frames and store, resolving top-level names against `ns`
     /// instead. How a host evaluates source *inside* a pack.
-    pub fn with_namespace(&self, ns: &Rc<Namespace>) -> Env {
+    ///
+    /// Crate-private for the same reason as [`Env::namespace`], plus one
+    /// of its own: it takes an `Rc<Namespace>`, so a public version would
+    /// need callers to hold the very thing that must not escape.
+    pub(crate) fn with_namespace(&self, ns: &Rc<Namespace>) -> Env {
         Env {
             frame: self.frame.clone(),
             globals: Rc::downgrade(ns),
@@ -170,7 +184,15 @@ impl Env {
     /// Return the store handle this env is anchored to, if the owning
     /// Vm is still alive. Used by `K::Letrec`'s patch step to write
     /// the just-evaluated init into the placeholder slot.
-    pub fn store_handle(&self) -> Option<Rc<Store>> {
+    ///
+    /// Crate-private, and the same escape as [`Env::namespace`] one
+    /// register over: this upgrades to a strong `Rc<Store>`, so a public
+    /// version lets a caller keep the whole arena — every frame slot in
+    /// it — alive past its `Vm`. `Vm::store_weak` is the read-only
+    /// diagnostic handle ADR-036 intends for outside use. Found while
+    /// fixing the namespace case; it was public from the ADR-023 CESK
+    /// migration onward and no test had ever tried it.
+    pub(crate) fn store_handle(&self) -> Option<Rc<Store>> {
         self.store.upgrade()
     }
 
