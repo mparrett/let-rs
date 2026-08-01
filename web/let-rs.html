@@ -2872,6 +2872,27 @@ genes::install(&amp;<span class="hl">mut</span> vm);    <span class="dim">// ins
         urgent than they looked on day one. The shortlist:
       </p>
       <ul>
+        <li><strong>What the labs are actually protected from.</strong>
+          The page shares one machine between the REPL and the lab
+          panel, so a line typed on the right can change what the
+          buttons on the left do. Namespaces were assumed to have
+          settled that; measured, they settle exactly one mechanism —
+          a root <code>define</code> can no longer shadow a name a pack
+          defines itself. Five routes are still open and four of them
+          are silent: an <code>export</code> shares its <em>cell</em>,
+          so every exported name is writable from the root, closures
+          included; macro resolution walks outward, so a macro defined
+          at the root is visible inside every pack and a pack cannot
+          shadow one it doesn't define; packs reach the root for
+          builtins and for host prims, which is how
+          <code>world-apply!</code> — what painting a tile
+          <em>means</em> — turns out to be redefinable from a text box.
+          Closing them is three separate changes, and the first asks a
+          question nobody has answered: what is a pack entitled to see
+          through the root at all? Other packs' exports, today. The
+          cheapest thing that actually helps is the oldest suggestion
+          in the ticket — a button that throws the machine away and
+          builds a new one.</li>
         <li><strong>Macro export.</strong> Macros got their per-pack
           tables (ADR-043), but a pack still can't <em>publish</em> one:
           they're private, full stop, so <code>defspell</code> resolves
