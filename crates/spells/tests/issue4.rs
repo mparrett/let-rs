@@ -102,7 +102,11 @@ fn a_root_set_bang_on_an_export_still_hijacks_the_lab() {
     // Silent: `cast!` guards, refunds, and reports 0 painted tiles.
     assert_eq!(cast(&mut vm, &ns).as_deref(), Ok("0"));
     assert!(
-        world.borrow().log.last().is_some_and(|l| l.contains("cast-failed")),
+        world
+            .borrow()
+            .log
+            .last()
+            .is_some_and(|l| l.contains("cast-failed")),
         "expected a cast-failed log entry, got {:?}",
         world.borrow().log.last()
     );
@@ -110,7 +114,8 @@ fn a_root_set_bang_on_an_export_still_hijacks_the_lab() {
     // And the entry point itself, which doesn't even fail loudly.
     let (mut vm, ns, _world) = lab();
     healthy(&mut vm, &ns);
-    vm.eval_str("(set! cast! (lambda (ctx) 'HIJACKED))").unwrap();
+    vm.eval_str("(set! cast! (lambda (ctx) 'HIJACKED))")
+        .unwrap();
     assert_eq!(cast(&mut vm, &ns).as_deref(), Ok("HIJACKED"));
 }
 
@@ -160,14 +165,16 @@ fn a_root_define_of_a_builtin_or_host_prim_still_reaches_packs() {
     // Silent: a wrong answer, no error.
     let (mut vm, ns, _world) = lab();
     healthy(&mut vm, &ns);
-    vm.eval_str("(define cons (lambda (a b) 'HIJACKED))").unwrap();
+    vm.eval_str("(define cons (lambda (a b) 'HIJACKED))")
+        .unwrap();
     assert_eq!(cast(&mut vm, &ns).as_deref(), Ok("0"));
 
     // Silent, and it's a *host* capability, not language vocabulary: the
     // REPL overrides what painting a tile means, and mana is still spent.
     let (mut vm, ns, _world) = lab();
     healthy(&mut vm, &ns);
-    vm.eval_str("(define world-apply! (lambda (ctx) 42))").unwrap();
+    vm.eval_str("(define world-apply! (lambda (ctx) 42))")
+        .unwrap();
     assert_eq!(cast(&mut vm, &ns).as_deref(), Ok("42"));
 }
 
@@ -182,10 +189,18 @@ fn a_root_define_over_an_exported_cell_desyncs_the_host() {
     let (mut vm, ns, _world) = lab();
     healthy(&mut vm, &ns);
     let before = vm.vm.global("mana").map(|v| format!("{v}"));
-    assert_eq!(before.as_deref(), Some("9"), "host sees mana spent by the cast");
+    assert_eq!(
+        before.as_deref(),
+        Some("9"),
+        "host sees mana spent by the cast"
+    );
 
     vm.eval_str("(define mana 999)").unwrap();
-    assert_eq!(cast(&mut vm, &ns).as_deref(), Ok("1"), "the pack casts on unaffected");
+    assert_eq!(
+        cast(&mut vm, &ns).as_deref(),
+        Ok("1"),
+        "the pack casts on unaffected"
+    );
     assert_eq!(
         vm.vm.global("mana").map(|v| format!("{v}")).as_deref(),
         Some("999"),
